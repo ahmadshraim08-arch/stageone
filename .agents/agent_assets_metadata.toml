@@ -1,0 +1,32 @@
+uploads = []
+outputs = []
+
+[[generated]]
+id = "WfDebJpve7RdiCY-hQcFm"
+uri = "file://artifacts/mobile/assets/images/icon.png"
+type = "image"
+title = "stageone_app_icon"
+
+[[generated]]
+id = "AcDc7Ewb1kzY4ZRRrvwZG"
+uri = "file://artifacts/mobile/assets/images/splash.png"
+type = "image"
+title = "stageone_splash"
+
+[[generated]]
+id = "kQrknng1ekE-UFL9syVOv"
+uri = "file://artifacts/mobile/assets/images/singer_placeholder_1.png"
+type = "image"
+title = "singer_placeholder_1"
+
+[[generated]]
+id = "mOfJCp6AVvW-VChyzMfUP"
+uri = "file://artifacts/mobile/assets/images/singer_placeholder_2.png"
+type = "image"
+title = "singer_placeholder_2"
+
+[[generated]]
+id = "kTG9HCDNk-vrK9M3G_Rf0"
+uri = "file://artifacts/mobile/assets/images/singer_placeholder_3.png"
+type = "image"
+title = "singer_placeholder_3"

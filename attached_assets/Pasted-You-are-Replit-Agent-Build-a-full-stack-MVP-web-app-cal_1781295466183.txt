@@ -1,0 +1,1049 @@
+You are Replit Agent. Build a full-stack MVP web app called **StageOne**.
+
+StageOne is a TikTok-style music discovery platform built specifically for aspiring singers and musicians. The core idea is:
+
+**Early TikTok became viral through dancing. StageOne is built to go viral through singing.**
+
+StageOne should feel like a real social media app, not a formal audition website. Anyone can open the app, scroll short vertical singing videos, like, comment, share, follow, and support singers. Anyone can also choose to participate by posting their own short singing video called a **Music Minute**.
+
+The goal is to make StageOne the go-to app for people who want to become singers, musicians, or performers. The experience should feel addictive, authentic, mobile-first, social, and music-native.
+
+The app should visually match the uploaded UI/UX concept images:
+
+* Dark premium concert-style theme
+* Black and deep purple backgrounds
+* Neon purple and pink accents
+* Gold accents for Golden Mics
+* Modern TikTok-style mobile interface
+* Glowing microphone iconography
+* Stage lights, music waveforms, and live performance energy
+* Clean rounded cards, bold typography, and high-contrast UI
+* A polished product demo feel suitable for Musicathon submission
+
+Do not create a generic app. Build StageOne as a premium social music product.
+
+---
+
+# 1. Product Positioning
+
+StageOne is a fan-powered singing discovery app where emerging singers upload short vertical performance videos, get discovered in a TikTok-style feed, and earn support from fans through Golden Mics.
+
+One-liner:
+
+**StageOne lets emerging singers upload short Music Minutes, get discovered in a TikTok-style feed, and earn Golden Mics from fans to rise toward live competition.**
+
+Longer explanation:
+
+StageOne gives every aspiring singer their first digital stage. Instead of waiting for labels, managers, TV talent shows, or random viral luck, singers can upload 60-second performances, build traction directly from fans, and climb through the platform based on engagement and support.
+
+The app should feel familiar like TikTok, but focused only on singing, music performance, lyric-powered creation, and emerging talent discovery.
+
+---
+
+# 2. Core Product Language
+
+Use this naming system throughout the app:
+
+* App name: **StageOne**
+* Short performance videos: **Music Minutes**
+* Fan support mechanic: **Golden Mics**
+* Ranking page: **Rise Chart**
+* Creator score: **Rise Score**
+* Live competition concept: **StageOne Live**
+* Musixmatch-powered lyric/song feature: **LyricStage**
+* Creator status level: **Rising Voice**
+* Weekly winner concept: **Spotlight Artist**
+
+Do not use the X Support or verified star sponsorship idea in this MVP. That can be a future feature. For now, the app should feel authentic and community-driven.
+
+---
+
+# 3. Main User Experience
+
+The app should mimic the simplicity of TikTok.
+
+Users should not be forced into complicated roles at signup. Everyone starts as a normal user. A user can watch, like, comment, share, follow, and support. If they want to create, they tap **Post** and upload a Music Minute.
+
+Main user loop:
+
+**Open app → scroll Music Minutes → discover singer → like/comment/share/follow → give Golden Mic → post your own Music Minute → climb Rise Chart → unlock StageOne Live eligibility**
+
+The product must feel fun even if a user never posts. Watching should be enough. Posting should be optional but easy.
+
+---
+
+# 4. Main App Navigation
+
+Create a mobile-first layout with bottom navigation:
+
+1. **Home**
+
+   * TikTok-style For You feed.
+
+2. **Discover**
+
+   * Search singers, songs, genres, and challenges.
+
+3. **Post**
+
+   * Create/upload a Music Minute.
+
+4. **Live**
+
+   * StageOne Live eligibility and demo live competition page.
+
+5. **Profile**
+
+   * User profile and creator dashboard.
+
+The app must be responsive, but the primary experience should be designed for mobile.
+
+---
+
+# 5. Screens to Build
+
+Build these MVP screens:
+
+## 5.1 Landing Page
+
+Create a beautiful landing page using the same brand identity as the uploaded images.
+
+Hero headline:
+
+**StageOne**
+**The early TikTok for singing talent.**
+
+Subheadline:
+
+**Upload a 60-second Music Minute, get discovered in a TikTok-style feed, and earn Golden Mics from fans to rise toward StageOne Live.**
+
+CTA buttons:
+
+* Start Watching
+* Post Your Voice
+* Explore Music Minutes
+
+Sections:
+
+* How it works
+* Music Minutes
+* Golden Mics
+* Musixmatch-powered LyricStage
+* Rise Chart
+* StageOne Live
+* Why singers join
+* Why fans join
+
+---
+
+## 5.2 Sign Up / Onboarding
+
+Build a clean onboarding flow similar to the uploaded sign-up UI image.
+
+Required onboarding:
+
+* Display name
+* Username
+* Email/password or mock auth
+* Favorite genres
+* Favorite languages
+* Optional location
+* Choose your path:
+
+  * Watch talent
+  * Post your voice
+  * Both
+
+Keep onboarding short. After signup, send the user directly into the feed.
+
+Use copy like:
+
+* “Create your account”
+* “Choose your path”
+* “Watch talent or post your voice”
+* “Your stage, your way”
+
+---
+
+## 5.3 Home Feed / Music Minutes
+
+This is the core screen.
+
+Create a TikTok-style vertical scrolling feed with short performance videos.
+
+For MVP, video upload can use local uploaded video, video URL, or seeded placeholder videos. If real video upload is hard, create realistic video cards with image/video placeholders, but structure the app so real video upload can be added.
+
+Each Music Minute card must include:
+
+* Full-screen vertical video or placeholder
+* Creator avatar
+* Creator username
+* Follow button
+* Song/performance title
+* Caption
+* Genre tag
+* Language tag
+* Original/Cover/Freestyle label
+* Musixmatch song reference if selected
+* Like button
+* Comment button
+* Share button
+* Save button
+* Golden Mic button
+* Golden Mic count
+* Comment count
+* Like count
+* “Rising Voice” badge if applicable
+
+Top feed tabs:
+
+* For You
+* Following
+
+Bottom nav:
+
+* Home
+* Discover
+* Post
+* Live
+* Profile
+
+Use the uploaded UI image as the visual direction.
+
+---
+
+## 5.4 Post a Music Minute
+
+Build the creator upload flow shown in the uploaded “Post a Music Minute” concept image.
+
+The flow should have steps:
+
+### Step 1: Create
+
+* Record video button
+* Upload video button
+* 60-second limit display
+* Tip: “Good lighting and clear audio help you stand out.”
+
+### Step 2: Performance Type
+
+User chooses:
+
+* Original
+* Cover
+* Freestyle / Audition
+
+### Step 3: Tag the Song with Musixmatch
+
+If the user selects Cover, allow song search using Musixmatch API.
+
+Search field:
+**Search for song title, artist, or lyrics**
+
+Show search results:
+
+* Track title
+* Artist name
+* Album if available
+* Language if available
+* Musixmatch track ID internally
+* Select button
+
+Label this section:
+**Powered by Musixmatch**
+
+### Step 4: Add Details
+
+Fields:
+
+* Title / caption
+* Genre
+* Language
+* City/country optional
+* Tags
+* Rights confirmation checkbox
+
+Rights checkbox text:
+**I confirm this is my performance and I have the right to upload it. If this is a cover, I understand StageOne is using Musixmatch only to identify the song and provide music context for the demo.**
+
+### Step 5: Review and Post
+
+Button:
+**Post Music Minute**
+
+After posting, the video should appear in the feed and on the user profile.
+
+---
+
+## 5.5 Musixmatch Integration
+
+Musixmatch must be meaningful and visible because this is a Musicathon project.
+
+Build Musixmatch as the music intelligence layer of StageOne.
+
+Use the API server-side only. Do not expose the API key in the frontend.
+
+Environment variable:
+MUSIXMATCH_API_KEY=
+
+Backend routes:
+
+* GET /api/musixmatch/search?q=
+* GET /api/musixmatch/track/:id
+* GET /api/musixmatch/lyrics/:id
+* GET /api/musixmatch/richsync/:id
+* GET /api/musixmatch/translations/:id if available
+
+Use Musixmatch for:
+
+* Track search during upload
+* Track matching for covers
+* Song metadata cards
+* Lyric context
+* Synced lyric display if available
+* Lyric translation if available
+* Discover by song
+* Challenge ideas based on song/lyrics
+
+Important:
+Do not permanently store full lyrics from Musixmatch.
+Do not cache or bulk download lyrics.
+Store only minimal reference metadata:
+
+* Musixmatch track ID
+* Track title
+* Artist name
+* Album name if needed
+* Language if needed
+* Lookup timestamp
+
+Display disclaimer wherever lyrics appear:
+**Lyrics and metadata powered by Musixmatch. Demo use only.**
+
+Create a feature called **LyricStage**:
+LyricStage lets creators search for a song, attach official song metadata, and display lyric context or synced lyrics during recording/playback.
+
+---
+
+## 5.6 Golden Mics
+
+Golden Mics are the core fan support mechanic.
+
+They are not normal likes.
+
+A like means:
+“I enjoyed this.”
+
+A Golden Mic means:
+**“I believe this singer deserves to rise.”**
+
+Rules:
+
+* Every user starts with 1 free Golden Mic.
+* User can give a Golden Mic to a Music Minute.
+* Giving a Golden Mic increases the creator’s Golden Mic count.
+* Golden Mics affect Rise Score and Rise Chart ranking.
+* If the user has no Golden Mics left, show a modal to get more.
+
+For the Musicathon MVP, purchases are simulated only. No real payments.
+
+The modal should say:
+**Musicathon demo: Golden Mic purchases are simulated. No real money is collected.**
+
+Simulated packages:
+
+* 1 Golden Mic — $0.99 demo
+* 5 Golden Mics — $3.99 demo
+* 15 Golden Mics — $9.99 demo
+* 50 Golden Mics — $24.99 demo
+* 100 Golden Mics — $39.99 demo
+
+When a user gives a Golden Mic, show a toast:
+**Golden Mic sent. You helped this artist rise.**
+
+Golden Mic button should look special:
+
+* Gold microphone icon
+* Glow effect
+* Small animation/toast on click
+
+---
+
+## 5.7 Rise Chart
+
+Create a leaderboard called **Rise Chart**.
+
+It ranks creators based on a simple scoring formula.
+
+Use this formula for MVP:
+
+Rise Score =
+(Golden Mics * 10) +
+(Unique Supporters * 5) +
+(Likes * 1) +
+(Comments * 2) +
+(Followers * 3) +
+(Views * 0.1)
+
+Show:
+
+* Rank number
+* Creator avatar
+* Creator username
+* Genre
+* Country/city
+* Golden Mic count
+* Rise Score
+* StageOne Live eligibility progress
+* Follow button
+* View profile button
+
+This page should feel like a talent chart.
+
+---
+
+## 5.8 Creator Profile
+
+Build a creator profile page that feels like a mini talent portfolio.
+
+Show:
+
+* Profile image
+* Username
+* Display name
+* Bio
+* Genre
+* Language
+* Country/city
+* Follower count
+* Following count
+* Total likes
+* Total Golden Mics
+* Rise Score
+* StageOne Live eligibility status
+* Music Minutes grid/list
+* Badges
+
+MVP badges:
+
+* First Performance
+* Rising Voice
+* Community Favorite
+* Golden Mic Milestone
+* Challenge Entry
+* Spotlight Eligible
+
+---
+
+## 5.9 User Profile
+
+Normal user profile should show:
+
+* Avatar
+* Username
+* Bio
+* Golden Mic balance
+* Artists followed
+* Saved Music Minutes
+* Golden Mics given
+* Comments made
+* Option to become a creator by posting
+
+Again: do not overcomplicate roles. Any user can post.
+
+---
+
+## 5.10 StageOne Live
+
+For MVP, StageOne Live can be a demo/simulated live competition page. Full real livestream is not required.
+
+Create a page that looks like the uploaded StageOne Live concept image.
+
+Page elements:
+
+* StageOne Live header
+* “Weekly live competition”
+* Countdown to next event
+* Featured live performer card
+* LIVE badge
+* Golden Mic counter
+* Chat/comments stream
+* Top supporters
+* This week’s finalists
+* Support with Golden Mic button
+* Qualification rules
+* Locked/unlocked status for current creator
+
+Copy:
+**StageOne Live is where top rising singers perform in front of the community. Fans support them with Golden Mics, and top voices win the spotlight.**
+
+Live eligibility rules:
+Creators should not be able to go live immediately. Show this as a progress checklist.
+
+Suggested unlock requirements:
+
+* Account age: 7+ days
+* At least 3 approved Music Minutes
+* At least 100 followers
+* At least 50 Golden Mics from unique users
+* At least 2,000 total views
+* No active safety/copyright strikes
+* Email verified
+
+For demo, make some seeded creators already eligible.
+
+---
+
+## 5.11 Discover Page
+
+Create a Discover page with:
+
+* Search singers
+* Search songs
+* Search genres
+* Search by language
+* Trending Music Minutes
+* Active challenges
+* Rising voices
+* Musixmatch song search
+
+Sections:
+
+* Trending Singers
+* Popular Covers
+* Original Voices
+* Challenges
+* Discover by Song
+* Discover by Genre
+
+---
+
+## 5.12 Challenges
+
+Create a simple Challenges feature.
+
+Challenge examples:
+
+* Sing This Chorus
+* Acoustic Sunday
+* Arabic Pop Week
+* Heartbreak Cover Challenge
+* Original Song Friday
+* Rap Verse Challenge
+* High Note Challenge
+
+Challenge page should show:
+
+* Challenge title
+* Description
+* Song reference if any
+* Number of entries
+* Top entries
+* Join Challenge button
+
+When user taps Join Challenge, take them to Post a Music Minute flow.
+
+---
+
+## 5.13 Comments
+
+Build comments for Music Minutes.
+
+Comments should appear in a drawer/modal like TikTok.
+
+Features:
+
+* Add comment
+* View comments
+* Like comment optional
+* Delete own comment optional
+* Report comment optional
+
+Seed comments to make demo feel alive.
+
+---
+
+## 5.14 Admin / Moderation Dashboard
+
+Build a basic admin dashboard.
+
+Admin can:
+
+* View users
+* View posts
+* Hide/remove posts
+* Review reports
+* Mark post as approved/hidden
+* View Golden Mic transactions
+* View seeded analytics
+* Feature a Music Minute
+* Manage challenges
+* See live eligibility status
+
+Moderation is important because this is a social app.
+
+---
+
+# 6. Data Models
+
+Create these database models or equivalent:
+
+## User
+
+* id
+* username
+* displayName
+* email
+* passwordHash or auth provider
+* avatarUrl
+* bio
+* country
+* city
+* languages
+* genres
+* goldenMicBalance
+* isAdmin
+* createdAt
+* updatedAt
+
+## MusicMinute
+
+* id
+* userId
+* videoUrl
+* thumbnailUrl
+* title
+* caption
+* performanceType: original, cover, freestyle
+* genre
+* language
+* city
+* country
+* tags
+* musixmatchTrackId optional
+* trackTitle optional
+* trackArtist optional
+* trackAlbum optional
+* rightsConfirmed
+* views
+* likesCount
+* commentsCount
+* sharesCount
+* savesCount
+* goldenMicsCount
+* status: active, hidden, removed
+* createdAt
+* updatedAt
+
+## MusicReference
+
+* id
+* musicMinuteId
+* source: musixmatch
+* musixmatchTrackId
+* trackTitle
+* artistName
+* albumName
+* language
+* lookupTimestamp
+* createdAt
+
+Important: Do not store full lyrics permanently.
+
+## GoldenMicTransaction
+
+* id
+* fromUserId
+* toUserId
+* musicMinuteId
+* quantity
+* type: free, simulated_purchase, admin_grant
+* simulatedAmount
+* createdAt
+
+## GoldenMicPurchase
+
+* id
+* userId
+* packageName
+* quantity
+* simulatedPrice
+* status: simulated_success
+* createdAt
+
+## Like
+
+* id
+* userId
+* musicMinuteId
+* createdAt
+
+## Comment
+
+* id
+* userId
+* musicMinuteId
+* content
+* status
+* createdAt
+
+## Follow
+
+* id
+* followerId
+* followingId
+* createdAt
+
+## Save
+
+* id
+* userId
+* musicMinuteId
+* createdAt
+
+## Challenge
+
+* id
+* title
+* description
+* genre
+* language
+* musixmatchTrackId optional
+* trackTitle optional
+* artistName optional
+* coverImageUrl
+* startDate
+* endDate
+* createdAt
+
+## Report
+
+* id
+* reporterId
+* musicMinuteId optional
+* commentId optional
+* reason
+* details
+* status: pending, reviewed, resolved
+* createdAt
+
+## CreatorStats
+
+* userId
+* followersCount
+* postsCount
+* totalLikes
+* totalViews
+* totalGoldenMics
+* riseScore
+* liveEligible
+* trustScore
+* updatedAt
+
+---
+
+# 7. Seed Demo Data
+
+Seed the app so it looks alive immediately.
+
+Create at least:
+
+* 12 demo users
+* 10 demo creators
+* 20 Music Minutes
+* 5 challenges
+* 2 eligible StageOne Live finalists
+* Likes, comments, follows, Golden Mic transactions
+
+Demo creators:
+
+* LunaVox — Pop / Soul
+* Jay Noor — R&B / Amman
+* Lina Rose — Arabic Pop / Dubai
+* Omar Lane — Rap / Detroit
+* Sara Vale — Acoustic / Nashville
+* Maya Rivers — Pop / Los Angeles
+* Ella Moon — Singer-Songwriter / Austin
+* Amir Stone — Soul / Houston
+* Nina Sky — Indie / New York
+* Leo Cruz — Latin Pop / Miami
+
+Seed comments like:
+
+* “This voice is incredible.”
+* “Golden Mic sent. You deserve the stage.”
+* “That high note gave me chills.”
+* “Following before you blow up.”
+* “StageOne Live needs this artist.”
+
+Use placeholder videos or public demo-safe assets. If actual videos are unavailable, use vertical image/video placeholders with singer/stage imagery.
+
+---
+
+# 8. Visual Design System
+
+Use the uploaded images as the design direction.
+
+Theme:
+
+* Background: #05020A / black / deep purple
+* Cards: dark charcoal with subtle purple border
+* Primary accent: neon purple / pink
+* Golden Mic accent: gold / yellow / orange
+* Success: green
+* Danger: red
+* Text: white and soft gray
+
+UI style:
+
+* Rounded cards
+* Glowing borders
+* Gradient buttons
+* Gold microphone icons for Golden Mics
+* Purple waveform decorations
+* Concert light backgrounds
+* Mobile-first full-screen feed
+* Smooth transitions
+* Toast notifications
+* High contrast
+
+Primary button:
+Gradient from purple to pink to gold.
+
+Golden Mic button:
+Gold gradient, glowing mic icon.
+
+StageOne Live:
+Purple/gold, high-energy live event feel.
+
+---
+
+# 9. Technical Stack
+
+Use a Replit-friendly stack.
+
+Preferred:
+
+* React or Next.js frontend
+* Tailwind CSS
+* Node.js / Express backend or Next.js API routes
+* SQLite, PostgreSQL, Supabase, or Prisma/Drizzle ORM
+* Simple auth or mock auth if needed
+* Server-side Musixmatch API proxy
+* File upload or URL-based video upload
+* Seed data
+
+If using Next.js:
+
+* Use App Router if convenient
+* API routes for backend logic
+* Server-side environment variable for Musixmatch API key
+
+If using React + Express:
+
+* React frontend
+* Express backend
+* REST API
+* SQLite/Postgres database
+
+Keep it simple and demo-ready.
+
+---
+
+# 10. API Routes
+
+Create routes similar to:
+
+## Auth
+
+* POST /api/auth/signup
+* POST /api/auth/login
+* GET /api/me
+
+## Feed
+
+* GET /api/feed
+* GET /api/feed/following
+
+## Music Minutes
+
+* POST /api/music-minutes
+* GET /api/music-minutes/:id
+* POST /api/music-minutes/:id/like
+* POST /api/music-minutes/:id/comment
+* POST /api/music-minutes/:id/share
+* POST /api/music-minutes/:id/save
+* POST /api/music-minutes/:id/golden-mic
+* POST /api/music-minutes/:id/report
+
+## Users
+
+* GET /api/users/:username
+* PATCH /api/users/me
+* POST /api/users/:id/follow
+
+## Golden Mics
+
+* GET /api/golden-mics/balance
+* POST /api/golden-mics/send
+* POST /api/golden-mics/simulate-purchase
+
+## Rise Chart
+
+* GET /api/rise-chart
+
+## StageOne Live
+
+* GET /api/live
+* GET /api/live/eligibility
+
+## Musixmatch
+
+* GET /api/musixmatch/search?q=
+* GET /api/musixmatch/track/:id
+* GET /api/musixmatch/lyrics/:id
+* GET /api/musixmatch/richsync/:id
+
+## Challenges
+
+* GET /api/challenges
+* GET /api/challenges/:id
+* POST /api/challenges/:id/join
+
+## Admin
+
+* GET /api/admin/reports
+* PATCH /api/admin/reports/:id
+* PATCH /api/admin/music-minutes/:id/status
+
+---
+
+# 11. MVP Build Priority
+
+Build in this order:
+
+## Phase 1: Foundation
+
+* Project setup
+* Theme/design system
+* Landing page
+* Mock/auth signup
+* Seed data
+* Mobile-first layout
+
+## Phase 2: Feed
+
+* Vertical Music Minute feed
+* Like/comment/share/save/follow
+* Golden Mic button
+* Creator profile links
+
+## Phase 3: Posting
+
+* Post a Music Minute screen
+* Upload/video URL support
+* Original/Cover/Freestyle selection
+* Caption, genre, language, tags
+* Rights checkbox
+* Save post to database
+
+## Phase 4: Musixmatch
+
+* Backend proxy with API key
+* Track search
+* Attach selected song to Music Minute
+* Display song card on feed/profile
+* Show lyric context if available
+* Add disclaimer
+
+## Phase 5: Golden Mics and Rise Chart
+
+* Give Golden Mic
+* Balance updates
+* Simulated purchase modal
+* Golden Mic transactions
+* Rise Score calculation
+* Rise Chart page
+
+## Phase 6: StageOne Live
+
+* Live page
+* Eligibility checklist
+* Demo finalists
+* Live-style performer card
+* Chat simulation
+* Golden Mic support in live view
+
+## Phase 7: Polish
+
+* Challenges
+* Admin dashboard
+* Better empty states
+* Toasts/animations
+* Responsive improvements
+* Demo-ready content
+
+---
+
+# 12. Guardrails and Compliance
+
+Add these safety features:
+
+* Upload rights confirmation checkbox
+* Report button on every post
+* Admin moderation page
+* Content status: active/hidden/removed
+* No real payment processing
+* Golden Mic purchases are simulated
+* Do not store Musixmatch full lyrics permanently
+* Keep Musixmatch API key server-side
+* Add demo disclaimers where needed
+
+Golden Mic purchase modal must clearly state:
+**Musicathon demo: Golden Mic purchases are simulated. No real money is collected.**
+
+Lyrics disclaimer:
+**Lyrics and metadata powered by Musixmatch. Demo use only.**
+
+---
+
+# 13. Demo Story the App Should Support
+
+The final app should allow this demo flow:
+
+1. User lands on StageOne landing page.
+2. User signs up or enters demo mode.
+3. User scrolls Music Minutes in a TikTok-style feed.
+4. User discovers a singer.
+5. User likes, comments, follows, and gives a Golden Mic.
+6. User opens the creator profile and sees Rise Score.
+7. User taps Post.
+8. User uploads/records a Music Minute.
+9. User selects Cover and searches a song through Musixmatch.
+10. User attaches song metadata.
+11. User posts the Music Minute.
+12. The post appears in the feed.
+13. Rise Chart updates.
+14. User opens StageOne Live and sees eligibility/progress.
+15. Demo ends showing the vision: short videos, real voices, Golden Mics, Musixmatch-powered music context, and live competition.
+
+---
+
+# 14. Final Product Summary
+
+Build StageOne as:
+
+**A mobile-first TikTok-style singing discovery app where emerging artists post 60-second Music Minutes, fans support them with Golden Mics, Musixmatch powers song and lyric intelligence, and top creators rise toward StageOne Live.**
+
+The app must look polished, social, music-native, and demo-ready.
+
+Focus on making the core experience feel real:
+
+* Scroll
+* Discover
+* Support
+* Post
+* Rise
+* Go Live
+
+That is the heart of StageOne.

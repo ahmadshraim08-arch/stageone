@@ -3,6 +3,7 @@ import * as Haptics from "expo-haptics";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
+import { Video, ResizeMode } from "expo-av";
 import React, { useCallback, useRef, useState } from "react";
 import {
   Animated,
@@ -82,9 +83,27 @@ export function MusicMinuteCard({ item, onCommentPress, onGoldenMicPress }: Prop
 
   const [localLikes, setLocalLikes] = useState(item.likesCount);
   const [localGMs, setLocalGMs] = useState(item.goldenMicsCount);
+  const [isMuted, setIsMuted] = useState(false);
 
-  const creator = getUserById(item.userId);
+  const seedCreator = getUserById(item.userId);
+  const isCurrentUser = currentUser?.id === item.userId;
   const cardHeight = Platform.OS === "web" ? 680 : screenHeight;
+
+  const displayName = isCurrentUser
+    ? (currentUser.displayName || currentUser.username)
+    : (seedCreator?.displayName ?? item.userId.replace("user_", ""));
+
+  const username = isCurrentUser
+    ? currentUser.username
+    : (seedCreator?.username ?? item.userId.replace("user_", ""));
+
+  const avatarColor = isCurrentUser
+    ? "#A855F7"
+    : (seedCreator?.avatarColor ?? "#A855F7");
+
+  const avatarInitials = isCurrentUser
+    ? (currentUser.displayName?.[0] ?? currentUser.username?.[0] ?? "?").toUpperCase()
+    : (seedCreator?.avatarInitials ?? "?");
 
   const handleLike = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -105,8 +124,8 @@ export function MusicMinuteCard({ item, onCommentPress, onGoldenMicPress }: Prop
   }, [gmScale, item.id, onGoldenMicPress]);
 
   const handleCreatorPress = useCallback(() => {
-    if (creator) router.push(`/creator/${creator.username}`);
-  }, [creator]);
+    if (seedCreator) router.push(`/creator/${seedCreator.username}`);
+  }, [seedCreator]);
 
   const performanceColor =
     item.performanceType === "original"
@@ -117,17 +136,29 @@ export function MusicMinuteCard({ item, onCommentPress, onGoldenMicPress }: Prop
 
   return (
     <View style={[styles.container, { height: cardHeight }]}>
-      <Image
-        source={SINGER_IMAGES[item.imageIndex % 3]}
-        style={StyleSheet.absoluteFill}
-        contentFit="cover"
-        transition={200}
-      />
+      {item.videoUri ? (
+        <Video
+          source={{ uri: item.videoUri }}
+          style={StyleSheet.absoluteFill}
+          resizeMode={ResizeMode.COVER}
+          shouldPlay
+          isLooping
+          isMuted={isMuted}
+        />
+      ) : (
+        <Image
+          source={SINGER_IMAGES[item.imageIndex % 3]}
+          style={StyleSheet.absoluteFill}
+          contentFit="cover"
+          transition={200}
+        />
+      )}
 
       <LinearGradient
         colors={["transparent", "rgba(5,2,10,0.6)", "rgba(5,2,10,0.95)"]}
         locations={[0.3, 0.65, 1]}
         style={StyleSheet.absoluteFill}
+        pointerEvents="none"
       />
 
       {item.isRisingVoice && (
@@ -137,14 +168,30 @@ export function MusicMinuteCard({ item, onCommentPress, onGoldenMicPress }: Prop
         </View>
       )}
 
+      {item.videoUri && (
+        <TouchableOpacity
+          style={styles.muteBtn}
+          onPress={() => setIsMuted((m) => !m)}
+          activeOpacity={0.7}
+        >
+          <Ionicons
+            name={isMuted ? "volume-mute" : "volume-high"}
+            size={18}
+            color="#fff"
+          />
+        </TouchableOpacity>
+      )}
+
       <View style={styles.rightActions}>
         <TouchableOpacity style={styles.creatorAvatarBtn} onPress={handleCreatorPress} activeOpacity={0.8}>
-          <View style={[styles.creatorAvatar, { backgroundColor: creator?.avatarColor ?? colors.primary }]}>
-            <Text style={styles.creatorInitials}>{creator?.avatarInitials ?? "?"}</Text>
+          <View style={[styles.creatorAvatar, { backgroundColor: avatarColor }]}>
+            <Text style={styles.creatorInitials}>{avatarInitials}</Text>
           </View>
-          <View style={styles.followDot}>
-            <Ionicons name="add" size={12} color="#fff" />
-          </View>
+          {!isCurrentUser && (
+            <View style={styles.followDot}>
+              <Ionicons name="add" size={12} color="#fff" />
+            </View>
+          )}
         </TouchableOpacity>
 
         <ActionButton
@@ -210,13 +257,17 @@ export function MusicMinuteCard({ item, onCommentPress, onGoldenMicPress }: Prop
 
       <View style={styles.bottomInfo}>
         <Pressable style={styles.creatorRow} onPress={handleCreatorPress}>
-          <Text style={styles.creatorUsername}>@{item.userId.replace("user_", "")}</Text>
+          <Text style={styles.creatorUsername}>@{username}</Text>
           {item.isRisingVoice && (
             <View style={[styles.badge, { borderColor: colors.gold }]}>
               <Text style={[styles.badgeText, { color: colors.gold }]}>Rising Voice</Text>
             </View>
           )}
         </Pressable>
+
+        {item.title ? (
+          <Text style={styles.titleText} numberOfLines={1}>{item.title}</Text>
+        ) : null}
 
         <Text style={styles.caption} numberOfLines={2}>
           {item.caption}
@@ -276,6 +327,17 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "700",
     letterSpacing: 0.5,
+  },
+  muteBtn: {
+    position: "absolute",
+    top: Platform.OS === "web" ? 74 : 54,
+    right: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "rgba(5,2,10,0.6)",
+    justifyContent: "center",
+    alignItems: "center",
   },
   rightActions: {
     position: "absolute",
@@ -339,7 +401,7 @@ const styles = StyleSheet.create({
     bottom: Platform.OS === "web" ? 12 : 90,
     left: 16,
     right: 68,
-    gap: 6,
+    gap: 4,
   },
   creatorRow: {
     flexDirection: "row",
@@ -359,6 +421,11 @@ const styles = StyleSheet.create({
   },
   badgeText: {
     fontSize: 10,
+    fontWeight: "700",
+  },
+  titleText: {
+    color: "#fff",
+    fontSize: 14,
     fontWeight: "700",
   },
   caption: {

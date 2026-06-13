@@ -36,40 +36,44 @@ export default function SignInScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { signIn, errors, fetchStatus } = useSignIn();
+  const { signIn } = useSignIn();
   const { startSSOFlow } = useSSO();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [verifyCode, setVerifyCode] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
 
   const handleEmailSignIn = async () => {
-    const { error } = await signIn.password({ emailAddress: email, password });
-    if (error) return;
-    if (signIn.status === "complete") {
-      await signIn.finalize({
-        navigate: ({ decorateUrl }) => {
-          const url = decorateUrl("/");
-          if (url.startsWith("http")) return;
-          router.replace("/(tabs)");
-        },
+    if (!signIn) return;
+    setError(null);
+    setIsLoading(true);
+    try {
+      const { error: signInError } = await signIn.password({
+        identifier: email,
+        password,
       });
-    }
-  };
-
-  const handleVerify = async () => {
-    await signIn.mfa.verifyEmailCode({ code: verifyCode });
-    if (signIn.status === "complete") {
-      await signIn.finalize({
-        navigate: ({ decorateUrl }) => {
-          const url = decorateUrl("/");
-          if (url.startsWith("http")) return;
-          router.replace("/(tabs)");
-        },
-      });
+      if (signInError) {
+        setError(signInError.longMessage ?? signInError.message ?? "Sign in failed");
+        return;
+      }
+      if (signIn.status === "complete") {
+        const { error: finalizeError } = await signIn.finalize();
+        if (finalizeError) {
+          setError(finalizeError.longMessage ?? finalizeError.message ?? "Could not finish sign in");
+          return;
+        }
+        router.replace("/(tabs)");
+      } else {
+        setError("Additional verification required. Please try again.");
+      }
+    } catch (err: any) {
+      setError(err?.message ?? "Something went wrong");
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -79,60 +83,14 @@ export default function SignInScreen() {
         strategy: "oauth_google",
         redirectUrl: AuthSession.makeRedirectUri(),
       });
-      if (createdSessionId) {
-        setActive!({
-          session: createdSessionId,
-          navigate: async ({ decorateUrl }) => {
-            router.replace("/(tabs)");
-          },
-        });
+      if (createdSessionId && setActive) {
+        await setActive({ session: createdSessionId });
+        router.replace("/(tabs)");
       }
     } catch (err) {
       console.error(JSON.stringify(err, null, 2));
     }
   }, []);
-
-  if (signIn.status === "needs_client_trust") {
-    return (
-      <View style={[styles.container, { backgroundColor: colors.background, paddingTop: topPad + 24 }]}>
-        <LinearGradient colors={["#1A0F2E", "#05020A"]} locations={[0, 0.5]} style={StyleSheet.absoluteFill} />
-        <View style={styles.verifyBox}>
-          <Ionicons name="mail-outline" size={48} color={colors.primary} style={{ marginBottom: 16 }} />
-          <Text style={[styles.verifyTitle, { color: colors.foreground }]}>Check your email</Text>
-          <Text style={[styles.verifySubtitle, { color: colors.mutedForeground }]}>
-            We sent a verification code to {email}
-          </Text>
-          <TextInput
-            value={verifyCode}
-            onChangeText={setVerifyCode}
-            placeholder="6-digit code"
-            placeholderTextColor={colors.mutedForeground}
-            keyboardType="numeric"
-            style={[styles.input, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground, textAlign: "center", letterSpacing: 8, fontSize: 22 }]}
-          />
-          {errors.fields.code && (
-            <Text style={styles.errorText}>{errors.fields.code.message}</Text>
-          )}
-          <TouchableOpacity
-            onPress={handleVerify}
-            disabled={!verifyCode || fetchStatus === "fetching"}
-            style={[styles.primaryBtn, { opacity: !verifyCode || fetchStatus === "fetching" ? 0.6 : 1 }]}
-            activeOpacity={0.85}
-          >
-            <LinearGradient colors={["#A855F7", "#EC4899"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.btnGradient}>
-              {fetchStatus === "fetching" ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Verify</Text>}
-            </LinearGradient>
-          </TouchableOpacity>
-          <Pressable onPress={() => signIn.mfa.sendEmailCode()} style={styles.linkBtn}>
-            <Text style={[styles.linkText, { color: colors.mutedForeground }]}>Resend code</Text>
-          </Pressable>
-          <Pressable onPress={() => signIn.reset()} style={styles.linkBtn}>
-            <Text style={[styles.linkText, { color: colors.mutedForeground }]}>Start over</Text>
-          </Pressable>
-        </View>
-      </View>
-    );
-  }
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
@@ -177,9 +135,6 @@ export default function SignInScreen() {
           autoCorrect={false}
           style={[styles.input, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
         />
-        {errors.fields.identifier && (
-          <Text style={styles.errorText}>{errors.fields.identifier.message}</Text>
-        )}
 
         <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>Password</Text>
         <View style={styles.passwordRow}>
@@ -195,18 +150,17 @@ export default function SignInScreen() {
             <Ionicons name={showPassword ? "eye-off-outline" : "eye-outline"} size={20} color={colors.mutedForeground} />
           </Pressable>
         </View>
-        {errors.fields.password && (
-          <Text style={styles.errorText}>{errors.fields.password.message}</Text>
-        )}
+
+        {error && <Text style={styles.errorText}>{error}</Text>}
 
         <TouchableOpacity
           onPress={handleEmailSignIn}
-          disabled={!email || !password || fetchStatus === "fetching"}
-          style={[styles.primaryBtn, { opacity: !email || !password || fetchStatus === "fetching" ? 0.6 : 1, marginTop: 8 }]}
+          disabled={!email || !password || isLoading}
+          style={[styles.primaryBtn, { opacity: !email || !password || isLoading ? 0.6 : 1, marginTop: 8 }]}
           activeOpacity={0.85}
         >
           <LinearGradient colors={["#A855F7", "#EC4899"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.btnGradient}>
-            {fetchStatus === "fetching" ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Sign in</Text>}
+            {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Sign in</Text>}
           </LinearGradient>
         </TouchableOpacity>
 
@@ -271,10 +225,5 @@ const styles = StyleSheet.create({
   switchRow: { flexDirection: "row", justifyContent: "center", alignItems: "center", marginTop: 8 },
   switchText: { fontSize: 14 },
   switchLink: { fontSize: 14, fontWeight: "700" },
-  errorText: { color: "#F87171", fontSize: 12, marginTop: -6 },
-  verifyBox: { flex: 1, paddingHorizontal: 24, alignItems: "center", gap: 14 },
-  verifyTitle: { fontSize: 24, fontWeight: "800" },
-  verifySubtitle: { fontSize: 14, textAlign: "center", lineHeight: 20 },
-  linkBtn: { paddingVertical: 8 },
-  linkText: { fontSize: 14 },
+  errorText: { color: "#F87171", fontSize: 12, marginTop: -4 },
 });

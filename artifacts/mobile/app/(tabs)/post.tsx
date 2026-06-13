@@ -1,7 +1,9 @@
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
+import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
+import { Video, ResizeMode } from "expo-av";
 import React, { useState } from "react";
 import {
   Alert,
@@ -50,6 +52,8 @@ export default function PostScreen() {
   const { currentUser, postMusicMinute, musicMinutes } = useApp();
 
   const [step, setStep] = useState(1);
+  const [videoUri, setVideoUri] = useState<string | null>(null);
+  const [videoDurationSec, setVideoDurationSec] = useState(0);
   const [performanceType, setPerformanceType] = useState<PerformanceType>("original");
   const [songQuery, setSongQuery] = useState("");
   const [songResults, setSongResults] = useState<MusixmatchResult[]>([]);
@@ -76,7 +80,7 @@ export default function PostScreen() {
             Sign up to post your first Music Minute and start your journey.
           </Text>
           <TouchableOpacity
-            onPress={() => router.push("/onboarding")}
+            onPress={() => router.push("/(auth)/sign-up")}
             activeOpacity={0.85}
             style={styles.guestBtn}
           >
@@ -102,9 +106,10 @@ export default function PostScreen() {
             onPress={() => {
               setPosted(false);
               setStep(1);
+              setVideoUri(null);
               setTitle(""); setCaption(""); setSelectedSong(null);
               setRightsConfirmed(false); setSongQuery("");
-              router.push("/(tabs)/index");
+              router.push("/");
             }}
             activeOpacity={0.85}
             style={styles.guestBtn}
@@ -117,6 +122,48 @@ export default function PostScreen() {
       </View>
     );
   }
+
+  const handlePickVideo = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert("Permission needed", "Please allow access to your photo library to upload a video.");
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+      allowsEditing: true,
+      videoMaxDuration: 60,
+      quality: 0.8,
+    });
+    if (!result.canceled && result.assets[0]) {
+      const asset = result.assets[0];
+      const durationMs = asset.duration ?? 0;
+      if (durationMs > 61000) {
+        Alert.alert("Too long", "Please select a video under 60 seconds.");
+        return;
+      }
+      setVideoUri(asset.uri);
+      setVideoDurationSec(Math.round(durationMs / 1000));
+    }
+  };
+
+  const handleRecordVideo = async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert("Permission needed", "Please allow camera access to record a video.");
+      return;
+    }
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+      videoMaxDuration: 60,
+      quality: 0.8,
+    });
+    if (!result.canceled && result.assets[0]) {
+      const asset = result.assets[0];
+      setVideoUri(asset.uri);
+      setVideoDurationSec(Math.round((asset.duration ?? 0) / 1000));
+    }
+  };
 
   const handleSongSearch = async () => {
     if (!songQuery.trim()) return;
@@ -134,6 +181,7 @@ export default function PostScreen() {
             t.track_name.toLowerCase().includes(songQuery.toLowerCase()) ||
             t.artist_name.toLowerCase().includes(songQuery.toLowerCase())
           ));
+          setIsSearching(false);
           return;
         }
       }
@@ -145,7 +193,6 @@ export default function PostScreen() {
           t.artist_name.toLowerCase().includes(songQuery.toLowerCase())
       )
     );
-    setIsSearching(false);
     setIsSearching(false);
   };
 
@@ -159,7 +206,7 @@ export default function PostScreen() {
       return;
     }
     setIsPosting(true);
-    await new Promise((r) => setTimeout(r, 1200));
+    await new Promise((r) => setTimeout(r, 800));
 
     const imageIndex = musicMinutes.length % 3;
     const mm: Omit<MusicMinute, "id" | "views" | "likesCount" | "commentsCount" | "sharesCount" | "savesCount" | "goldenMicsCount" | "createdAt" | "isRisingVoice" | "isFeatured"> = {
@@ -175,12 +222,19 @@ export default function PostScreen() {
       trackTitle: selectedSong?.track_name,
       trackArtist: selectedSong?.artist_name,
       imageIndex,
+      videoUri: videoUri ?? undefined,
     };
 
     postMusicMinute(mm);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setIsPosting(false);
     setPosted(true);
+  };
+
+  const formatDuration = (secs: number) => {
+    const m = Math.floor(secs / 60).toString().padStart(2, "0");
+    const s = (secs % 60).toString().padStart(2, "0");
+    return `${m}:${s}`;
   };
 
   const StepIndicator = () => (
@@ -218,26 +272,66 @@ export default function PostScreen() {
               <Text style={[styles.stepHint, { color: colors.mutedForeground }]}>
                 60-second limit · Good lighting and clear audio help you stand out.
               </Text>
-              <View style={styles.uploadOptions}>
-                <TouchableOpacity style={[styles.uploadOption, { backgroundColor: colors.card, borderColor: colors.border }]} activeOpacity={0.8}>
-                  <Ionicons name="videocam" size={32} color={colors.primary} />
-                  <Text style={[styles.uploadOptionTitle, { color: colors.foreground }]}>Record Video</Text>
-                  <Text style={[styles.uploadOptionSub, { color: colors.mutedForeground }]}>60 sec</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.uploadOption, { backgroundColor: colors.card, borderColor: colors.border }]} activeOpacity={0.8}>
-                  <Ionicons name="cloud-upload-outline" size={32} color={colors.primary} />
-                  <Text style={[styles.uploadOptionTitle, { color: colors.foreground }]}>Upload Video</Text>
-                  <Text style={[styles.uploadOptionSub, { color: colors.mutedForeground }]}>Max 60 sec</Text>
-                </TouchableOpacity>
-              </View>
-              <View style={[styles.timeBar, { backgroundColor: colors.muted }]}>
-                <View style={[styles.timeBarFill, { backgroundColor: colors.primary, width: "0%" }]} />
-              </View>
-              <Text style={[styles.timeText, { color: colors.mutedForeground }]}>00:00 / 60:00</Text>
-              <TouchableOpacity onPress={() => setStep(2)} style={styles.nextBtn} activeOpacity={0.85}>
+
+              {videoUri ? (
+                <View style={styles.videoPreviewContainer}>
+                  <Video
+                    source={{ uri: videoUri }}
+                    style={styles.videoPreview}
+                    resizeMode={ResizeMode.COVER}
+                    shouldPlay
+                    isLooping
+                    isMuted={false}
+                  />
+                  <LinearGradient
+                    colors={["transparent", "rgba(5,2,10,0.7)"]}
+                    style={StyleSheet.absoluteFill}
+                    pointerEvents="none"
+                  />
+                  <View style={styles.videoMeta}>
+                    <Ionicons name="videocam" size={16} color="#fff" />
+                    <Text style={styles.videoDuration}>{formatDuration(videoDurationSec)}</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.changeVideoBtn}
+                    onPress={handlePickVideo}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[styles.changeVideoBtnText, { color: colors.primary }]}>Change video</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View style={styles.uploadOptions}>
+                  <TouchableOpacity
+                    style={[styles.uploadOption, { backgroundColor: colors.card, borderColor: colors.border }]}
+                    activeOpacity={0.8}
+                    onPress={handleRecordVideo}
+                  >
+                    <Ionicons name="videocam" size={32} color={colors.primary} />
+                    <Text style={[styles.uploadOptionTitle, { color: colors.foreground }]}>Record Video</Text>
+                    <Text style={[styles.uploadOptionSub, { color: colors.mutedForeground }]}>60 sec</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.uploadOption, { backgroundColor: colors.card, borderColor: colors.border }]}
+                    activeOpacity={0.8}
+                    onPress={handlePickVideo}
+                  >
+                    <Ionicons name="cloud-upload-outline" size={32} color={colors.primary} />
+                    <Text style={[styles.uploadOptionTitle, { color: colors.foreground }]}>Upload Video</Text>
+                    <Text style={[styles.uploadOptionSub, { color: colors.mutedForeground }]}>From library</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              <TouchableOpacity
+                onPress={() => setStep(2)}
+                style={[styles.nextBtn, !videoUri && { opacity: 0.5 }]}
+                activeOpacity={0.85}
+                disabled={!videoUri}
+              >
                 <LinearGradient colors={["#A855F7", "#EC4899"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.nextBtnGradient}>
-                  <Text style={styles.nextBtnText}>Continue</Text>
-                  <Ionicons name="chevron-forward" size={18} color="#fff" />
+                  <Text style={styles.nextBtnText}>{videoUri ? "Continue" : "Select a video first"}</Text>
+                  {videoUri && <Ionicons name="chevron-forward" size={18} color="#fff" />}
                 </LinearGradient>
               </TouchableOpacity>
             </View>
@@ -300,7 +394,7 @@ export default function PostScreen() {
                 <TextInput
                   value={songQuery}
                   onChangeText={setSongQuery}
-                  placeholder="Search song title, artist, or lyrics"
+                  placeholder="Search song title or artist"
                   placeholderTextColor={colors.mutedForeground}
                   style={[styles.songSearchInput, { color: colors.foreground }]}
                   returnKeyType="search"
@@ -353,7 +447,7 @@ export default function PostScreen() {
           {step === 4 && (
             <View style={styles.stepView}>
               <Text style={[styles.stepLabel, { color: colors.foreground }]}>4. Add Details</Text>
-              <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>Title / Caption *</Text>
+              <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>Title *</Text>
               <TextInput
                 value={title}
                 onChangeText={setTitle}
@@ -362,6 +456,7 @@ export default function PostScreen() {
                 style={[styles.fieldInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
                 maxLength={100}
               />
+              <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>Caption</Text>
               <TextInput
                 value={caption}
                 onChangeText={setCaption}
@@ -411,6 +506,7 @@ export default function PostScreen() {
                 <ReviewRow label="Type" value={performanceType} colors={colors} />
                 <ReviewRow label="Genre" value={genre} colors={colors} />
                 <ReviewRow label="Language" value={language} colors={colors} />
+                <ReviewRow label="Video" value={videoUri ? `${formatDuration(videoDurationSec)} recorded` : "No video"} colors={colors} />
                 {selectedSong && <ReviewRow label="Song" value={`${selectedSong.track_name} — ${selectedSong.artist_name}`} colors={colors} />}
                 {location && <ReviewRow label="Location" value={location} colors={colors} />}
               </View>
@@ -419,7 +515,7 @@ export default function PostScreen() {
                   {rightsConfirmed && <Ionicons name="checkmark" size={14} color="#fff" />}
                 </View>
                 <Text style={[styles.rightsText, { color: colors.mutedForeground }]}>
-                  I confirm this is my performance and I have the right to upload it. If this is a cover, I understand StageOne is using Musixmatch only to identify the song for demo context.
+                  I confirm this is my performance and I have the right to upload it.
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={handlePost} disabled={isPosting || !rightsConfirmed} style={[styles.nextBtn, !rightsConfirmed && { opacity: 0.5 }]} activeOpacity={0.85}>
@@ -469,23 +565,58 @@ const styles = StyleSheet.create({
   },
   stepDot: { width: 6, height: 6, borderRadius: 3 },
   stepContent: { flex: 1 },
-  stepView: { paddingHorizontal: 20, gap: 14, paddingTop: 8 },
-  stepLabel: { fontSize: 17, fontWeight: "700" },
-  stepHint: { fontSize: 13, lineHeight: 18 },
-  uploadOptions: { flexDirection: "row", gap: 12 },
+  stepView: { paddingHorizontal: 20, paddingTop: 8, gap: 14 },
+  stepLabel: { fontSize: 18, fontWeight: "700", marginBottom: 4 },
+  stepHint: { fontSize: 13, lineHeight: 18, marginTop: -8 },
+  uploadOptions: {
+    flexDirection: "row",
+    gap: 12,
+  },
   uploadOption: {
     flex: 1,
+    alignItems: "center",
+    gap: 10,
+    padding: 24,
     borderRadius: 16,
     borderWidth: 1,
-    padding: 20,
-    alignItems: "center",
-    gap: 8,
   },
-  uploadOptionTitle: { fontSize: 14, fontWeight: "700" },
-  uploadOptionSub: { fontSize: 12 },
-  timeBar: { height: 4, borderRadius: 2 },
-  timeBarFill: { height: 4, borderRadius: 2 },
-  timeText: { fontSize: 12, textAlign: "center" },
+  uploadOptionTitle: { fontSize: 14, fontWeight: "700", textAlign: "center" },
+  uploadOptionSub: { fontSize: 12, textAlign: "center" },
+  videoPreviewContainer: {
+    width: "100%",
+    height: 240,
+    borderRadius: 16,
+    overflow: "hidden",
+    backgroundColor: "#000",
+    position: "relative",
+  },
+  videoPreview: {
+    width: "100%",
+    height: "100%",
+  },
+  videoMeta: {
+    position: "absolute",
+    bottom: 12,
+    left: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  videoDuration: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  changeVideoBtn: {
+    position: "absolute",
+    bottom: 12,
+    right: 12,
+    backgroundColor: "rgba(5,2,10,0.7)",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  changeVideoBtnText: { fontSize: 13, fontWeight: "600" },
   typeOption: {
     flexDirection: "row",
     alignItems: "center",
@@ -494,30 +625,30 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
   },
-  typeOptionText: { flex: 1, gap: 3 },
+  typeOptionText: { flex: 1 },
   typeTitle: { fontSize: 15, fontWeight: "700" },
-  typeSub: { fontSize: 12 },
+  typeSub: { fontSize: 12, marginTop: 2 },
   musixmatchBadge: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 10,
-    borderWidth: 1,
     alignSelf: "flex-start",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+    borderWidth: 1,
   },
   musixmatchText: { fontSize: 12, fontWeight: "600" },
   songSearchBar: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 11,
-    borderRadius: 14,
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
     borderWidth: 1,
   },
-  songSearchInput: { flex: 1, fontSize: 14 },
+  songSearchInput: { flex: 1, fontSize: 14, paddingVertical: 0 },
   searchBtn: { fontSize: 14, fontWeight: "700" },
   selectedSong: {
     flexDirection: "row",
@@ -529,12 +660,8 @@ const styles = StyleSheet.create({
   },
   selectedSongInfo: { flex: 1 },
   selectedSongTitle: { fontSize: 14, fontWeight: "700" },
-  selectedSongArtist: { fontSize: 12 },
-  songResultsList: {
-    borderRadius: 12,
-    borderWidth: 1,
-    overflow: "hidden",
-  },
+  selectedSongArtist: { fontSize: 12, marginTop: 2 },
+  songResultsList: { borderRadius: 12, borderWidth: 1, overflow: "hidden" },
   songResultRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -544,20 +671,20 @@ const styles = StyleSheet.create({
   },
   songResultInfo: { flex: 1 },
   songResultTitle: { fontSize: 14, fontWeight: "600" },
-  songResultArtist: { fontSize: 12 },
-  fieldLabel: { fontSize: 12, fontWeight: "600", marginTop: 4 },
+  songResultArtist: { fontSize: 12, marginTop: 2 },
+  fieldLabel: { fontSize: 12, fontWeight: "600", marginBottom: -4 },
   fieldInput: {
     paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingVertical: 13,
     borderRadius: 12,
     borderWidth: 1,
-    fontSize: 14,
+    fontSize: 15,
   },
-  captionInput: { height: 80, textAlignVertical: "top" },
+  captionInput: { minHeight: 80, textAlignVertical: "top" },
   tagsList: { gap: 8, paddingVertical: 4 },
   tagChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
     borderRadius: 20,
     borderWidth: 1,
   },
@@ -570,57 +697,46 @@ const styles = StyleSheet.create({
   reviewRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "flex-start",
-    padding: 12,
+    alignItems: "center",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     borderBottomWidth: 1,
+    gap: 12,
   },
-  reviewLabel: { fontSize: 12, fontWeight: "600", width: 72 },
+  reviewLabel: { fontSize: 13, fontWeight: "600" },
   reviewValue: { fontSize: 13, flex: 1, textAlign: "right" },
   rightsRow: {
     flexDirection: "row",
-    gap: 10,
     alignItems: "flex-start",
+    gap: 10,
   },
   checkbox: {
     width: 22,
     height: 22,
     borderRadius: 6,
-    borderWidth: 1.5,
+    borderWidth: 2,
     justifyContent: "center",
     alignItems: "center",
-    flexShrink: 0,
     marginTop: 1,
   },
-  rightsText: { fontSize: 12, lineHeight: 17, flex: 1 },
-  nextBtn: { marginTop: 8 },
+  rightsText: { fontSize: 12, lineHeight: 18, flex: 1 },
+  nextBtn: { width: "100%", borderRadius: 14, overflow: "hidden" },
   nextBtnGradient: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
     paddingVertical: 15,
-    borderRadius: 16,
   },
   nextBtnText: { color: "#fff", fontSize: 16, fontWeight: "700" },
-  guestView: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 32,
-    gap: 16,
-  },
-  guestTitle: { fontSize: 24, fontWeight: "800", textAlign: "center" },
+  guestView: { flex: 1, alignItems: "center", justifyContent: "center", gap: 16, paddingHorizontal: 32 },
+  guestTitle: { fontSize: 26, fontWeight: "800", textAlign: "center" },
   guestSubtitle: { fontSize: 14, textAlign: "center", lineHeight: 20 },
-  guestBtn: { width: "100%", borderRadius: 16, overflow: "hidden" },
+  guestBtn: { width: "100%", borderRadius: 14, overflow: "hidden" },
   guestBtnGradient: { paddingVertical: 15, alignItems: "center" },
   guestBtnText: { color: "#fff", fontSize: 16, fontWeight: "700" },
-  successView: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 32,
-    gap: 16,
-  },
+  successView: { flex: 1, alignItems: "center", justifyContent: "center", gap: 16, paddingHorizontal: 32 },
   successTitle: { fontSize: 26, fontWeight: "800", textAlign: "center" },
   successSubtitle: { fontSize: 14, textAlign: "center", lineHeight: 20 },
+  gold: { color: "#F59E0B" },
 });

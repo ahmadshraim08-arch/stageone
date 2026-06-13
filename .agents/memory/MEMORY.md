@@ -1,1 +1,1 @@
-- [Clerk Expo web shim](clerk-expo-web-shim.md) — @clerk/expo@3.4.2 crashes on Expo web due to TurboModuleRegistry; fix via Metro resolver + null shim.
+- [Clerk Core v3 Expo API](clerk-core-v3-expo.md) — signals API: signIn.password()+finalize(), signUp.password()+verifications.verifyEmailCode()+finalize(), NOT legacy isLoaded/setActive

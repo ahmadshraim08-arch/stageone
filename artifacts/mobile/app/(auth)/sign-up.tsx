@@ -36,33 +36,70 @@ export default function SignUpScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { signUp, errors, fetchStatus } = useSignUp();
+  const { signUp } = useSignUp();
   const { startSSOFlow } = useSSO();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [verifyCode, setVerifyCode] = useState("");
+  const [pendingVerification, setPendingVerification] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
 
   const handleEmailSignUp = async () => {
-    const { error } = await signUp.password({ emailAddress: email, password });
-    if (error) return;
-    if (!error) await signUp.verifications.sendEmailCode();
+    if (!signUp) return;
+    setError(null);
+    setIsLoading(true);
+    try {
+      const { error: signUpError } = await signUp.password({
+        emailAddress: email,
+        password,
+      });
+      if (signUpError) {
+        setError(signUpError.longMessage ?? signUpError.message ?? "Sign up failed");
+        return;
+      }
+      setPendingVerification(true);
+    } catch (err: any) {
+      setError(err?.message ?? "Something went wrong");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleVerify = async () => {
-    await signUp.verifications.verifyEmailCode({ code: verifyCode });
-    if (signUp.status === "complete") {
-      await signUp.finalize({
-        navigate: ({ decorateUrl }) => {
-          const url = decorateUrl("/");
-          if (url.startsWith("http")) return;
-          router.replace("/onboarding");
-        },
+    if (!signUp) return;
+    setError(null);
+    setIsLoading(true);
+    try {
+      const { error: verifyError } = await signUp.verifications.verifyEmailCode({
+        code: verifyCode,
       });
+      if (verifyError) {
+        setError(verifyError.longMessage ?? verifyError.message ?? "Invalid code");
+        return;
+      }
+      const { error: finalizeError } = await signUp.finalize();
+      if (finalizeError) {
+        setError(finalizeError.longMessage ?? finalizeError.message ?? "Could not finish sign up");
+        return;
+      }
+      router.replace("/onboarding");
+    } catch (err: any) {
+      setError(err?.message ?? "Verification failed");
+    } finally {
+      setIsLoading(false);
     }
+  };
+
+  const handleResend = async () => {
+    if (!signUp) return;
+    try {
+      await signUp.verifications.sendEmailCode();
+    } catch {}
   };
 
   const handleGoogleSignUp = useCallback(async () => {
@@ -71,24 +108,16 @@ export default function SignUpScreen() {
         strategy: "oauth_google",
         redirectUrl: AuthSession.makeRedirectUri(),
       });
-      if (createdSessionId) {
-        setActive!({
-          session: createdSessionId,
-          navigate: async ({ decorateUrl }) => {
-            router.replace("/onboarding");
-          },
-        });
+      if (createdSessionId && setActive) {
+        await setActive({ session: createdSessionId });
+        router.replace("/onboarding");
       }
     } catch (err) {
       console.error(JSON.stringify(err, null, 2));
     }
   }, []);
 
-  if (
-    signUp.status === "missing_requirements" &&
-    signUp.unverifiedFields.includes("email_address") &&
-    signUp.missingFields.length === 0
-  ) {
+  if (pendingVerification) {
     return (
       <View style={[styles.container, { backgroundColor: colors.background, paddingTop: topPad + 24 }]}>
         <LinearGradient colors={["#1A0F2E", "#05020A"]} locations={[0, 0.5]} style={StyleSheet.absoluteFill} />
@@ -107,20 +136,18 @@ export default function SignUpScreen() {
             maxLength={6}
             style={[styles.input, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground, textAlign: "center", letterSpacing: 8, fontSize: 22 }]}
           />
-          {errors.fields.code && (
-            <Text style={styles.errorText}>{errors.fields.code.message}</Text>
-          )}
+          {error && <Text style={styles.errorText}>{error}</Text>}
           <TouchableOpacity
             onPress={handleVerify}
-            disabled={verifyCode.length < 6 || fetchStatus === "fetching"}
-            style={[styles.primaryBtn, { opacity: verifyCode.length < 6 || fetchStatus === "fetching" ? 0.6 : 1 }]}
+            disabled={verifyCode.length < 6 || isLoading}
+            style={[styles.primaryBtn, { opacity: verifyCode.length < 6 || isLoading ? 0.6 : 1 }]}
             activeOpacity={0.85}
           >
             <LinearGradient colors={["#A855F7", "#EC4899"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.btnGradient}>
-              {fetchStatus === "fetching" ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Verify email</Text>}
+              {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Verify email</Text>}
             </LinearGradient>
           </TouchableOpacity>
-          <Pressable onPress={() => signUp.verifications.sendEmailCode()} style={styles.linkBtn}>
+          <Pressable onPress={handleResend} style={styles.linkBtn}>
             <Text style={[styles.linkText, { color: colors.mutedForeground }]}>Resend code</Text>
           </Pressable>
         </View>
@@ -171,9 +198,6 @@ export default function SignUpScreen() {
           autoCorrect={false}
           style={[styles.input, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
         />
-        {errors.fields.emailAddress && (
-          <Text style={styles.errorText}>{errors.fields.emailAddress.message}</Text>
-        )}
 
         <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>Password</Text>
         <View style={styles.passwordRow}>
@@ -189,18 +213,17 @@ export default function SignUpScreen() {
             <Ionicons name={showPassword ? "eye-off-outline" : "eye-outline"} size={20} color={colors.mutedForeground} />
           </Pressable>
         </View>
-        {errors.fields.password && (
-          <Text style={styles.errorText}>{errors.fields.password.message}</Text>
-        )}
+
+        {error && <Text style={styles.errorText}>{error}</Text>}
 
         <TouchableOpacity
           onPress={handleEmailSignUp}
-          disabled={!email || !password || fetchStatus === "fetching"}
-          style={[styles.primaryBtn, { opacity: !email || !password || fetchStatus === "fetching" ? 0.6 : 1, marginTop: 8 }]}
+          disabled={!email || !password || isLoading}
+          style={[styles.primaryBtn, { opacity: !email || !password || isLoading ? 0.6 : 1, marginTop: 8 }]}
           activeOpacity={0.85}
         >
           <LinearGradient colors={["#A855F7", "#EC4899"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.btnGradient}>
-            {fetchStatus === "fetching" ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Create account</Text>}
+            {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Create account</Text>}
           </LinearGradient>
         </TouchableOpacity>
 
@@ -272,7 +295,7 @@ const styles = StyleSheet.create({
   switchRow: { flexDirection: "row", justifyContent: "center", alignItems: "center", marginTop: 4 },
   switchText: { fontSize: 14 },
   switchLink: { fontSize: 14, fontWeight: "700" },
-  errorText: { color: "#F87171", fontSize: 12, marginTop: -6 },
+  errorText: { color: "#F87171", fontSize: 12, marginTop: -4 },
   verifyBox: { flex: 1, paddingHorizontal: 24, alignItems: "center", gap: 14 },
   verifyTitle: { fontSize: 24, fontWeight: "800" },
   verifySubtitle: { fontSize: 14, textAlign: "center", lineHeight: 20 },

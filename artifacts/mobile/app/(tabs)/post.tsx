@@ -360,7 +360,7 @@ export default function PostScreen() {
                 placeholder="Give your performance a title"
                 placeholderTextColor={colors.mutedForeground}
                 style={[styles.fieldInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
-                maxLength: {100}
+                maxLength={100}
               />
               <TextInput
                 value={caption}

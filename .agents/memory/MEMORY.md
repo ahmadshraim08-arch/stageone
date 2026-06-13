@@ -1,0 +1,1 @@
+- [Clerk Expo web shim](clerk-expo-web-shim.md) — @clerk/expo@3.4.2 crashes on Expo web due to TurboModuleRegistry; fix via Metro resolver + null shim.

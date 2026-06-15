@@ -393,6 +393,7 @@ export function MusicMinuteCard({ item, onCommentPress, onGoldenMicPress }: Prop
 
           {/* Sing This Part CTA */}
           <TouchableOpacity
+            testID="sing-this-part-btn"
             style={styles.singThisPartBtn}
             onPress={handleSingThisPart}
             activeOpacity={0.85}
@@ -482,6 +483,7 @@ export function MusicMinuteCard({ item, onCommentPress, onGoldenMicPress }: Prop
         {/* ♪ Lyric toggle — only shown when the card has a lyric section */}
         {section && (
           <TouchableOpacity
+            testID="lyric-overlay-toggle"
             onPress={() => {
               setLyricVisible((v) => !v);
               if (!lyricVisible) {

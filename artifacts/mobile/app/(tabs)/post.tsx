@@ -30,6 +30,7 @@ import {
   type LyricsResponse,
   type LyricLine,
 } from "@/lib/musixmatch";
+import { TimingSlider } from "@/components/TimingSlider";
 
 type PerformanceType = "original" | "cover" | "freestyle";
 
@@ -179,11 +180,7 @@ export default function PostScreen() {
     prefillAppliedRef.current = true;
     setPerformanceType("cover");
     setSelectedSong(track);
-    setSections([]);
-    setSelectedSection(null);
-    setSectionPreviews({});
-    setNoLyricsMode(false);
-    setStep(4);
+    // Upload step (1) remains mandatory — do NOT call setStep here
   }, [prefillTrackId]);
 
   // Fetch lyrics for timing preview when entering step 5
@@ -1019,37 +1016,31 @@ export default function PostScreen() {
                 </Text>
               </View>
 
-              <View style={styles.offsetRow}>
-                <TouchableOpacity
-                  onPress={() => setTimingOffsetMs((v) => Math.max(-2000, v - 250))}
-                  style={[styles.offsetBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
-                  activeOpacity={0.8}
-                >
-                  <Text style={[styles.offsetBtnText, { color: colors.foreground }]}>−250 ms</Text>
-                </TouchableOpacity>
+              <Text style={[styles.sliderLabel, { color: colors.mutedForeground }]}>
+                Shift lyrics earlier / later
+              </Text>
 
-                <View style={styles.offsetDisplay}>
-                  <Text style={[styles.offsetValue, { color: colors.foreground }]}>
-                    {timingOffsetMs > 0 ? `+${timingOffsetMs}` : timingOffsetMs} ms
-                  </Text>
-                  {timingOffsetMs !== 0 && (
-                    <TouchableOpacity onPress={() => setTimingOffsetMs(0)} activeOpacity={0.7}>
-                      <Text style={[styles.offsetReset, { color: colors.primary }]}>Reset</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
+              <TimingSlider
+                value={timingOffsetMs}
+                onChangeValue={setTimingOffsetMs}
+                primaryColor={colors.primary}
+                borderColor={colors.border}
+                mutedForeground={colors.mutedForeground}
+              />
 
-                <TouchableOpacity
-                  onPress={() => setTimingOffsetMs((v) => Math.min(2000, v + 250))}
-                  style={[styles.offsetBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
-                  activeOpacity={0.8}
-                >
-                  <Text style={[styles.offsetBtnText, { color: colors.foreground }]}>+250 ms</Text>
-                </TouchableOpacity>
+              <View style={styles.offsetDisplay}>
+                <Text style={[styles.offsetValue, { color: colors.foreground }]}>
+                  {timingOffsetMs > 0 ? `+${timingOffsetMs}` : timingOffsetMs} ms
+                </Text>
+                {timingOffsetMs !== 0 && (
+                  <TouchableOpacity onPress={() => setTimingOffsetMs(0)} activeOpacity={0.7}>
+                    <Text style={[styles.offsetReset, { color: colors.primary }]}>Reset</Text>
+                  </TouchableOpacity>
+                )}
               </View>
 
               <Text style={[styles.offsetHint, { color: colors.mutedForeground }]}>
-                Range: −2000 ms to +2000 ms · Negative = lyrics earlier · Positive = lyrics later
+                Negative shifts lyrics earlier · Positive shifts later
               </Text>
 
               {/* Preview timing button */}
@@ -1095,6 +1086,43 @@ export default function PostScreen() {
                   ) : (
                     <ActivityIndicator size="small" color={colors.primary} />
                   )}
+                </View>
+              )}
+
+              {/* Static lyric line list — shows fetched lines for the chosen section */}
+              {previewLyricsData && previewLyricsData.lines.length > 0 && selectedSection && (
+                <View
+                  style={[
+                    styles.lyricLineList,
+                    { borderColor: colors.border, backgroundColor: colors.card },
+                  ]}
+                >
+                  <Text style={[styles.lyricLineListTitle, { color: colors.mutedForeground }]}>
+                    Section lyrics
+                  </Text>
+                  {previewLyricsData.lines
+                    .filter(
+                      (l) =>
+                        l.startMs === null ||
+                        (l.startMs >= selectedSection.startMs &&
+                          (selectedSection.endMs >= 999_999 ||
+                            l.startMs < selectedSection.endMs)),
+                    )
+                    .map((l, idx) => (
+                      <View
+                        key={idx}
+                        style={[styles.lyricLineRow, { borderTopColor: colors.border }]}
+                      >
+                        <Text style={[styles.lyricLineText, { color: colors.foreground }]}>
+                          {l.text}
+                        </Text>
+                        {l.startMs !== null && (
+                          <Text style={[styles.lyricLineTime, { color: colors.mutedForeground }]}>
+                            {fmtMs(l.startMs)}
+                          </Text>
+                        )}
+                      </View>
+                    ))}
                 </View>
               )}
 
@@ -1621,4 +1649,31 @@ const styles = StyleSheet.create({
   successView: { flex: 1, alignItems: "center", justifyContent: "center", gap: 16, paddingHorizontal: 32 },
   successTitle: { fontSize: 26, fontWeight: "800", textAlign: "center" },
   successSubtitle: { fontSize: 14, textAlign: "center", lineHeight: 21 },
+  // Step 5 — timing slider
+  sliderLabel: { fontSize: 13, fontWeight: "600", textAlign: "center" },
+  lyricLineList: {
+    borderRadius: 12,
+    borderWidth: 1,
+    overflow: "hidden",
+    marginTop: 4,
+  },
+  lyricLineListTitle: {
+    fontSize: 11,
+    fontWeight: "600",
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 6,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  lyricLineRow: {
+    flexDirection: "row" as const,
+    justifyContent: "space-between" as const,
+    alignItems: "center" as const,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+  },
+  lyricLineText: { fontSize: 13, flex: 1, lineHeight: 18 },
+  lyricLineTime: { fontSize: 11, marginLeft: 8 },
 });

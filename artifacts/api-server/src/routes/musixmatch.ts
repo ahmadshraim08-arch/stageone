@@ -307,33 +307,61 @@ export function deriveSegments(lines: LyricLine[]): Segment[] {
   });
 }
 
-// Fetch lyrics for a trackId; returns LyricsResponse
+// Fetch lyrics for a trackId; returns LyricsResponse.
+// Calls track.get first to honour the has_subtitles / track_length flags.
+// When Musixmatch returns a 200 (even with an empty body) it is NOT replaced
+// by demo content — the empty / unsynced response is returned with
+// source: "musixmatch" so the caller always knows where data originated.
 async function getLyrics(trackId: string, apiKey: string | undefined): Promise<LyricsResponse> {
   const demo = DEMO_TRACKS[trackId];
 
   if (apiKey) {
     try {
-      // Prefer subtitle (line-level sync)
-      const sub = await mxFetch(`track.subtitle.get?track_id=${trackId}`, apiKey);
-      if (sub.status === 200) {
-        const subtitleBody = (sub.body.subtitle as Record<string, unknown>)?.subtitle_body as string | undefined;
-        const lang = (sub.body.subtitle as Record<string, unknown>)?.subtitle_language as string | undefined;
-        const lines = subtitleBody ? parseSubtitleBody(subtitleBody) : [];
-        if (lines.length > 0) {
-          return { source: "musixmatch", trackId, durationMs: null, hasSync: true, lines };
+      // Step 1 — track.get: read has_subtitles flag and track_length
+      const trackResult = await mxFetch(`track.get?track_id=${trackId}`, apiKey);
+
+      if (trackResult.status === 200) {
+        const track = trackResult.body.track as Record<string, unknown> | undefined;
+        const hasSubtitles = (track?.has_subtitles as number) === 1;
+        const trackLengthSec = track?.track_length as number | undefined;
+        const durationMs = trackLengthSec != null ? Math.round(trackLengthSec * 1000) : null;
+
+        if (hasSubtitles) {
+          // Step 2a — subtitle (line-level synced)
+          const sub = await mxFetch(`track.subtitle.get?track_id=${trackId}`, apiKey);
+          if (sub.status === 200) {
+            const subtitleBody = (sub.body.subtitle as Record<string, unknown>)?.subtitle_body as string | undefined;
+            // Return musixmatch source even if body is empty (200 = successful API call)
+            return {
+              source: "musixmatch",
+              trackId,
+              durationMs,
+              hasSync: true,
+              lines: subtitleBody ? parseSubtitleBody(subtitleBody) : [],
+            };
+          }
         }
+
+        // Step 2b — plain lyrics (has_subtitles=0 or subtitle call failed)
+        const plain = await mxFetch(`track.lyrics.get?track_id=${trackId}`, apiKey);
+        if (plain.status === 200) {
+          const lyricsBody = (plain.body.lyrics as Record<string, unknown>)?.lyrics_body as string | undefined;
+          return {
+            source: "musixmatch",
+            trackId,
+            durationMs,
+            hasSync: false, // per spec: has_subtitles=0 → hasSync: false, timings null
+            lines: lyricsBody ? parsePlainLyrics(lyricsBody) : [],
+          };
+        }
+
+        // track.get succeeded but both subtitle and lyrics failed
+        return { source: "musixmatch", trackId, durationMs, hasSync: false, lines: [] };
       }
 
-      // Fall back to plain lyrics
-      const plain = await mxFetch(`track.lyrics.get?track_id=${trackId}`, apiKey);
-      if (plain.status === 200) {
-        const lyricsBody = (plain.body.lyrics as Record<string, unknown>)?.lyrics_body as string | undefined;
-        if (lyricsBody) {
-          return { source: "musixmatch", trackId, durationMs: null, hasSync: false, lines: parsePlainLyrics(lyricsBody) };
-        }
-      }
+      // track.get returned non-200 (401, 404, …) → fall through to demo
     } catch {
-      // fall through to demo
+      // network / parse error → fall through to demo
     }
   }
 
@@ -514,39 +542,77 @@ router.get("/musixmatch/translate/:trackId/:lang", async (req, res) => {
   // Try real Musixmatch translation
   if (apiKey) {
     try {
-      const result = await mxFetch(
-        `track.lyrics.translation.get?track_id=${trackId}&selected_language=${lang}`,
-        apiKey,
-      );
-      if (result.status === 200) {
-        const lyricsBody = (result.body.lyrics as Record<string, unknown>)?.lyrics_body as string | undefined;
-        const srcLang = (result.body.lyrics as Record<string, unknown>)?.lyrics_language as string | undefined;
-        if (lyricsBody) {
-          // Get original lines for timing alignment
-          const originalResult = await getLyrics(trackId, apiKey).catch(() => null);
-          const translatedLines = parsePlainLyrics(lyricsBody);
+      // Step 1 — get source language and track metadata from track.get
+      let srcLang: string | undefined;
+      const trackResult = await mxFetch(`track.get?track_id=${trackId}`, apiKey);
 
-          let alignedLines: LyricLine[];
-          if (originalResult && translatedLines.length === originalResult.lines.length) {
-            alignedLines = originalResult.lines.map((orig, i) => ({
-              text: translatedLines[i].text,
-              startMs: orig.startMs,
-              endMs: orig.endMs,
-            }));
-          } else {
-            alignedLines = translatedLines;
+      if (trackResult.status === 200) {
+        const track = trackResult.body.track as Record<string, unknown> | undefined;
+        srcLang = track?.lyrics_language as string | undefined;
+
+        // Step 2 — request the translation
+        const translResult = await mxFetch(
+          `track.lyrics.translation.get?track_id=${trackId}&selected_language=${lang}`,
+          apiKey,
+        );
+
+        if (translResult.status === 200) {
+          const lyricsBody = (translResult.body.lyrics as Record<string, unknown>)?.lyrics_body as string | undefined;
+
+          // availableLanguages built dynamically: source language + target if translation succeeded
+          const availableLanguages = [
+            ...(srcLang ? [srcLang] : []),
+            ...(lyricsBody ? [lang] : []),
+          ].filter((v, i, a) => a.indexOf(v) === i);
+
+          if (lyricsBody) {
+            const originalResult = await getLyrics(trackId, apiKey).catch(() => null);
+            const translatedLines = parsePlainLyrics(lyricsBody);
+
+            let alignedLines: LyricLine[];
+            if (originalResult?.hasSync && translatedLines.length === originalResult.lines.length) {
+              alignedLines = originalResult.lines.map((orig, i) => ({
+                text: translatedLines[i].text,
+                startMs: orig.startMs,
+                endMs: orig.endMs,
+              }));
+            } else {
+              alignedLines = translatedLines;
+            }
+
+            const response: TranslationResponse = {
+              source: "musixmatch",
+              trackId,
+              targetLanguage: lang,
+              lines: alignedLines,
+              availableLanguages,
+            };
+            return res.json(response);
           }
 
+          // 200 from translation but no body content
           const response: TranslationResponse = {
             source: "musixmatch",
             trackId,
             targetLanguage: lang,
-            lines: alignedLines,
-            availableLanguages: srcLang ? [srcLang, lang] : [lang],
+            lines: null,
+            availableLanguages: srcLang ? [srcLang] : [],
           };
           return res.json(response);
         }
+
+        // Translation returned non-200 (language not available for this track)
+        const response: TranslationResponse = {
+          source: "musixmatch",
+          trackId,
+          targetLanguage: lang,
+          lines: null,
+          availableLanguages: srcLang ? [srcLang] : [],
+        };
+        return res.json(response);
       }
+
+      // track.get returned non-200 → fall through to demo
     } catch (err) {
       req.log.warn({ err }, "Musixmatch translation error");
     }
@@ -557,7 +623,8 @@ router.get("/musixmatch/translate/:trackId/:lang", async (req, res) => {
     return res.status(404).json({ error: "track_not_found" });
   }
 
-  // Demo tracks have pre-built translations; other catalogue tracks have none
+  // Demo tracks have pre-built translations.
+  // Spec: availableLanguages must be [] when Musixmatch returns 401.
   const demo = DEMO_TRACKS[trackId];
   if (demo?.translations[lang]) {
     const response: TranslationResponse = {
@@ -565,19 +632,18 @@ router.get("/musixmatch/translate/:trackId/:lang", async (req, res) => {
       trackId,
       targetLanguage: lang,
       lines: demo.translations[lang]!,
-      availableLanguages: Object.keys(demo.translations),
+      availableLanguages: [], // empty per spec when Musixmatch 401
     };
     return res.json(response);
   }
 
-  // Translation not available — lines: null signals unavailability; source stays "demo"
+  // Translation not available for this language
   const response: TranslationResponse = {
     source: "demo",
     trackId,
     targetLanguage: lang,
     lines: null,
-    // For demo tracks, list known languages; for other catalogue tracks in 401 mode, empty
-    availableLanguages: demo ? Object.keys(demo.translations) : [],
+    availableLanguages: [], // empty per spec when Musixmatch 401
   };
   return res.json(response);
 });

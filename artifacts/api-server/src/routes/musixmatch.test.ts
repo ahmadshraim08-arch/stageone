@@ -2,9 +2,6 @@
  * Smoke tests for LyricStage Musixmatch endpoints.
  * Runtime: node:test (built-in, Node 24). No extra test-framework deps needed.
  * Runner: pnpm --filter @workspace/api-server run test
- *
- * All tests mock globalThis.fetch to return HTTP 401 so the demo-fallback
- * path is exercised in isolation from the real Musixmatch API.
  */
 
 import { describe, it, before, after } from "node:test";
@@ -14,31 +11,34 @@ import express from "express";
 import pinoHttp from "pino-http";
 
 // ---------------------------------------------------------------------------
-// Pure-function helpers — no HTTP needed
+// Pure-function helpers
 // ---------------------------------------------------------------------------
 import { deriveSegments, type LyricLine } from "./musixmatch";
-
-// ---------------------------------------------------------------------------
-// Full router — for HTTP-level tests
-// ---------------------------------------------------------------------------
 import musixmatchRouter from "./musixmatch";
 
 // ---------------------------------------------------------------------------
-// Mock fetch → always returns 401, forcing demo-fallback for every test
+// Fetch mock helpers
 // ---------------------------------------------------------------------------
-const realFetch = globalThis.fetch;
-before(() => {
-  globalThis.fetch = async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]): Promise<Response> =>
-    ({
-      json: async () => ({ message: { header: { status_code: 401 }, body: {} } }),
-    }) as unknown as Response;
-});
-after(() => {
-  globalThis.fetch = realFetch;
-});
+type FetchLike = typeof fetch;
+
+function use401Mock() {
+  let saved: FetchLike;
+  before(() => {
+    saved = globalThis.fetch;
+    globalThis.fetch = async (): Promise<Response> =>
+      ({ json: async () => ({ message: { header: { status_code: 401 }, body: {} } }) }) as unknown as Response;
+  });
+  after(() => { globalThis.fetch = saved; });
+}
+
+function useMock(fn: FetchLike) {
+  let saved: FetchLike;
+  before(() => { saved = globalThis.fetch; globalThis.fetch = fn; });
+  after(() => { globalThis.fetch = saved; });
+}
 
 // ---------------------------------------------------------------------------
-// Minimal Express test-app factory (each test gets its own server)
+// Minimal Express test-app factory
 // ---------------------------------------------------------------------------
 function buildApp() {
   const app = express();
@@ -54,10 +54,11 @@ async function httpGet(path: string): Promise<{ status: number; body: unknown }>
       const { port } = server.address() as { port: number };
       http.get(`http://127.0.0.1:${port}${path}`, (res) => {
         let raw = "";
-        res.on("data", (chunk: Buffer) => { raw += chunk.toString(); });
+        res.on("data", (c: Buffer) => { raw += c.toString(); });
         res.on("end", () => {
           server.close();
-          try { resolve({ status: res.statusCode ?? 0, body: JSON.parse(raw) }); } catch (e) { reject(e); }
+          try { resolve({ status: res.statusCode ?? 0, body: JSON.parse(raw) }); }
+          catch (e) { reject(e); }
         });
       }).on("error", (e) => { server.close(); reject(e); });
     });
@@ -71,8 +72,8 @@ async function httpGet(path: string): Promise<{ status: number; body: unknown }>
 describe("deriveSegments", () => {
   it("returns 'Selected Section' when no gaps ≥ 2000 ms", () => {
     const lines: LyricLine[] = [
-      { text: "Line A", startMs: 0,    endMs: 4000 },
-      { text: "Line B", startMs: 4500, endMs: 9000 },
+      { text: "A", startMs: 0,    endMs: 4000 },
+      { text: "B", startMs: 4500, endMs: 9000 },
     ];
     const segs = deriveSegments(lines);
     assert.equal(segs.length, 1);
@@ -80,24 +81,24 @@ describe("deriveSegments", () => {
     assert.equal(segs[0].lineCount, 2);
   });
 
-  it("returns 'Selected Section' when there is exactly 1 gap break (< 2 breaks)", () => {
+  it("returns 'Selected Section' with exactly 1 gap break (fewer than 2 breaks)", () => {
     const lines: LyricLine[] = [
       { text: "A", startMs: 0,    endMs: 3000 },
-      // 2600 ms gap (1 break)
+      // 2600 ms gap — 1 break
       { text: "B", startMs: 5600, endMs: 9000 },
     ];
     const segs = deriveSegments(lines);
-    assert.equal(segs.length, 1,              "exactly 1 break must still be Selected Section");
+    assert.equal(segs.length, 1,              "1 break must still yield 'Selected Section'");
     assert.equal(segs[0].label, "Selected Section");
     assert.equal(segs[0].lineCount, 2);
   });
 
-  it("splits into Section N only when there are 2 or more gap breaks", () => {
+  it("splits into Section N only with 2 or more gap breaks", () => {
     const lines: LyricLine[] = [
       { text: "A", startMs: 0,     endMs: 3000 },
-      // 2600 ms gap (break 1)
+      // break 1
       { text: "B", startMs: 5600,  endMs: 8000 },
-      // 2600 ms gap (break 2)
+      // break 2
       { text: "C", startMs: 10600, endMs: 14000 },
     ];
     const segs = deriveSegments(lines);
@@ -125,10 +126,12 @@ describe("deriveSegments", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: GET /api/musixmatch/lyrics/:trackId
+// Tests: lyrics — demo fallback (fetch mocked to 401)
 // ---------------------------------------------------------------------------
 
 describe("GET /api/musixmatch/lyrics/:trackId — demo fallback (401)", () => {
+  use401Mock();
+
   it("returns correct shape with source: demo for a known demo track", async () => {
     const { status, body } = await httpGet("/api/musixmatch/lyrics/demo_001") as {
       status: number;
@@ -138,16 +141,14 @@ describe("GET /api/musixmatch/lyrics/:trackId — demo fallback (401)", () => {
     assert.equal(status, 200);
     assert.equal(body.source, "demo");
     assert.equal(body.trackId, "demo_001");
-    assert.ok(Array.isArray(body.lines), "lines must be an array");
-    assert.ok(body.lines.length > 0,    "lines must not be empty in demo mode");
+    assert.ok(Array.isArray(body.lines));
+    assert.ok(body.lines.length > 0);
     for (const line of body.lines) {
-      assert.ok("text" in line,    "each line needs text");
-      assert.ok("startMs" in line, "each line needs startMs");
-      assert.ok("endMs" in line,   "each line needs endMs");
+      assert.ok("text" in line && "startMs" in line && "endMs" in line);
     }
   });
 
-  it("returns demo fallback for known non-demo catalogue tracks (401)", async () => {
+  it("returns demo fallback for known non-demo catalogue tracks", async () => {
     const { status, body } = await httpGet("/api/musixmatch/lyrics/99999") as {
       status: number; body: { source: string; lines: unknown[] };
     };
@@ -157,7 +158,7 @@ describe("GET /api/musixmatch/lyrics/:trackId — demo fallback (401)", () => {
   });
 
   it("returns 404 for an unknown trackId in demo mode", async () => {
-    const { status, body } = await httpGet("/api/musixmatch/lyrics/xyz_unknown_track") as {
+    const { status, body } = await httpGet("/api/musixmatch/lyrics/xyz_unknown") as {
       status: number; body: { error: string };
     };
     assert.equal(status, 404);
@@ -166,11 +167,146 @@ describe("GET /api/musixmatch/lyrics/:trackId — demo fallback (401)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: GET /api/musixmatch/segments/:trackId
+// Tests: lyrics — Musixmatch available (200)
+// ---------------------------------------------------------------------------
+
+describe("GET /api/musixmatch/lyrics/:trackId — Musixmatch 200", () => {
+  // Mock: track.get returns has_subtitles=1, track_length=176
+  //       track.subtitle.get returns a valid subtitle body
+  useMock(async (input) => {
+    const url = typeof input === "string" ? input : input.toString();
+    if (url.includes("track.get")) {
+      return {
+        json: async () => ({
+          message: {
+            header: { status_code: 200 },
+            body: { track: { has_subtitles: 1, track_length: 176, lyrics_language: "en" } },
+          },
+        }),
+      } as unknown as Response;
+    }
+    if (url.includes("track.subtitle.get")) {
+      return {
+        json: async () => ({
+          message: {
+            header: { status_code: 200 },
+            body: {
+              subtitle: {
+                subtitle_body: JSON.stringify([
+                  { text: "Hello world", time: { total: 5.0 } },
+                  { text: "Second line", time: { total: 10.0 } },
+                ]),
+              },
+            },
+          },
+        }),
+      } as unknown as Response;
+    }
+    return { json: async () => ({ message: { header: { status_code: 401 }, body: {} } }) } as unknown as Response;
+  });
+
+  it("returns source: musixmatch, hasSync: true, durationMs from track_length", async () => {
+    const { status, body } = await httpGet("/api/musixmatch/lyrics/99999") as {
+      status: number;
+      body: { source: string; hasSync: boolean; durationMs: number; lines: unknown[] };
+    };
+    assert.equal(status, 200);
+    assert.equal(body.source, "musixmatch");
+    assert.equal(body.hasSync, true);
+    assert.equal(body.durationMs, 176000, "durationMs must be track_length × 1000");
+    assert.ok(body.lines.length > 0);
+  });
+});
+
+describe("GET /api/musixmatch/lyrics/:trackId — has_subtitles=0", () => {
+  // Mock: track.get returns has_subtitles=0 → endpoint must use lyrics.get, hasSync=false
+  useMock(async (input) => {
+    const url = typeof input === "string" ? input : input.toString();
+    if (url.includes("track.get")) {
+      return {
+        json: async () => ({
+          message: {
+            header: { status_code: 200 },
+            body: { track: { has_subtitles: 0, track_length: 200, lyrics_language: "en" } },
+          },
+        }),
+      } as unknown as Response;
+    }
+    if (url.includes("track.lyrics.get")) {
+      return {
+        json: async () => ({
+          message: {
+            header: { status_code: 200 },
+            body: { lyrics: { lyrics_body: "Plain line one\nPlain line two" } },
+          },
+        }),
+      } as unknown as Response;
+    }
+    return { json: async () => ({ message: { header: { status_code: 401 }, body: {} } }) } as unknown as Response;
+  });
+
+  it("returns hasSync: false and null timings when has_subtitles=0", async () => {
+    const { status, body } = await httpGet("/api/musixmatch/lyrics/99999") as {
+      status: number;
+      body: { source: string; hasSync: boolean; lines: { text: string; startMs: null; endMs: null }[] };
+    };
+    assert.equal(status, 200);
+    assert.equal(body.source, "musixmatch");
+    assert.equal(body.hasSync, false, "hasSync must be false when has_subtitles=0");
+    assert.ok(body.lines.length > 0);
+    for (const line of body.lines) {
+      assert.equal(line.startMs, null, "timings must be null when unsynced");
+      assert.equal(line.endMs,   null, "timings must be null when unsynced");
+    }
+  });
+});
+
+describe("GET /api/musixmatch/lyrics/:trackId — Musixmatch 200 empty subtitle body", () => {
+  // Mock: track.get has_subtitles=1, subtitle body is empty → must NOT fall back to demo
+  useMock(async (input) => {
+    const url = typeof input === "string" ? input : input.toString();
+    if (url.includes("track.get")) {
+      return {
+        json: async () => ({
+          message: {
+            header: { status_code: 200 },
+            body: { track: { has_subtitles: 1, track_length: 150, lyrics_language: "en" } },
+          },
+        }),
+      } as unknown as Response;
+    }
+    if (url.includes("track.subtitle.get")) {
+      return {
+        json: async () => ({
+          message: {
+            header: { status_code: 200 },
+            body: { subtitle: { subtitle_body: "" } }, // empty body
+          },
+        }),
+      } as unknown as Response;
+    }
+    return { json: async () => ({ message: { header: { status_code: 401 }, body: {} } }) } as unknown as Response;
+  });
+
+  it("returns source: musixmatch with lines: [] — does NOT fall to demo", async () => {
+    const { status, body } = await httpGet("/api/musixmatch/lyrics/99999") as {
+      status: number;
+      body: { source: string; hasSync: boolean; lines: unknown[] };
+    };
+    assert.equal(status, 200);
+    assert.equal(body.source, "musixmatch", "200 empty body must NOT fall through to demo");
+    assert.deepEqual(body.lines, [],          "empty subtitle body → lines: []");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: segments — demo fallback (401)
 // ---------------------------------------------------------------------------
 
 describe("GET /api/musixmatch/segments/:trackId — demo fallback (401)", () => {
-  it("returns correct shape with source and segments array", async () => {
+  use401Mock();
+
+  it("returns correct shape for a known demo track", async () => {
     const { status, body } = await httpGet("/api/musixmatch/segments/demo_001") as {
       status: number;
       body: {
@@ -179,16 +315,15 @@ describe("GET /api/musixmatch/segments/:trackId — demo fallback (401)", () => 
       };
     };
     assert.equal(status, 200);
-    assert.ok(body.source, "source field must be present");
+    assert.ok(body.source);
     assert.equal(body.trackId, "demo_001");
-    assert.ok(Array.isArray(body.segments), "segments must be array");
-    assert.ok(body.segments.length > 0,     "must have at least one segment");
+    assert.ok(Array.isArray(body.segments));
+    assert.ok(body.segments.length > 0);
     for (const seg of body.segments) {
-      assert.ok(seg.id,                          "segment needs id");
-      assert.ok(seg.label,                       "segment needs label");
-      assert.equal(typeof seg.startMs, "number", "startMs must be number");
-      assert.equal(typeof seg.endMs,   "number", "endMs must be number");
-      assert.equal(typeof seg.lineCount,"number","lineCount must be number");
+      assert.ok(seg.id && seg.label);
+      assert.equal(typeof seg.startMs,   "number");
+      assert.equal(typeof seg.endMs,     "number");
+      assert.equal(typeof seg.lineCount, "number");
     }
   });
 
@@ -198,15 +333,14 @@ describe("GET /api/musixmatch/segments/:trackId — demo fallback (401)", () => 
     };
     const forbidden = ["verse", "chorus", "bridge", "pre-chorus", "outro", "intro"];
     for (const seg of body.segments) {
-      const lower = seg.label.toLowerCase();
       for (const word of forbidden) {
-        assert.ok(!lower.includes(word), `Label "${seg.label}" must not use "${word}"`);
+        assert.ok(!seg.label.toLowerCase().includes(word), `"${seg.label}" must not use "${word}"`);
       }
     }
   });
 
-  it("returns 404 for an unknown trackId in demo mode", async () => {
-    const { status, body } = await httpGet("/api/musixmatch/segments/xyz_unknown_track") as {
+  it("returns 404 for an unknown trackId", async () => {
+    const { status, body } = await httpGet("/api/musixmatch/segments/xyz_unknown") as {
       status: number; body: { error: string };
     };
     assert.equal(status, 404);
@@ -215,44 +349,52 @@ describe("GET /api/musixmatch/segments/:trackId — demo fallback (401)", () => 
 });
 
 // ---------------------------------------------------------------------------
-// Tests: GET /api/musixmatch/translate/:trackId/:lang
+// Tests: translate — demo fallback (401)
 // ---------------------------------------------------------------------------
 
 describe("GET /api/musixmatch/translate/:trackId/:lang — demo fallback (401)", () => {
+  use401Mock();
+
   it("returns lines array for a known demo translation (demo_001 → es)", async () => {
     const { status, body } = await httpGet("/api/musixmatch/translate/demo_001/es") as {
       status: number;
-      body: { source: string; targetLanguage: string;
-              lines: unknown[] | null; availableLanguages: string[] };
+      body: { source: string; targetLanguage: string; lines: unknown[] | null; availableLanguages: string[] };
     };
     assert.equal(status, 200);
-    assert.ok(body.source,                            "source must be present");
+    assert.ok(body.source);
     assert.equal(body.targetLanguage, "es");
     assert.ok(Array.isArray(body.lines),              "lines must be array for known translation");
     assert.ok(Array.isArray(body.availableLanguages), "availableLanguages must be array");
   });
 
-  it("returns lines: null (not crash) for unavailable translation language (demo_003 → zh)", async () => {
-    const { status, body } = await httpGet("/api/musixmatch/translate/demo_003/zh") as {
-      status: number;
-      body: { source: string; lines: null; availableLanguages: string[] };
+  it("availableLanguages is [] in demo/401 mode (per spec)", async () => {
+    const { body } = await httpGet("/api/musixmatch/translate/demo_001/es") as {
+      body: { availableLanguages: string[] };
     };
-    assert.equal(status, 200);
-    assert.ok(body.source,                            "source must be present");
-    assert.equal(body.lines, null,                    "lines must be null when unavailable");
-    assert.ok(Array.isArray(body.availableLanguages), "availableLanguages must still be array");
+    assert.deepEqual(body.availableLanguages, [], "spec: availableLanguages must be [] when Musixmatch returns 401");
   });
 
-  it("returns lines: null for known non-demo catalogue track with no translations (401)", async () => {
+  it("returns lines: null for unavailable translation (demo_003 → zh)", async () => {
+    const { status, body } = await httpGet("/api/musixmatch/translate/demo_003/zh") as {
+      status: number; body: { source: string; lines: null; availableLanguages: string[] };
+    };
+    assert.equal(status, 200);
+    assert.ok(body.source);
+    assert.equal(body.lines, null);
+    assert.deepEqual(body.availableLanguages, []);
+  });
+
+  it("returns lines: null for known non-demo catalogue track (401)", async () => {
     const { status, body } = await httpGet("/api/musixmatch/translate/99999/fr") as {
-      status: number; body: { lines: null };
+      status: number; body: { lines: null; availableLanguages: string[] };
     };
     assert.equal(status, 200);
     assert.equal(body.lines, null);
+    assert.deepEqual(body.availableLanguages, []);
   });
 
-  it("returns 404 for unknown trackId in demo mode", async () => {
-    const { status, body } = await httpGet("/api/musixmatch/translate/xyz_unknown_track/es") as {
+  it("returns 404 for unknown trackId", async () => {
+    const { status, body } = await httpGet("/api/musixmatch/translate/xyz_unknown/es") as {
       status: number; body: { error: string };
     };
     assert.equal(status, 404);
@@ -261,26 +403,79 @@ describe("GET /api/musixmatch/translate/:trackId/:lang — demo fallback (401)",
 });
 
 // ---------------------------------------------------------------------------
-// Tests: GET /api/musixmatch/mood/:trackId
+// Tests: translate — Musixmatch 200 (dynamic availableLanguages)
+// ---------------------------------------------------------------------------
+
+describe("GET /api/musixmatch/translate/:trackId/:lang — Musixmatch 200", () => {
+  useMock(async (input) => {
+    const url = typeof input === "string" ? input : input.toString();
+    if (url.includes("track.get")) {
+      return {
+        json: async () => ({
+          message: {
+            header: { status_code: 200 },
+            body: { track: { lyrics_language: "en", has_subtitles: 0, track_length: 200 } },
+          },
+        }),
+      } as unknown as Response;
+    }
+    if (url.includes("track.lyrics.translation.get")) {
+      return {
+        json: async () => ({
+          message: {
+            header: { status_code: 200 },
+            body: { lyrics: { lyrics_body: "Translated line one\nTranslated line two" } },
+          },
+        }),
+      } as unknown as Response;
+    }
+    if (url.includes("track.lyrics.get")) {
+      return {
+        json: async () => ({
+          message: {
+            header: { status_code: 200 },
+            body: { lyrics: { lyrics_body: "Original line one\nOriginal line two" } },
+          },
+        }),
+      } as unknown as Response;
+    }
+    return { json: async () => ({ message: { header: { status_code: 401 }, body: {} } }) } as unknown as Response;
+  });
+
+  it("builds availableLanguages dynamically from track.get + translation success", async () => {
+    const { status, body } = await httpGet("/api/musixmatch/translate/99999/es") as {
+      status: number;
+      body: { source: string; lines: unknown[] | null; availableLanguages: string[] };
+    };
+    assert.equal(status, 200);
+    assert.equal(body.source, "musixmatch");
+    assert.ok(Array.isArray(body.lines));
+    assert.ok(body.availableLanguages.includes("en"), "srcLang from track.get must be in availableLanguages");
+    assert.ok(body.availableLanguages.includes("es"), "target lang must be in availableLanguages when translation succeeds");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: mood — demo fallback (401)
 // ---------------------------------------------------------------------------
 
 describe("GET /api/musixmatch/mood/:trackId — derived mood", () => {
+  use401Mock();
+
   it("returns source: derived with required fields for a known demo track", async () => {
     const { status, body } = await httpGet("/api/musixmatch/mood/demo_001") as {
       status: number;
-      body: { source: string; trackId: string;
-              moodTags: string[]; primaryMood: string; accentColor: string };
+      body: { source: string; trackId: string; moodTags: string[]; primaryMood: string; accentColor: string };
     };
     assert.equal(status, 200);
-    assert.equal(body.source, "derived",           "mood source must always be 'derived'");
+    assert.equal(body.source, "derived");
     assert.equal(body.trackId, "demo_001");
-    assert.ok(Array.isArray(body.moodTags),        "moodTags must be array");
-    assert.ok(body.moodTags.length > 0,            "moodTags must not be empty");
-    assert.equal(typeof body.primaryMood, "string","primaryMood must be string");
-    assert.ok(body.accentColor.startsWith("#"),    "accentColor must be a hex color");
+    assert.ok(Array.isArray(body.moodTags) && body.moodTags.length > 0);
+    assert.equal(typeof body.primaryMood, "string");
+    assert.ok(body.accentColor.startsWith("#"));
   });
 
-  it("returns source: derived for known non-demo catalogue tracks in demo mode", async () => {
+  it("returns source: derived for known non-demo catalogue tracks", async () => {
     const { status, body } = await httpGet("/api/musixmatch/mood/99999") as {
       status: number; body: { source: string; accentColor: string };
     };
@@ -289,8 +484,8 @@ describe("GET /api/musixmatch/mood/:trackId — derived mood", () => {
     assert.ok(body.accentColor.startsWith("#"));
   });
 
-  it("returns 404 for an unknown trackId in demo mode", async () => {
-    const { status, body } = await httpGet("/api/musixmatch/mood/xyz_unknown_track") as {
+  it("returns 404 for an unknown trackId", async () => {
+    const { status, body } = await httpGet("/api/musixmatch/mood/xyz_unknown") as {
       status: number; body: { error: string };
     };
     assert.equal(status, 404);

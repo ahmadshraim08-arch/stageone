@@ -37,11 +37,11 @@ export interface SegmentsResponse {
 }
 
 export interface TranslationResponse {
-  source: LyricSource | "unavailable";
+  source: LyricSource;
   trackId: string;
   targetLanguage: string;
-  lines: LyricLine[] | null;
-  availableLanguages: string[];
+  lines: LyricLine[] | null;    // null = translation not available for this language
+  availableLanguages: string[]; // empty when Musixmatch 401; demo tracks list known langs
 }
 
 export interface MoodResponse {
@@ -281,7 +281,7 @@ export function deriveSegments(lines: LyricLine[]): Segment[] {
     if (gap >= 2000) breakPoints.push(i);
   }
 
-  if (breakPoints.length < 1) {
+  if (breakPoints.length < 2) {
     return [
       {
         id: "seg_0",
@@ -377,6 +377,10 @@ const DEFAULT_MOOD: MoodEntry = {
   accentColor: "#A855F7",
 };
 
+function isKnownTrack(trackId: string): boolean {
+  return CATALOGUE.some((t) => t.track_id === trackId);
+}
+
 function moodForGenre(genre: string): MoodEntry {
   if (GENRE_TO_MOOD[genre]) return GENRE_TO_MOOD[genre];
   // Partial match
@@ -467,7 +471,11 @@ router.get("/musixmatch/lyrics/:trackId", async (req, res) => {
     lines: GENERIC_DEMO_LINES,
   }));
 
-  res.json(result);
+  // In demo fallback, only return data for tracks we actually know about
+  if (result.source === "demo" && !isKnownTrack(trackId)) {
+    return res.status(404).json({ error: "track_not_found" });
+  }
+  return res.json(result);
 });
 
 // ---------------------------------------------------------------------------
@@ -486,9 +494,13 @@ router.get("/musixmatch/segments/:trackId", async (req, res) => {
     lines: GENERIC_DEMO_LINES,
   }));
 
+  // In demo fallback, only return data for tracks we actually know about
+  if (lyricResult.source === "demo" && !isKnownTrack(trackId)) {
+    return res.status(404).json({ error: "track_not_found" });
+  }
   const segments = deriveSegments(lyricResult.lines);
   const response: SegmentsResponse = { source: lyricResult.source as LyricSource, trackId, segments };
-  res.json(response);
+  return res.json(response);
 });
 
 // ---------------------------------------------------------------------------
@@ -540,7 +552,12 @@ router.get("/musixmatch/translate/:trackId/:lang", async (req, res) => {
     }
   }
 
-  // Demo fallback — only demo tracks have translations
+  // Demo fallback — unknown tracks get 404 in demo mode
+  if (!isKnownTrack(trackId)) {
+    return res.status(404).json({ error: "track_not_found" });
+  }
+
+  // Demo tracks have pre-built translations; other catalogue tracks have none
   const demo = DEMO_TRACKS[trackId];
   if (demo?.translations[lang]) {
     const response: TranslationResponse = {
@@ -553,12 +570,13 @@ router.get("/musixmatch/translate/:trackId/:lang", async (req, res) => {
     return res.json(response);
   }
 
-  // Translation not available
+  // Translation not available — lines: null signals unavailability; source stays "demo"
   const response: TranslationResponse = {
-    source: "unavailable",
+    source: "demo",
     trackId,
     targetLanguage: lang,
     lines: null,
+    // For demo tracks, list known languages; for other catalogue tracks in 401 mode, empty
     availableLanguages: demo ? Object.keys(demo.translations) : [],
   };
   return res.json(response);
@@ -573,9 +591,10 @@ router.get("/musixmatch/mood/:trackId", async (req, res) => {
   const apiKey = process.env.MUSIXMATCH_API_KEY;
 
   let genre = DEMO_TRACKS[trackId]?.genre;
+  let resolvedViaMusixmatch = false;
 
   // Try to get genre from Musixmatch track.get
-  if (!genre && apiKey) {
+  if (apiKey) {
     try {
       const result = await mxFetch(`track.get?track_id=${trackId}`, apiKey);
       if (result.status === 200) {
@@ -586,10 +605,16 @@ router.get("/musixmatch/mood/:trackId", async (req, res) => {
         if (genreList && genreList.length > 0) {
           genre = genreList[0].music_genre.music_genre_name;
         }
+        resolvedViaMusixmatch = true;
       }
     } catch {
-      // ignore
+      // ignore — fall through to demo
     }
+  }
+
+  // In demo mode, only serve known tracks
+  if (!resolvedViaMusixmatch && !isKnownTrack(trackId)) {
+    return res.status(404).json({ error: "track_not_found" });
   }
 
   const mood = moodForGenre(genre ?? "");
@@ -600,7 +625,7 @@ router.get("/musixmatch/mood/:trackId", async (req, res) => {
     primaryMood: mood.primaryMood,
     accentColor: mood.accentColor,
   };
-  res.json(response);
+  return res.json(response);
 });
 
 export default router;

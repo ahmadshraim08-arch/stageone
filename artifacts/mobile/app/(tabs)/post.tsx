@@ -26,6 +26,7 @@ import { useColors } from "@/hooks/useColors";
 import {
   fetchSegments,
   fetchLyrics,
+  searchTracks,
   type Segment,
   type LyricsResponse,
   type LyricLine,
@@ -387,30 +388,25 @@ export default function PostScreen() {
     if (!query) return;
     setIsSongSearching(true);
     try {
-      const domain = process.env.EXPO_PUBLIC_DOMAIN;
-      const url = domain
-        ? `https://${domain}/api/musixmatch/search?q=${encodeURIComponent(query)}`
-        : null;
-      if (url) {
-        const res = await fetch(url);
-        if (res.ok) {
-          const data = await res.json();
-          setSongResults(data.tracks ?? MOCK_TRACKS.filter((t) =>
+      const tracks = await searchTracks(query);
+      setSongResults(
+        tracks.length > 0
+          ? tracks
+          : MOCK_TRACKS.filter(
+              (t) =>
+                t.track_name.toLowerCase().includes(query.toLowerCase()) ||
+                t.artist_name.toLowerCase().includes(query.toLowerCase()),
+            ),
+      );
+    } catch {
+      setSongResults(
+        MOCK_TRACKS.filter(
+          (t) =>
             t.track_name.toLowerCase().includes(query.toLowerCase()) ||
             t.artist_name.toLowerCase().includes(query.toLowerCase()),
-          ));
-          setIsSongSearching(false);
-          return;
-        }
-      }
-    } catch {}
-    setSongResults(
-      MOCK_TRACKS.filter(
-        (t) =>
-          t.track_name.toLowerCase().includes(query.toLowerCase()) ||
-          t.artist_name.toLowerCase().includes(query.toLowerCase()),
-      ),
-    );
+        ),
+      );
+    }
     setIsSongSearching(false);
   };
 

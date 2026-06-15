@@ -54,6 +54,13 @@ export interface MoodResponse {
   accentColor: string;
 }
 
+export interface TrackResult {
+  track_id: string;
+  track_name: string;
+  artist_name: string;
+  album_name?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Base URL
 // ---------------------------------------------------------------------------
@@ -72,6 +79,9 @@ const lyricsCache = new Map<string, LyricsResponse>();
 const segmentsCache = new Map<string, SegmentsResponse>();
 const translationCache = new Map<string, TranslationResponse | null>();
 const moodCache = new Map<string, MoodResponse>();
+const searchCache = new Map<string, TrackResult[]>();
+
+const SEARCH_CACHE_MAX = 50;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -165,10 +175,36 @@ export async function probeAvailableTranslations(
   return results.filter((l): l is string => l !== null);
 }
 
+/**
+ * Search for tracks by query string. Results are cached per trimmed query for
+ * the lifetime of the session (up to SEARCH_CACHE_MAX entries, LRU-evicted).
+ */
+export async function searchTracks(query: string): Promise<TrackResult[]> {
+  const key = query.trim().toLowerCase();
+  if (!key) return [];
+  if (searchCache.has(key)) {
+    const cached = searchCache.get(key)!;
+    searchCache.delete(key);
+    searchCache.set(key, cached);
+    return cached;
+  }
+  const data = await apiFetch<{ tracks: TrackResult[] }>(
+    `/search?q=${encodeURIComponent(key)}`,
+  );
+  if (searchCache.size >= SEARCH_CACHE_MAX) {
+    const oldest = searchCache.keys().next().value;
+    if (oldest !== undefined) searchCache.delete(oldest);
+  }
+  const tracks = data.tracks ?? [];
+  searchCache.set(key, tracks);
+  return tracks;
+}
+
 /** Clear all caches (useful for testing). */
 export function clearCache(): void {
   lyricsCache.clear();
   segmentsCache.clear();
   translationCache.clear();
   moodCache.clear();
+  searchCache.clear();
 }

@@ -112,6 +112,8 @@ export function MusicMinuteCard({ item, onCommentPress, onGoldenMicPress }: Prop
   const [translatedLines, setTranslatedLines] = useState<LyricLine[] | null>(null);
   const [translationUnavailable, setTranslationUnavailable] = useState(false);
   const [videoPositionMs, setVideoPositionMs] = useState(0);
+  // Probe whether synced lyrics actually exist for this track (null = still probing)
+  const [lyricsAvailable, setLyricsAvailable] = useState<boolean | null>(null);
 
   const section = item.lyricSection ?? null;
 
@@ -146,6 +148,20 @@ export function MusicMinuteCard({ item, onCommentPress, onGoldenMicPress }: Prop
             (ch.lyricSectionId === undefined || ch.lyricSectionId === section.sectionId),
         )
       : null;
+
+  // Background probe on mount — determine if synced lyrics are available.
+  // Only synced lyrics (hasSync: true) power the overlay; plain text (hasSync: false) does not.
+  // Uses in-memory cache so the overlay open fetch is free afterward.
+  useEffect(() => {
+    if (!section) return;
+    let cancelled = false;
+    fetchLyrics(section.trackId).then((result) => {
+      if (cancelled) return;
+      const hasSyncedLyrics = result !== null && result.hasSync && result.lines.length > 0;
+      setLyricsAvailable(hasSyncedLyrics);
+    });
+    return () => { cancelled = true; };
+  }, [section?.trackId]);
 
   // Fetch lyrics + probe translations when overlay opens
   useEffect(() => {
@@ -480,8 +496,8 @@ export function MusicMinuteCard({ item, onCommentPress, onGoldenMicPress }: Prop
           </Text>
         </TouchableOpacity>
 
-        {/* ♪ Lyric toggle — only shown when the card has a lyric section */}
-        {section && (
+        {/* ♪ Lyric toggle — only shown when the card has a lyric section with available lyrics */}
+        {section && lyricsAvailable !== false && (
           <TouchableOpacity
             testID="lyric-overlay-toggle"
             onPress={() => {

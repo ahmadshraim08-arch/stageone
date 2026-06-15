@@ -152,7 +152,70 @@ describe("computeActiveLine — hasSync:true uses timestamp matching", () => {
   });
 });
 
-// ── Test suite 2: "Sing This Part" nav params ────────────────────────────────
+// ── Test suite 2: lyricsAvailable probe logic ────────────────────────────────
+
+/**
+ * Mirrors the probe logic in MusicMinuteCard that decides whether to show
+ * the ♪ lyric overlay toggle button.
+ * Rule: button visible only when hasSync === true AND lines.length > 0.
+ */
+function computeLyricsAvailable(result: LyricsResponse | null): boolean {
+  return result !== null && result.hasSync && result.lines.length > 0;
+}
+
+describe("lyricsAvailable probe — ♪ button visibility", () => {
+  const baseLine: LyricLine = { text: "Hello", startMs: 0, endMs: 4000 };
+
+  test("null result → button hidden", () => {
+    expect(computeLyricsAvailable(null)).toBe(false);
+  });
+
+  test("hasSync:false with lines → button hidden (plain lyrics don't power overlay)", () => {
+    const result: LyricsResponse = {
+      source: "musixmatch",
+      trackId: "real_001",
+      durationMs: 180000,
+      hasSync: false,
+      lines: [{ text: "Unsynced line", startMs: null, endMs: null }],
+    };
+    expect(computeLyricsAvailable(result)).toBe(false);
+  });
+
+  test("hasSync:true with lines → button shown", () => {
+    const result: LyricsResponse = {
+      source: "musixmatch",
+      trackId: "real_001",
+      durationMs: 180000,
+      hasSync: true,
+      lines: [baseLine],
+    };
+    expect(computeLyricsAvailable(result)).toBe(true);
+  });
+
+  test("hasSync:true but empty lines → button hidden", () => {
+    const result: LyricsResponse = {
+      source: "musixmatch",
+      trackId: "real_001",
+      durationMs: 180000,
+      hasSync: true,
+      lines: [],
+    };
+    expect(computeLyricsAvailable(result)).toBe(false);
+  });
+
+  test("demo source with hasSync:true and lines → button shown", () => {
+    const result: LyricsResponse = {
+      source: "demo",
+      trackId: "demo_001",
+      durationMs: 176000,
+      hasSync: true,
+      lines: [baseLine],
+    };
+    expect(computeLyricsAvailable(result)).toBe(true);
+  });
+});
+
+// ── Test suite 3: "Sing This Part" nav params ────────────────────────────────
 
 describe("Sing This Part — navigation param contract", () => {
   test("mm_021 resolves to ch_006 and params carry correct IDs + timestamps", () => {

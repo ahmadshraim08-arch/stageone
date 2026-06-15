@@ -172,14 +172,48 @@ export default function PostScreen() {
     return () => { cancelled = true; };
   }, [step, selectedSong?.track_id]);
 
+  // Debounced song search — fires 600 ms after the user stops typing
+  useEffect(() => {
+    const query = songQuery.trim();
+    if (!query || selectedSong) return;
+    const timer = setTimeout(() => {
+      handleSongSearch();
+    }, 600);
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [songQuery]);
+
   // Apply prefill params from challenge Join button
   useEffect(() => {
     if (prefillAppliedRef.current || !prefillTrackId) return;
-    const track = MOCK_TRACKS.find((t) => t.track_id === prefillTrackId);
-    if (!track) return;
-    prefillAppliedRef.current = true;
-    setPerformanceType("cover");
-    setSelectedSong(track);
+
+    // Try local catalogue first (covers demo tracks and well-known IDs)
+    const localTrack = MOCK_TRACKS.find((t) => t.track_id === prefillTrackId);
+    if (localTrack) {
+      prefillAppliedRef.current = true;
+      setPerformanceType("cover");
+      setSelectedSong(localTrack);
+      return;
+    }
+
+    // Fetch from API for real Musixmatch track IDs
+    const domain = process.env.EXPO_PUBLIC_DOMAIN;
+    if (!domain) return;
+    fetch(`https://${domain}/api/musixmatch/track/${encodeURIComponent(prefillTrackId)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { track?: Record<string, unknown> } | null) => {
+        if (!data?.track) return;
+        const t = data.track;
+        prefillAppliedRef.current = true;
+        setPerformanceType("cover");
+        setSelectedSong({
+          track_id: prefillTrackId,
+          track_name: String(t.track_name ?? prefillTrackId),
+          artist_name: String(t.artist_name ?? ""),
+          album_name: t.album_name ? String(t.album_name) : undefined,
+        });
+      })
+      .catch(() => {});
     // Upload step (1) remains mandatory — do NOT call setStep here
   }, [prefillTrackId]);
 
@@ -349,20 +383,21 @@ export default function PostScreen() {
   };
 
   const handleSongSearch = async () => {
-    if (!songQuery.trim()) return;
+    const query = songQuery.trim();
+    if (!query) return;
     setIsSongSearching(true);
     try {
       const domain = process.env.EXPO_PUBLIC_DOMAIN;
       const url = domain
-        ? `https://${domain}/api/musixmatch/search?q=${encodeURIComponent(songQuery)}`
+        ? `https://${domain}/api/musixmatch/search?q=${encodeURIComponent(query)}`
         : null;
       if (url) {
         const res = await fetch(url);
         if (res.ok) {
           const data = await res.json();
           setSongResults(data.tracks ?? MOCK_TRACKS.filter((t) =>
-            t.track_name.toLowerCase().includes(songQuery.toLowerCase()) ||
-            t.artist_name.toLowerCase().includes(songQuery.toLowerCase()),
+            t.track_name.toLowerCase().includes(query.toLowerCase()) ||
+            t.artist_name.toLowerCase().includes(query.toLowerCase()),
           ));
           setIsSongSearching(false);
           return;
@@ -372,8 +407,8 @@ export default function PostScreen() {
     setSongResults(
       MOCK_TRACKS.filter(
         (t) =>
-          t.track_name.toLowerCase().includes(songQuery.toLowerCase()) ||
-          t.artist_name.toLowerCase().includes(songQuery.toLowerCase()),
+          t.track_name.toLowerCase().includes(query.toLowerCase()) ||
+          t.artist_name.toLowerCase().includes(query.toLowerCase()),
       ),
     );
     setIsSongSearching(false);

@@ -1,0 +1,35 @@
+The two plans are approved, with the following required corrections before implementation:
+
+1. Add `source: "musixmatch" | "demo"` to all Musixmatch adapter responses. Mock fallback must not silently appear to be real API data.
+
+2. Verify the exact available Musixmatch endpoints and response formats from the official Musicathon documentation before coding. Do not invent endpoint behavior for synced lyrics, translations, structure, snippets, or mood analysis.
+
+3. Do not permanently store complete lyric or translation arrays inside `MusicMinute`, seed data, local storage, or the database. Persist only the Musixmatch track ID, section name, timing boundaries, line indexes, language reference, and timing offset. Fetch lyric content at runtime.
+
+4. Do not include full copyrighted lyrics for the seven commercial seed songs as mock data. Use original StageOne demo lyrics, neutral placeholders, or runtime Musixmatch content.
+
+5. Do not derive “authentic” lyric timings from BPM. Use Musixmatch synced timing when available and manually timed original mock content for fallback demonstrations.
+
+6. Add `timingOffsetMs` to the selected section and include a preview control allowing the creator to shift lyrics earlier or later.
+
+7. Correctly normalize playback timing. The lyric overlay must compare the video position against section-relative timestamps or calculate `videoPosition + sectionStart + timingOffset`.
+
+8. Inspect the existing video implementation before changing libraries. If starting a new implementation, prefer `expo-video`. Avoid introducing new dependency on deprecated `expo-av`.
+
+9. “Sing This Part” navigation should pass IDs and timestamps, not lyric arrays. The destination screen should refetch through the typed Musixmatch helper.
+
+10. Named sections should use official structure metadata where available. Otherwise use safe fallback labels such as “Selected Section” or timestamp ranges rather than incorrectly claiming Verse/Chorus/Bridge.
+
+11. Mood tags may come from Musixmatch analysis, but StageOne should map mood tags to UI accent colours locally.
+
+12. Align supported translation languages between the API and mobile plans. The UI should dynamically show translations that are actually available rather than always assuming EN, AR, and ES.
+
+13. Prioritize the polished core loop before optional discovery features:
+
+Search track → choose lyric section → upload performance → publish → synced lyric overlay → translate → Sing This Part → LyricStage challenge.
+
+14. Include API loading, unavailable-lyrics, unavailable-translation, unavailable-richsync, and mock-fallback states without crashing the experience.
+
+15. Add integration tests or smoke tests for the complete API/mobile contract, not only separate typechecks.
+
+Proceed with API Plan #1 first, then Mobile Plan #2 after confirming the final response types.

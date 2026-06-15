@@ -1,0 +1,145 @@
+original Musixmatch plan was already good:
+
+Let a creator search for the song they are covering.
+Match it to the official Musixmatch track ID.
+Attach verified track metadata to the Music Minute.
+Display synced lyrics during playback.
+Offer lyric translations.
+Use song and lyric data for discovery.
+
+That is meaningful, but by itself it may still look like “we added song search to a video app.”
+
+For stronger judging, Musixmatch should power an entire feature that StageOne could not deliver without it.
+
+Strongest use case: LyricStage
+
+LyricStage turns a song into a social performance challenge using Musixmatch search, matching, synced lyrics, analysis, and translations.
+
+Example creator scenario
+
+Imagine a creator named Lina wants to upload a 60-second cover.
+
+She records herself singing part of a song, or she types a line she remembers:
+
+“I found a love for me…”
+
+StageOne then uses the Musixmatch API to:
+
+1. Identify the official song
+
+Using Search & Match or Lyrics Fingerprint, StageOne finds the canonical track and attaches:
+
+Official song title
+Original artist
+Musixmatch track ID
+Language
+Copyright/credit metadata
+
+This prevents incorrect song tagging and gives the performance an official music identity.
+
+2. Let Lina choose the exact lyric section
+
+StageOne loads the song’s lyrics and allows Lina to select:
+
+Verse
+Chorus
+Bridge
+A custom 30–60 second lyric segment
+
+She chooses the chorus she plans to sing.
+
+3. Create a karaoke-style recording experience
+
+Using Musixmatch’s word-level synced lyrics, StageOne highlights each word while Lina records.
+
+The phone behaves like a performance teleprompter:
+
+Current word highlighted
+Next lyric line visible
+Recording countdown
+Progress through the selected section
+
+This is a strong API use because Musixmatch is directly helping the creator make the content, not merely decorating it afterward.
+
+4. Show synced lyrics on the published Music Minute
+
+After Lina posts, viewers watch her performance while lyrics appear in sync with the video.
+
+They can:
+
+Follow the words
+Tap the song title
+View the original track reference
+Give a Golden Mic
+Tap “Sing This Part”
+
+That last action creates the viral loop.
+
+5. Turn the performance into a challenge
+
+When another user taps Sing This Part, StageOne opens the same selected lyric segment with the same synced lyric timing.
+
+Now multiple creators can perform the same chorus in their own style.
+
+The challenge page can show:
+
+Original song
+Selected lyric section
+Number of performers
+Top Music Minutes
+Golden Mic rankings
+Languages represented
+“Join Challenge” button
+
+This makes Musixmatch part of StageOne’s content creation and social growth engine.
+
+6. Translate the performance for global fans
+
+A viewer whose preferred language is Arabic can tap:
+
+Translate Lyrics
+
+Musixmatch provides the translated lyric version while Lina’s original performance continues playing.
+
+This supports StageOne’s international identity:
+
+A voice can be discovered even when the listener does not speak the singer’s language.
+
+7. Use lyric analysis for discovery
+
+Musixmatch’s Lyrics Analysis can provide signals such as:
+
+Mood
+Themes
+Language
+Emotional meaning
+
+StageOne can use these to automatically add discovery categories such as:
+
+Heartbreak
+Hope
+Love
+Confidence
+Empowerment
+Sad acoustic
+Emotional pop
+
+Lina’s Music Minute can then appear in feeds like:
+
+Heartbreak Voices
+Emotional Covers
+English Songs Translated to Arabic
+
+This gives StageOne a more intelligent discovery system than only genre tags.
+
+The complete Musixmatch-powered loop
+
+Creator remembers a lyric → StageOne identifies the song → creator selects a section → synced lyrics guide the recording → performance is published with lyric timing → fans translate the lyrics → other singers perform the same section → lyric mood powers discovery.
+
+That uses nearly every capability shown in your screenshot:
+
+Search & Match
+Plain and Synced Lyrics
+Lyrics Analysis
+Lyrics Fingerprint
+Translations

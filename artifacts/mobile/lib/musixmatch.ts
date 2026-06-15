@@ -35,6 +35,7 @@ export interface Segment {
 export interface SegmentsResponse {
   source: LyricSource;
   trackId: string;
+  hasSync: boolean;
   segments: Segment[];
 }
 

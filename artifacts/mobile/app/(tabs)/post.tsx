@@ -98,6 +98,7 @@ export default function PostScreen() {
   const [sectionsLoading, setSectionsLoading] = useState(false);
   const [sectionsError, setSectionsError] = useState<string | null>(null);
   const [selectedSection, setSelectedSection] = useState<Segment | null>(null);
+  const [noSyncedLyrics, setNoSyncedLyrics] = useState(false);
 
   // Timing (step 5)
   const [timingOffsetMs, setTimingOffsetMs] = useState(0);
@@ -138,19 +139,31 @@ export default function PostScreen() {
     let cancelled = false;
     setSectionsLoading(true);
     setSectionsError(null);
+    setNoSyncedLyrics(false);
     fetchSegments(selectedSong.track_id).then((result) => {
       if (cancelled) return;
       const segs = result?.segments ?? [];
       setSections(segs);
       setSectionsLoading(false);
-      setSelectedSection((prev) => {
-        if (prev) return prev;
-        if (prefillSectionId) {
-          const match = segs.find((s) => s.id === prefillSectionId);
-          if (match) return match;
-        }
-        return null; // no auto-select — user must choose or pick "No lyrics needed"
-      });
+
+      // Detect real Musixmatch tracks with no synced lyrics
+      const isMusixmatch = result?.source === "musixmatch";
+      const trackHasSync = result?.hasSync ?? true;
+      if (isMusixmatch && !trackHasSync) {
+        setNoSyncedLyrics(true);
+        setNoLyricsMode(true);
+        setSelectedSection(null);
+      } else {
+        setSelectedSection((prev) => {
+          if (prev) return prev;
+          if (prefillSectionId) {
+            const match = segs.find((s) => s.id === prefillSectionId);
+            if (match) return match;
+          }
+          return null; // no auto-select — user must choose or pick "No lyrics needed"
+        });
+      }
+
       if (!result) setSectionsError("Could not load song sections");
       // Fetch first-line lyric preview for each section card
       if (segs.length > 0 && selectedSong) {
@@ -720,13 +733,13 @@ export default function PostScreen() {
                 style={[
                   styles.musixmatchBadge,
                   {
-                    backgroundColor: `${colors.primary}15`,
-                    borderColor: `${colors.primary}30`,
+                    backgroundColor: "rgba(255,191,0,0.12)",
+                    borderColor: "rgba(255,191,0,0.35)",
                   },
                 ]}
               >
-                <Ionicons name="musical-note" size={14} color={colors.primary} />
-                <Text style={[styles.musixmatchText, { color: colors.primary }]}>
+                <MaterialCommunityIcons name="music-note" size={13} color="#FFBF00" />
+                <Text style={[styles.musixmatchText, { color: "#CC9A00" }]}>
                   Powered by Musixmatch
                 </Text>
               </View>
@@ -778,6 +791,8 @@ export default function PostScreen() {
                       setSelectedSong(null);
                       setSelectedSection(null);
                       setSections([]);
+                      setNoSyncedLyrics(false);
+                      setNoLyricsMode(false);
                     }}
                     activeOpacity={0.7}
                   >
@@ -883,6 +898,24 @@ export default function PostScreen() {
                   <Ionicons name="alert-circle-outline" size={16} color="#EF4444" />
                   <Text style={[styles.stepHint, { color: "#EF4444" }]}>
                     {sectionsError} — using Full Track.
+                  </Text>
+                </View>
+              )}
+
+              {/* No synced lyrics warning — shown when Musixmatch has no sync for this track */}
+              {noSyncedLyrics && !sectionsLoading && (
+                <View
+                  style={[
+                    styles.noSyncCard,
+                    {
+                      backgroundColor: "rgba(255,191,0,0.08)",
+                      borderColor: "rgba(255,191,0,0.30)",
+                    },
+                  ]}
+                >
+                  <MaterialCommunityIcons name="music-note-off" size={18} color="#CC9A00" />
+                  <Text style={[styles.noSyncText, { color: colors.mutedForeground }]}>
+                    This track has no synced lyrics on Musixmatch — you can still post without a lyric overlay
                   </Text>
                 </View>
               )}
@@ -1546,6 +1579,15 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
   },
+  noSyncCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  noSyncText: { flex: 1, fontSize: 13, lineHeight: 18 },
   sectionCard: {
     flexDirection: "row",
     alignItems: "center",

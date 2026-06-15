@@ -33,6 +33,7 @@ export interface Segment {
 export interface SegmentsResponse {
   source: LyricSource;
   trackId: string;
+  hasSync: boolean;
   segments: Segment[];
 }
 
@@ -527,7 +528,7 @@ router.get("/musixmatch/segments/:trackId", async (req, res) => {
     return res.status(404).json({ error: "track_not_found" });
   }
   const segments = deriveSegments(lyricResult.lines);
-  const response: SegmentsResponse = { source: lyricResult.source as LyricSource, trackId, segments };
+  const response: SegmentsResponse = { source: lyricResult.source as LyricSource, trackId, hasSync: lyricResult.hasSync, segments };
   return res.json(response);
 });
 

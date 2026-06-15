@@ -20,7 +20,7 @@ const MOCK_TRACKS = [
   { track_id: "10004", track_name: "Flowers", artist_name: "Miley Cyrus", album_name: "Endless Summer Vacation" },
 ];
 
-router.get("/api/musixmatch/search", async (req, res) => {
+router.get("/musixmatch/search", async (req, res) => {
   const q = (req.query.q as string)?.trim() ?? "";
 
   if (!q) {
@@ -64,7 +64,7 @@ router.get("/api/musixmatch/search", async (req, res) => {
   res.json({ tracks: filtered.length > 0 ? filtered : MOCK_TRACKS.slice(0, 8), source: "mock" });
 });
 
-router.get("/api/musixmatch/track/:trackId", async (req, res) => {
+router.get("/musixmatch/track/:trackId", async (req, res) => {
   const { trackId } = req.params;
   const apiKey = process.env.MUSIXMATCH_API_KEY;
 

@@ -4,8 +4,9 @@ import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import { Video, ResizeMode } from "expo-av";
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Animated,
   Platform,
   Pressable,
@@ -17,14 +18,29 @@ import {
 } from "react-native";
 
 import { useApp } from "@/context/AppContext";
-import { MusicMinute, formatCount, getUserById } from "@/data/seedData";
+import { MusicMinute, formatCount, getUserById, SEED_CHALLENGES } from "@/data/seedData";
 import { useColors } from "@/hooks/useColors";
+import {
+  fetchLyrics,
+  fetchTranslation,
+  probeAvailableTranslations,
+  type LyricsResponse,
+  type LyricLine,
+} from "@/lib/musixmatch";
 
 const SINGER_IMAGES = [
   require("@/assets/images/singer_placeholder_1.png"),
   require("@/assets/images/singer_placeholder_2.png"),
   require("@/assets/images/singer_placeholder_3.png"),
 ];
+
+const LANG_LABELS: Record<string, string> = {
+  en: "EN",
+  es: "ES",
+  ar: "AR",
+  fr: "FR",
+  pt: "PT",
+};
 
 interface Props {
   item: MusicMinute;
@@ -50,18 +66,17 @@ function ActionButton({
   scale?: Animated.Value;
 }) {
   return (
-    <TouchableOpacity
-      onPress={onPress}
-      style={styles.actionButton}
-      activeOpacity={0.7}
-    >
-      <Animated.View
-        style={scale ? { transform: [{ scale }] } : undefined}
-      >
+    <TouchableOpacity onPress={onPress} style={styles.actionButton} activeOpacity={0.7}>
+      <Animated.View style={scale ? { transform: [{ scale }] } : undefined}>
         {icon}
       </Animated.View>
       {count !== undefined && (
-        <Text style={[styles.actionCount, active && activeColor ? { color: activeColor } : { color }]}>
+        <Text
+          style={[
+            styles.actionCount,
+            active && activeColor ? { color: activeColor } : { color },
+          ]}
+        >
           {typeof count === "number" ? formatCount(count) : count}
         </Text>
       )}
@@ -85,25 +100,119 @@ export function MusicMinuteCard({ item, onCommentPress, onGoldenMicPress }: Prop
   const [localGMs, setLocalGMs] = useState(item.goldenMicsCount);
   const [isMuted, setIsMuted] = useState(false);
 
+  const videoRef = useRef<Video>(null);
+
+  // Lyric overlay state
+  const [lyricVisible, setLyricVisible] = useState(false);
+  const [lyrics, setLyrics] = useState<LyricsResponse | null>(null);
+  const [lyricsLoading, setLyricsLoading] = useState(false);
+  const [lyricError, setLyricError] = useState<string | null>(null);
+  const [activeLang, setActiveLang] = useState("en");
+  const [availableLangs, setAvailableLangs] = useState<string[]>([]);
+  const [translatedLines, setTranslatedLines] = useState<LyricLine[] | null>(null);
+  const [videoPositionMs, setVideoPositionMs] = useState(0);
+
+  const section = item.lyricSection ?? null;
+
   const seedCreator = getUserById(item.userId);
   const isCurrentUser = currentUser?.id === item.userId;
   const cardHeight = Platform.OS === "web" ? 680 : screenHeight;
 
   const displayName = isCurrentUser
-    ? (currentUser.displayName || currentUser.username)
-    : (seedCreator?.displayName ?? item.userId.replace("user_", ""));
+    ? currentUser.displayName || currentUser.username
+    : seedCreator?.displayName ?? item.userId.replace("user_", "");
 
   const username = isCurrentUser
     ? currentUser.username
-    : (seedCreator?.username ?? item.userId.replace("user_", ""));
+    : seedCreator?.username ?? item.userId.replace("user_", "");
 
   const avatarColor = isCurrentUser
     ? "#A855F7"
-    : (seedCreator?.avatarColor ?? "#A855F7");
+    : seedCreator?.avatarColor ?? "#A855F7";
 
   const avatarInitials = isCurrentUser
     ? (currentUser.displayName?.[0] ?? currentUser.username?.[0] ?? "?").toUpperCase()
-    : (seedCreator?.avatarInitials ?? "?");
+    : seedCreator?.avatarInitials ?? "?";
+
+  // Find matching LyricStage challenge for "Sing This Part" CTA
+  const matchingChallenge =
+    item.musixmatchTrackId
+      ? SEED_CHALLENGES.find(
+          (ch) =>
+            ch.musixmatchTrackId === item.musixmatchTrackId &&
+            ch.challengeType === "lyric_stage",
+        )
+      : null;
+
+  // Fetch lyrics + probe translations when overlay opens
+  useEffect(() => {
+    if (!lyricVisible || !section) return;
+    let cancelled = false;
+
+    setLyricsLoading(true);
+    setLyricError(null);
+    setLyrics(null);
+    setAvailableLangs([]);
+
+    fetchLyrics(section.trackId).then((result) => {
+      if (cancelled) return;
+      if (result) {
+        setLyrics(result);
+      } else {
+        setLyricError("Lyrics not available");
+      }
+      setLyricsLoading(false);
+    });
+
+    probeAvailableTranslations(section.trackId, ["es", "ar"]).then((langs) => {
+      if (!cancelled) setAvailableLangs(langs);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [lyricVisible, section?.trackId]);
+
+  // Fetch translation when language changes
+  useEffect(() => {
+    if (!lyricVisible || !section || activeLang === "en") {
+      setTranslatedLines(null);
+      return;
+    }
+    let cancelled = false;
+    fetchTranslation(section.trackId, activeLang).then((result) => {
+      if (!cancelled) setTranslatedLines(result?.lines ?? null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeLang, section?.trackId, lyricVisible]);
+
+  // Poll video position every 250 ms while overlay is open
+  useEffect(() => {
+    if (!lyricVisible || !section) return;
+    const poll = setInterval(async () => {
+      try {
+        const status = videoRef.current ? await videoRef.current.getStatusAsync() : undefined;
+        if (status?.isLoaded) {
+          setVideoPositionMs(status.positionMillis);
+        }
+      } catch {}
+    }, 250);
+    return () => clearInterval(poll);
+  }, [lyricVisible, section]);
+
+  // Compute the active lyric line
+  const displayLines = activeLang === "en" ? lyrics?.lines : (translatedLines ?? lyrics?.lines);
+  const activeLine: LyricLine | null = (() => {
+    if (!displayLines || !section) return null;
+    const absMs = videoPositionMs + section.startMs + section.timingOffsetMs;
+    return (
+      displayLines.find(
+        (l) => l.startMs !== null && l.endMs !== null && absMs >= l.startMs! && absMs < l.endMs!,
+      ) ?? null
+    );
+  })();
 
   const handleLike = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -127,6 +236,23 @@ export function MusicMinuteCard({ item, onCommentPress, onGoldenMicPress }: Prop
     if (seedCreator) router.push(`/creator/${seedCreator.username}`);
   }, [seedCreator]);
 
+  const handleSingThisPart = useCallback(() => {
+    if (matchingChallenge) {
+      router.push({
+        pathname: "/lyric-challenge/[id]",
+        params: {
+          id: matchingChallenge.id,
+          trackId: section?.trackId ?? "",
+          sectionId: section?.sectionId ?? "",
+          startMs: String(section?.startMs ?? 0),
+          endMs: String(section?.endMs ?? 0),
+        },
+      });
+    } else {
+      router.push("/(tabs)/post");
+    }
+  }, [matchingChallenge, section]);
+
   const performanceColor =
     item.performanceType === "original"
       ? colors.accent
@@ -134,10 +260,14 @@ export function MusicMinuteCard({ item, onCommentPress, onGoldenMicPress }: Prop
         ? colors.primary
         : colors.gold;
 
+  const sourceBadgeText =
+    lyrics?.source === "demo" ? "Demo content" : "Powered by Musixmatch";
+
   return (
     <View style={[styles.container, { height: cardHeight }]}>
       {item.videoUri ? (
         <Video
+          ref={videoRef}
           source={{ uri: item.videoUri }}
           style={StyleSheet.absoluteFill}
           resizeMode={ResizeMode.COVER}
@@ -182,8 +312,73 @@ export function MusicMinuteCard({ item, onCommentPress, onGoldenMicPress }: Prop
         </TouchableOpacity>
       )}
 
+      {/* Lyric overlay — shown above the bottom info area */}
+      {lyricVisible && section && (
+        <View style={styles.lyricOverlay} pointerEvents="box-none">
+          {/* Source attribution */}
+          {lyrics && (
+            <View style={styles.sourceBadge}>
+              <Text style={styles.sourceBadgeText}>{sourceBadgeText}</Text>
+            </View>
+          )}
+
+          {/* Active lyric line */}
+          <View style={styles.lyricLineArea}>
+            {lyricsLoading ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : lyricError ? (
+              <Text style={styles.lyricUnavailable}>{lyricError}</Text>
+            ) : activeLine ? (
+              <Text style={styles.lyricActiveLine}>{activeLine.text}</Text>
+            ) : lyrics ? (
+              <Text style={styles.lyricPlaceholder}>♪</Text>
+            ) : null}
+          </View>
+
+          {/* Language pills (only when translations are available) */}
+          {availableLangs.length > 0 && (
+            <View style={styles.langPills}>
+              {(["en", ...availableLangs] as string[]).map((lang) => (
+                <TouchableOpacity
+                  key={lang}
+                  onPress={() => setActiveLang(lang)}
+                  style={[
+                    styles.langPill,
+                    activeLang === lang && { backgroundColor: colors.primary },
+                  ]}
+                  activeOpacity={0.8}
+                >
+                  <Text
+                    style={[
+                      styles.langPillText,
+                      { color: activeLang === lang ? "#fff" : "rgba(255,255,255,0.75)" },
+                    ]}
+                  >
+                    {LANG_LABELS[lang] ?? lang.toUpperCase()}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
+          {/* Sing This Part CTA */}
+          <TouchableOpacity
+            style={styles.singThisPartBtn}
+            onPress={handleSingThisPart}
+            activeOpacity={0.85}
+          >
+            <MaterialCommunityIcons name="microphone" size={14} color="#fff" />
+            <Text style={styles.singThisPartText}>Sing This Part</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       <View style={styles.rightActions}>
-        <TouchableOpacity style={styles.creatorAvatarBtn} onPress={handleCreatorPress} activeOpacity={0.8}>
+        <TouchableOpacity
+          style={styles.creatorAvatarBtn}
+          onPress={handleCreatorPress}
+          activeOpacity={0.8}
+        >
           <View style={[styles.creatorAvatar, { backgroundColor: avatarColor }]}>
             <Text style={styles.creatorInitials}>{avatarInitials}</Text>
           </View>
@@ -253,6 +448,29 @@ export function MusicMinuteCard({ item, onCommentPress, onGoldenMicPress }: Prop
             {formatCount(localGMs + (gmSent > 0 ? gmSent : 0))}
           </Text>
         </TouchableOpacity>
+
+        {/* ♪ Lyric toggle — only shown when the card has a lyric section */}
+        {section && (
+          <TouchableOpacity
+            onPress={() => {
+              setLyricVisible((v) => !v);
+              if (!lyricVisible) {
+                setActiveLang("en");
+                setTranslatedLines(null);
+                setVideoPositionMs(0);
+              }
+            }}
+            style={[
+              styles.lyricToggleBtn,
+              lyricVisible && { backgroundColor: `${colors.primary}40` },
+            ]}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.lyricToggleIcon, { color: lyricVisible ? colors.primary : "#fff" }]}>
+              ♪
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       <View style={styles.bottomInfo}>
@@ -266,7 +484,9 @@ export function MusicMinuteCard({ item, onCommentPress, onGoldenMicPress }: Prop
         </Pressable>
 
         {item.title ? (
-          <Text style={styles.titleText} numberOfLines={1}>{item.title}</Text>
+          <Text style={styles.titleText} numberOfLines={1}>
+            {item.title}
+          </Text>
         ) : null}
 
         <Text style={styles.caption} numberOfLines={2}>
@@ -274,17 +494,48 @@ export function MusicMinuteCard({ item, onCommentPress, onGoldenMicPress }: Prop
         </Text>
 
         <View style={styles.tagsRow}>
-          <View style={[styles.tag, { backgroundColor: `${performanceColor}20`, borderColor: `${performanceColor}50` }]}>
+          <View
+            style={[
+              styles.tag,
+              {
+                backgroundColor: `${performanceColor}20`,
+                borderColor: `${performanceColor}50`,
+              },
+            ]}
+          >
             <Text style={[styles.tagText, { color: performanceColor }]}>
               {item.performanceType.charAt(0).toUpperCase() + item.performanceType.slice(1)}
             </Text>
           </View>
-          <View style={[styles.tag, { backgroundColor: "rgba(255,255,255,0.08)", borderColor: "rgba(255,255,255,0.15)" }]}>
+          <View
+            style={[
+              styles.tag,
+              { backgroundColor: "rgba(255,255,255,0.08)", borderColor: "rgba(255,255,255,0.15)" },
+            ]}
+          >
             <Text style={[styles.tagText, { color: "#CBD5E1" }]}>{item.genre}</Text>
           </View>
           {item.language !== "English" && (
-            <View style={[styles.tag, { backgroundColor: "rgba(255,255,255,0.08)", borderColor: "rgba(255,255,255,0.15)" }]}>
+            <View
+              style={[
+                styles.tag,
+                {
+                  backgroundColor: "rgba(255,255,255,0.08)",
+                  borderColor: "rgba(255,255,255,0.15)",
+                },
+              ]}
+            >
               <Text style={[styles.tagText, { color: "#CBD5E1" }]}>{item.language}</Text>
+            </View>
+          )}
+          {section && (
+            <View
+              style={[
+                styles.tag,
+                { backgroundColor: "rgba(168,85,247,0.15)", borderColor: "rgba(168,85,247,0.4)" },
+              ]}
+            >
+              <Text style={[styles.tagText, { color: "#A855F7" }]}>♪ LyricStage</Text>
             </View>
           )}
         </View>
@@ -292,7 +543,10 @@ export function MusicMinuteCard({ item, onCommentPress, onGoldenMicPress }: Prop
         {item.trackTitle && item.trackArtist && (
           <View style={styles.songRef}>
             <Ionicons name="musical-note" size={12} color={colors.primary} />
-            <Text style={[styles.songText, { color: colors.primary }]} numberOfLines={1}>
+            <Text
+              style={[styles.songText, { color: colors.primary }]}
+              numberOfLines={1}
+            >
               {item.trackTitle} — {item.trackArtist}
             </Text>
           </View>
@@ -338,6 +592,79 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(5,2,10,0.6)",
     justifyContent: "center",
     alignItems: "center",
+  },
+  lyricOverlay: {
+    position: "absolute",
+    left: 16,
+    right: 74,
+    bottom: Platform.OS === "web" ? 220 : 310,
+    alignItems: "center",
+    gap: 10,
+  },
+  sourceBadge: {
+    alignSelf: "flex-end",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+    backgroundColor: "rgba(5,2,10,0.55)",
+  },
+  sourceBadgeText: {
+    color: "rgba(255,255,255,0.5)",
+    fontSize: 9,
+    fontWeight: "500",
+  },
+  lyricLineArea: {
+    minHeight: 48,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 8,
+  },
+  lyricActiveLine: {
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: "700",
+    textAlign: "center",
+    textShadowColor: "rgba(0,0,0,0.8)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
+    lineHeight: 26,
+  },
+  lyricPlaceholder: {
+    color: "rgba(255,255,255,0.4)",
+    fontSize: 28,
+  },
+  lyricUnavailable: {
+    color: "rgba(255,255,255,0.5)",
+    fontSize: 13,
+    textAlign: "center",
+  },
+  langPills: {
+    flexDirection: "row",
+    gap: 6,
+  },
+  langPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 20,
+    backgroundColor: "rgba(5,2,10,0.55)",
+  },
+  langPillText: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  singThisPartBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 20,
+    backgroundColor: "#A855F7",
+  },
+  singThisPartText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "700",
   },
   rightActions: {
     position: "absolute",
@@ -395,6 +722,18 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.8,
     shadowRadius: 8,
+  },
+  lyricToggleBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "rgba(5,2,10,0.5)",
+  },
+  lyricToggleIcon: {
+    fontSize: 20,
+    fontWeight: "700",
   },
   bottomInfo: {
     position: "absolute",

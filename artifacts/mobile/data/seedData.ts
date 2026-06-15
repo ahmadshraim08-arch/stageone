@@ -19,6 +19,17 @@ export interface User {
   imageIndex: number;
 }
 
+export interface LyricSectionData {
+  sectionId: string;
+  sectionLabel: string;
+  trackId: string;
+  startMs: number;
+  endMs: number;
+  lineCount: number;
+  timingOffsetMs: number;
+  language: string;
+}
+
 export interface MusicMinute {
   id: string;
   userId: string;
@@ -43,6 +54,8 @@ export interface MusicMinute {
   createdAt: string;
   isRisingVoice: boolean;
   isFeatured: boolean;
+  lyricSection?: LyricSectionData;
+  moodTags?: string[];
 }
 
 export interface SeedComment {
@@ -66,6 +79,11 @@ export interface Challenge {
   entriesCount: number;
   endsAt: string;
   accentColor: string;
+  challengeType?: "lyric_stage";
+  lyricSectionLabel?: string;
+  musixmatchTrackId?: string;
+  performerCount?: number;
+  representedLanguages?: string[];
 }
 
 export const SEED_USERS: User[] = [
@@ -710,6 +728,111 @@ export const SEED_MUSIC_MINUTES: MusicMinute[] = [
     isRisingVoice: false,
     isFeatured: false,
   },
+  {
+    id: "mm_021",
+    userId: "user_lunavox",
+    title: "Neon Mornings — LyricStage",
+    caption: "Performing the opening of Neon Mornings with live lyric sync! Join the challenge 🎤 #LyricStage #PopCover",
+    performanceType: "cover",
+    genre: "Pop",
+    language: "English",
+    location: "Los Angeles, CA",
+    tags: ["lyricstage", "pop", "cover"],
+    trackTitle: "Neon Mornings",
+    trackArtist: "Demo Artist",
+    musixmatchTrackId: "demo_001",
+    lyricSection: {
+      sectionId: "seg_0",
+      sectionLabel: "Selected Section",
+      trackId: "demo_001",
+      startMs: 0,
+      endMs: 32000,
+      lineCount: 8,
+      timingOffsetMs: 0,
+      language: "en",
+    },
+    moodTags: ["joy", "energy", "optimism"],
+    imageIndex: 0,
+    views: 41200,
+    likesCount: 4120,
+    commentsCount: 128,
+    sharesCount: 210,
+    savesCount: 340,
+    goldenMicsCount: 412,
+    createdAt: "2026-06-12T14:00:00Z",
+    isRisingVoice: true,
+    isFeatured: true,
+  },
+  {
+    id: "mm_022",
+    userId: "user_jaynoor",
+    title: "Echo in the Rain — LyricStage",
+    caption: "Soul section challenge with synced lyrics. This made performing feel so real. #LyricStage #Soul",
+    performanceType: "cover",
+    genre: "Soul",
+    language: "English",
+    location: "Amman, Jordan",
+    tags: ["lyricstage", "soul", "cover"],
+    trackTitle: "Echo in the Rain",
+    trackArtist: "Demo Artist",
+    musixmatchTrackId: "demo_002",
+    lyricSection: {
+      sectionId: "seg_0",
+      sectionLabel: "Selected Section",
+      trackId: "demo_002",
+      startMs: 0,
+      endMs: 28000,
+      lineCount: 6,
+      timingOffsetMs: 0,
+      language: "en",
+    },
+    moodTags: ["longing", "heartfelt", "warmth"],
+    imageIndex: 1,
+    views: 29100,
+    likesCount: 2910,
+    commentsCount: 98,
+    sharesCount: 140,
+    savesCount: 210,
+    goldenMicsCount: 291,
+    createdAt: "2026-06-11T18:00:00Z",
+    isRisingVoice: false,
+    isFeatured: false,
+  },
+  {
+    id: "mm_023",
+    userId: "user_ninasky",
+    title: "Thousand Lights — LyricStage",
+    caption: "Indie challenge entry. Lyric sync makes you feel every word. #LyricStage #Indie",
+    performanceType: "cover",
+    genre: "Indie",
+    language: "English",
+    location: "New York, NY",
+    tags: ["lyricstage", "indie", "cover"],
+    trackTitle: "Thousand Lights",
+    trackArtist: "Demo Artist",
+    musixmatchTrackId: "demo_003",
+    lyricSection: {
+      sectionId: "seg_0",
+      sectionLabel: "Selected Section",
+      trackId: "demo_003",
+      startMs: 0,
+      endMs: 30000,
+      lineCount: 7,
+      timingOffsetMs: 0,
+      language: "en",
+    },
+    moodTags: ["reflection", "wonder", "authenticity"],
+    imageIndex: 2,
+    views: 18400,
+    likesCount: 1840,
+    commentsCount: 72,
+    sharesCount: 98,
+    savesCount: 130,
+    goldenMicsCount: 184,
+    createdAt: "2026-06-11T12:00:00Z",
+    isRisingVoice: false,
+    isFeatured: false,
+  },
 ];
 
 export const SEED_COMMENTS: SeedComment[] = [
@@ -776,6 +899,38 @@ export const SEED_CHALLENGES: Challenge[] = [
     entriesCount: 534,
     endsAt: "2026-06-22T23:59:00Z",
     accentColor: "#F97316",
+  },
+  {
+    id: "ch_006",
+    title: "Neon Mornings Sing-Along",
+    description: "Perform the opening section of Neon Mornings with live lyric sync. Translations welcome — sing in any language.",
+    genre: "Pop",
+    trackTitle: "Neon Mornings",
+    artistName: "Demo Artist",
+    challengeType: "lyric_stage",
+    lyricSectionLabel: "Selected Section",
+    musixmatchTrackId: "demo_001",
+    performerCount: 312,
+    representedLanguages: ["en", "es", "ar"],
+    entriesCount: 312,
+    endsAt: "2026-06-25T23:59:00Z",
+    accentColor: "#EC4899",
+  },
+  {
+    id: "ch_007",
+    title: "Echo in the Rain Challenge",
+    description: "Soul singers — this is your moment. Perform your take on Echo in the Rain with lyric sync.",
+    genre: "Soul",
+    trackTitle: "Echo in the Rain",
+    artistName: "Demo Artist",
+    challengeType: "lyric_stage",
+    lyricSectionLabel: "Selected Section",
+    musixmatchTrackId: "demo_002",
+    performerCount: 198,
+    representedLanguages: ["en", "es"],
+    entriesCount: 198,
+    endsAt: "2026-06-23T23:59:00Z",
+    accentColor: "#A855F7",
   },
 ];
 

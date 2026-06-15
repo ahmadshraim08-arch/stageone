@@ -1,1 +1,4 @@
 - [Clerk Core v3 Expo API](clerk-core-v3-expo.md) — signals API: signIn.password()+finalize(), signUp.password()+verifications.verifyEmailCode()+finalize(), NOT legacy isLoaded/setActive
+- [Expo Router typed routes](expo-router-typed-routes.md) — new dynamic route files require a manual patch to .expo/types/router.d.ts until the Expo dev server regenerates it.
+- [jest-expo vs ts-jest for Node tests](jest-node-setup.md) — pure data/logic tests in artifacts/mobile must use ts-jest (not jest-expo preset) to avoid RN ESM setup file errors.
+- [LyricStage absMs timing formula](lyricstage-timing.md) — active lyric line: absMs = videoPositionMs + section.startMs + section.timingOffsetMs, compared against line.startMs/endMs.

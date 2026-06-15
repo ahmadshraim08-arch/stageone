@@ -4,8 +4,9 @@ import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import { Video, ResizeMode } from "expo-av";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Platform,
@@ -22,11 +23,17 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useApp } from "@/context/AppContext";
 import { MusicMinute } from "@/data/seedData";
 import { useColors } from "@/hooks/useColors";
+import { fetchSegments, type Segment } from "@/lib/musixmatch";
 
 type PerformanceType = "original" | "cover" | "freestyle";
 
-const GENRES = ["Pop", "R&B", "Soul", "Rap", "Acoustic", "Indie", "Latin Pop", "Arabic Pop", "Singer-Songwriter", "Jazz", "Country", "Gospel"];
-const LANGUAGES = ["English", "Arabic", "Spanish", "French", "Portuguese", "Hindi", "Swahili", "Other"];
+const GENRES = [
+  "Pop", "R&B", "Soul", "Rap", "Acoustic", "Indie",
+  "Latin Pop", "Arabic Pop", "Singer-Songwriter", "Jazz", "Country", "Gospel",
+];
+const LANGUAGES = [
+  "English", "Arabic", "Spanish", "French", "Portuguese", "Hindi", "Swahili", "Other",
+];
 
 interface MusixmatchResult {
   track_id: string;
@@ -37,14 +44,30 @@ interface MusixmatchResult {
 }
 
 const MOCK_TRACKS: MusixmatchResult[] = [
+  { track_id: "demo_001", track_name: "Neon Mornings", artist_name: "Demo Artist" },
+  { track_id: "demo_002", track_name: "Echo in the Rain", artist_name: "Demo Artist" },
+  { track_id: "demo_003", track_name: "Thousand Lights", artist_name: "Demo Artist" },
   { track_id: "12345", track_name: "Golden Hour", artist_name: "JVKE", album_name: "this is what falling in love feels like" },
   { track_id: "67890", track_name: "Fix You", artist_name: "Coldplay", album_name: "X&Y" },
-  { track_id: "11111", track_name: "Starlight", artist_name: "Taylor Swift", album_name: "Taylor Swift" },
-  { track_id: "22222", track_name: "Blinding Lights", artist_name: "The Weeknd", album_name: "After Hours" },
   { track_id: "33333", track_name: "Someone Like You", artist_name: "Adele", album_name: "21" },
   { track_id: "44444", track_name: "Shallow", artist_name: "Lady Gaga & Bradley Cooper", album_name: "A Star Is Born" },
   { track_id: "55555", track_name: "Perfect", artist_name: "Ed Sheeran", album_name: "Divide" },
 ];
+
+// Internal step layout (1–7). Steps 4 and 5 only apply when cover + song selected.
+// Visual dots always show 5 positions:
+//   step 1→1, step 2→2, steps 3/4/5→3, step 6→4, step 7→5
+function toVisualStep(step: number): number {
+  if (step <= 2) return step;
+  if (step <= 5) return 3;
+  return step - 2; // 6→4, 7→5
+}
+
+function fmtMs(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  return `${m}:${(s % 60).toString().padStart(2, "0")}`;
+}
 
 export default function PostScreen() {
   const colors = useColors();
@@ -55,20 +78,56 @@ export default function PostScreen() {
   const [videoUri, setVideoUri] = useState<string | null>(null);
   const [videoDurationSec, setVideoDurationSec] = useState(0);
   const [performanceType, setPerformanceType] = useState<PerformanceType>("original");
+
+  // Song tagging (step 3)
   const [songQuery, setSongQuery] = useState("");
   const [songResults, setSongResults] = useState<MusixmatchResult[]>([]);
   const [selectedSong, setSelectedSong] = useState<MusixmatchResult | null>(null);
-  const [isSearching, setIsSearching] = useState(false);
+  const [isSongSearching, setIsSongSearching] = useState(false);
+
+  // Lyric section (step 4)
+  const [sections, setSections] = useState<Segment[]>([]);
+  const [sectionsLoading, setSectionsLoading] = useState(false);
+  const [sectionsError, setSectionsError] = useState<string | null>(null);
+  const [selectedSection, setSelectedSection] = useState<Segment | null>(null);
+
+  // Timing (step 5)
+  const [timingOffsetMs, setTimingOffsetMs] = useState(0);
+
+  // Details (step 6)
   const [title, setTitle] = useState("");
   const [caption, setCaption] = useState("");
   const [genre, setGenre] = useState("Pop");
   const [language, setLanguage] = useState("English");
   const [location, setLocation] = useState("");
+
+  // Review + posting (step 7)
   const [rightsConfirmed, setRightsConfirmed] = useState(false);
   const [isPosting, setIsPosting] = useState(false);
   const [posted, setPosted] = useState(false);
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
+
+  // Fetch lyric segments when reaching step 4 with a selected song
+  useEffect(() => {
+    if (step !== 4 || !selectedSong) return;
+    let cancelled = false;
+    setSectionsLoading(true);
+    setSectionsError(null);
+    fetchSegments(selectedSong.track_id).then((result) => {
+      if (cancelled) return;
+      const segs = result?.segments ?? [];
+      setSections(segs);
+      setSectionsLoading(false);
+      setSelectedSection((prev) => {
+        if (prev) return prev;
+        if (segs.length > 0) return segs[0];
+        return { id: "full", label: "Full Track", startMs: 0, endMs: 999999, lineCount: 0 };
+      });
+      if (!result) setSectionsError("Could not load song sections");
+    });
+    return () => { cancelled = true; };
+  }, [step, selectedSong?.track_id]);
 
   if (!currentUser) {
     return (
@@ -84,7 +143,12 @@ export default function PostScreen() {
             activeOpacity={0.85}
             style={styles.guestBtn}
           >
-            <LinearGradient colors={["#A855F7", "#EC4899"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.guestBtnGradient}>
+            <LinearGradient
+              colors={["#A855F7", "#EC4899"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.guestBtnGradient}
+            >
               <Text style={styles.guestBtnText}>Join StageOne</Text>
             </LinearGradient>
           </TouchableOpacity>
@@ -107,14 +171,25 @@ export default function PostScreen() {
               setPosted(false);
               setStep(1);
               setVideoUri(null);
-              setTitle(""); setCaption(""); setSelectedSong(null);
-              setRightsConfirmed(false); setSongQuery("");
+              setTitle("");
+              setCaption("");
+              setSelectedSong(null);
+              setSongQuery("");
+              setSections([]);
+              setSelectedSection(null);
+              setTimingOffsetMs(0);
+              setRightsConfirmed(false);
               router.push("/");
             }}
             activeOpacity={0.85}
             style={styles.guestBtn}
           >
-            <LinearGradient colors={["#A855F7", "#EC4899", "#F59E0B"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.guestBtnGradient}>
+            <LinearGradient
+              colors={["#A855F7", "#EC4899", "#F59E0B"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.guestBtnGradient}
+            >
               <Text style={styles.guestBtnText}>View in Feed</Text>
             </LinearGradient>
           </TouchableOpacity>
@@ -122,6 +197,23 @@ export default function PostScreen() {
       </View>
     );
   }
+
+  // ----- Navigation helpers -----
+
+  function goBack(): void {
+    if (step === 7) { setStep(6); return; }
+    if (step === 6) {
+      if (performanceType === "cover" && selectedSong) { setStep(5); return; }
+      if (performanceType === "cover") { setStep(3); return; }
+      setStep(2); return;
+    }
+    if (step === 5) { setStep(4); return; }
+    if (step === 4) { setStep(3); return; }
+    if (step === 3) { setStep(2); return; }
+    if (step === 2) { setStep(1); return; }
+  }
+
+  // ----- Media helpers -----
 
   const handlePickVideo = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -137,13 +229,12 @@ export default function PostScreen() {
     });
     if (!result.canceled && result.assets[0]) {
       const asset = result.assets[0];
-      const durationMs = asset.duration ?? 0;
-      if (durationMs > 61000) {
+      if ((asset.duration ?? 0) > 61000) {
         Alert.alert("Too long", "Please select a video under 60 seconds.");
         return;
       }
       setVideoUri(asset.uri);
-      setVideoDurationSec(Math.round(durationMs / 1000));
+      setVideoDurationSec(Math.round((asset.duration ?? 0) / 1000));
     }
   };
 
@@ -167,7 +258,7 @@ export default function PostScreen() {
 
   const handleSongSearch = async () => {
     if (!songQuery.trim()) return;
-    setIsSearching(true);
+    setIsSongSearching(true);
     try {
       const domain = process.env.EXPO_PUBLIC_DOMAIN;
       const url = domain
@@ -179,9 +270,9 @@ export default function PostScreen() {
           const data = await res.json();
           setSongResults(data.tracks ?? MOCK_TRACKS.filter((t) =>
             t.track_name.toLowerCase().includes(songQuery.toLowerCase()) ||
-            t.artist_name.toLowerCase().includes(songQuery.toLowerCase())
+            t.artist_name.toLowerCase().includes(songQuery.toLowerCase()),
           ));
-          setIsSearching(false);
+          setIsSongSearching(false);
           return;
         }
       }
@@ -190,10 +281,10 @@ export default function PostScreen() {
       MOCK_TRACKS.filter(
         (t) =>
           t.track_name.toLowerCase().includes(songQuery.toLowerCase()) ||
-          t.artist_name.toLowerCase().includes(songQuery.toLowerCase())
-      )
+          t.artist_name.toLowerCase().includes(songQuery.toLowerCase()),
+      ),
     );
-    setIsSearching(false);
+    setIsSongSearching(false);
   };
 
   const handlePost = async () => {
@@ -209,7 +300,19 @@ export default function PostScreen() {
     await new Promise((r) => setTimeout(r, 800));
 
     const imageIndex = musicMinutes.length % 3;
-    const mm: Omit<MusicMinute, "id" | "views" | "likesCount" | "commentsCount" | "sharesCount" | "savesCount" | "goldenMicsCount" | "createdAt" | "isRisingVoice" | "isFeatured"> = {
+    const mm: Omit<
+      MusicMinute,
+      | "id"
+      | "views"
+      | "likesCount"
+      | "commentsCount"
+      | "sharesCount"
+      | "savesCount"
+      | "goldenMicsCount"
+      | "createdAt"
+      | "isRisingVoice"
+      | "isFeatured"
+    > = {
       userId: currentUser.id,
       title,
       caption,
@@ -223,6 +326,19 @@ export default function PostScreen() {
       trackArtist: selectedSong?.artist_name,
       imageIndex,
       videoUri: videoUri ?? undefined,
+      lyricSection:
+        performanceType === "cover" && selectedSong && selectedSection
+          ? {
+              sectionId: selectedSection.id,
+              sectionLabel: selectedSection.label,
+              trackId: selectedSong.track_id,
+              startMs: selectedSection.startMs,
+              endMs: selectedSection.endMs,
+              lineCount: selectedSection.lineCount,
+              timingOffsetMs,
+              language: "en",
+            }
+          : undefined,
     };
 
     postMusicMinute(mm);
@@ -237,19 +353,33 @@ export default function PostScreen() {
     return `${m}:${s}`;
   };
 
+  const visualStep = toVisualStep(step);
+
   const StepIndicator = () => (
     <View style={styles.stepRow}>
       {[1, 2, 3, 4, 5].map((s) => (
-        <View key={s} style={[styles.stepDot, { backgroundColor: s <= step ? colors.primary : colors.border }]} />
+        <View
+          key={s}
+          style={[
+            styles.stepDot,
+            { backgroundColor: s <= visualStep ? colors.primary : colors.border },
+          ]}
+        />
       ))}
     </View>
   );
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={[styles.postHeader, { paddingTop: topPad + 8, borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={step > 1 ? () => setStep(step - 1) : () => {}} activeOpacity={0.7}>
-          <Ionicons name="chevron-back" size={24} color={step > 1 ? colors.foreground : "transparent"} />
+      <View
+        style={[styles.postHeader, { paddingTop: topPad + 8, borderBottomColor: colors.border }]}
+      >
+        <TouchableOpacity onPress={step > 1 ? goBack : () => {}} activeOpacity={0.7}>
+          <Ionicons
+            name="chevron-back"
+            size={24}
+            color={step > 1 ? colors.foreground : "transparent"}
+          />
         </TouchableOpacity>
         <Text style={[styles.postTitle, { color: colors.foreground }]}>Post a Music Minute</Text>
         <View style={{ width: 24 }} />
@@ -257,13 +387,17 @@ export default function PostScreen() {
 
       <StepIndicator />
 
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+      >
         <ScrollView
           style={styles.stepContent}
           contentContainerStyle={{ paddingBottom: 120 }}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
+          {/* ── Step 1: Video ── */}
           {step === 1 && (
             <View style={styles.stepView}>
               <Text style={[styles.stepLabel, { color: colors.foreground }]}>
@@ -297,28 +431,44 @@ export default function PostScreen() {
                     onPress={handlePickVideo}
                     activeOpacity={0.8}
                   >
-                    <Text style={[styles.changeVideoBtnText, { color: colors.primary }]}>Change video</Text>
+                    <Text style={[styles.changeVideoBtnText, { color: colors.primary }]}>
+                      Change video
+                    </Text>
                   </TouchableOpacity>
                 </View>
               ) : (
                 <View style={styles.uploadOptions}>
                   <TouchableOpacity
-                    style={[styles.uploadOption, { backgroundColor: colors.card, borderColor: colors.border }]}
+                    style={[
+                      styles.uploadOption,
+                      { backgroundColor: colors.card, borderColor: colors.border },
+                    ]}
                     activeOpacity={0.8}
                     onPress={handleRecordVideo}
                   >
                     <Ionicons name="videocam" size={32} color={colors.primary} />
-                    <Text style={[styles.uploadOptionTitle, { color: colors.foreground }]}>Record Video</Text>
-                    <Text style={[styles.uploadOptionSub, { color: colors.mutedForeground }]}>60 sec</Text>
+                    <Text style={[styles.uploadOptionTitle, { color: colors.foreground }]}>
+                      Record Video
+                    </Text>
+                    <Text style={[styles.uploadOptionSub, { color: colors.mutedForeground }]}>
+                      60 sec
+                    </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    style={[styles.uploadOption, { backgroundColor: colors.card, borderColor: colors.border }]}
+                    style={[
+                      styles.uploadOption,
+                      { backgroundColor: colors.card, borderColor: colors.border },
+                    ]}
                     activeOpacity={0.8}
                     onPress={handlePickVideo}
                   >
                     <Ionicons name="cloud-upload-outline" size={32} color={colors.primary} />
-                    <Text style={[styles.uploadOptionTitle, { color: colors.foreground }]}>Upload Video</Text>
-                    <Text style={[styles.uploadOptionSub, { color: colors.mutedForeground }]}>From library</Text>
+                    <Text style={[styles.uploadOptionTitle, { color: colors.foreground }]}>
+                      Upload Video
+                    </Text>
+                    <Text style={[styles.uploadOptionSub, { color: colors.mutedForeground }]}>
+                      From library
+                    </Text>
                   </TouchableOpacity>
                 </View>
               )}
@@ -329,14 +479,22 @@ export default function PostScreen() {
                 activeOpacity={0.85}
                 disabled={!videoUri}
               >
-                <LinearGradient colors={["#A855F7", "#EC4899"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.nextBtnGradient}>
-                  <Text style={styles.nextBtnText}>{videoUri ? "Continue" : "Select a video first"}</Text>
+                <LinearGradient
+                  colors={["#A855F7", "#EC4899"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.nextBtnGradient}
+                >
+                  <Text style={styles.nextBtnText}>
+                    {videoUri ? "Continue" : "Select a video first"}
+                  </Text>
                   {videoUri && <Ionicons name="chevron-forward" size={18} color="#fff" />}
                 </LinearGradient>
               </TouchableOpacity>
             </View>
           )}
 
+          {/* ── Step 2: Performance Type ── */}
           {step === 2 && (
             <View style={styles.stepView}>
               <Text style={[styles.stepLabel, { color: colors.foreground }]}>
@@ -345,34 +503,63 @@ export default function PostScreen() {
               {(["original", "cover", "freestyle"] as PerformanceType[]).map((type) => (
                 <TouchableOpacity
                   key={type}
-                  onPress={() => { setPerformanceType(type); Haptics.selectionAsync(); }}
+                  onPress={() => {
+                    setPerformanceType(type);
+                    Haptics.selectionAsync();
+                  }}
                   style={[
                     styles.typeOption,
                     {
-                      backgroundColor: performanceType === type ? `${colors.primary}20` : colors.card,
+                      backgroundColor:
+                        performanceType === type ? `${colors.primary}20` : colors.card,
                       borderColor: performanceType === type ? colors.primary : colors.border,
                     },
                   ]}
                   activeOpacity={0.8}
                 >
                   <Ionicons
-                    name={type === "original" ? "musical-notes" : type === "cover" ? "copy" : "mic"}
+                    name={
+                      type === "original" ? "musical-notes" : type === "cover" ? "copy" : "mic"
+                    }
                     size={22}
                     color={performanceType === type ? colors.primary : colors.mutedForeground}
                   />
                   <View style={styles.typeOptionText}>
-                    <Text style={[styles.typeTitle, { color: performanceType === type ? colors.primary : colors.foreground }]}>
+                    <Text
+                      style={[
+                        styles.typeTitle,
+                        {
+                          color:
+                            performanceType === type ? colors.primary : colors.foreground,
+                        },
+                      ]}
+                    >
                       {type.charAt(0).toUpperCase() + type.slice(1)}
                     </Text>
                     <Text style={[styles.typeSub, { color: colors.mutedForeground }]}>
-                      {type === "original" ? "Your own composition" : type === "cover" ? "Someone else's song" : "Improvised performance"}
+                      {type === "original"
+                        ? "Your own composition"
+                        : type === "cover"
+                          ? "Someone else's song"
+                          : "Improvised performance"}
                     </Text>
                   </View>
-                  {performanceType === type && <Ionicons name="checkmark-circle" size={22} color={colors.primary} />}
+                  {performanceType === type && (
+                    <Ionicons name="checkmark-circle" size={22} color={colors.primary} />
+                  )}
                 </TouchableOpacity>
               ))}
-              <TouchableOpacity onPress={() => setStep(performanceType === "cover" ? 3 : 4)} style={styles.nextBtn} activeOpacity={0.85}>
-                <LinearGradient colors={["#A855F7", "#EC4899"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.nextBtnGradient}>
+              <TouchableOpacity
+                onPress={() => setStep(performanceType === "cover" ? 3 : 6)}
+                style={styles.nextBtn}
+                activeOpacity={0.85}
+              >
+                <LinearGradient
+                  colors={["#A855F7", "#EC4899"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.nextBtnGradient}
+                >
                   <Text style={styles.nextBtnText}>Continue</Text>
                   <Ionicons name="chevron-forward" size={18} color="#fff" />
                 </LinearGradient>
@@ -380,16 +567,30 @@ export default function PostScreen() {
             </View>
           )}
 
+          {/* ── Step 3: Song Tagging (cover only) ── */}
           {step === 3 && performanceType === "cover" && (
             <View style={styles.stepView}>
-              <Text style={[styles.stepLabel, { color: colors.foreground }]}>
-                3. Tag the Song
-              </Text>
-              <View style={[styles.musixmatchBadge, { backgroundColor: `${colors.primary}15`, borderColor: `${colors.primary}30` }]}>
+              <Text style={[styles.stepLabel, { color: colors.foreground }]}>3. Tag the Song</Text>
+              <View
+                style={[
+                  styles.musixmatchBadge,
+                  {
+                    backgroundColor: `${colors.primary}15`,
+                    borderColor: `${colors.primary}30`,
+                  },
+                ]}
+              >
                 <Ionicons name="musical-note" size={14} color={colors.primary} />
-                <Text style={[styles.musixmatchText, { color: colors.primary }]}>Powered by Musixmatch</Text>
+                <Text style={[styles.musixmatchText, { color: colors.primary }]}>
+                  Powered by Musixmatch
+                </Text>
               </View>
-              <View style={[styles.songSearchBar, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+              <View
+                style={[
+                  styles.songSearchBar,
+                  { backgroundColor: colors.muted, borderColor: colors.border },
+                ]}
+              >
                 <Ionicons name="search" size={16} color={colors.mutedForeground} />
                 <TextInput
                   value={songQuery}
@@ -401,17 +602,40 @@ export default function PostScreen() {
                   onSubmitEditing={handleSongSearch}
                 />
                 <TouchableOpacity onPress={handleSongSearch} activeOpacity={0.7}>
-                  <Text style={[styles.searchBtn, { color: colors.primary }]}>Search</Text>
+                  {isSongSearching ? (
+                    <ActivityIndicator size="small" color={colors.primary} />
+                  ) : (
+                    <Text style={[styles.searchBtn, { color: colors.primary }]}>Search</Text>
+                  )}
                 </TouchableOpacity>
               </View>
               {selectedSong && (
-                <View style={[styles.selectedSong, { backgroundColor: `${colors.primary}15`, borderColor: `${colors.primary}40` }]}>
+                <View
+                  style={[
+                    styles.selectedSong,
+                    {
+                      backgroundColor: `${colors.primary}15`,
+                      borderColor: `${colors.primary}40`,
+                    },
+                  ]}
+                >
                   <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
                   <View style={styles.selectedSongInfo}>
-                    <Text style={[styles.selectedSongTitle, { color: colors.foreground }]}>{selectedSong.track_name}</Text>
-                    <Text style={[styles.selectedSongArtist, { color: colors.mutedForeground }]}>{selectedSong.artist_name}</Text>
+                    <Text style={[styles.selectedSongTitle, { color: colors.foreground }]}>
+                      {selectedSong.track_name}
+                    </Text>
+                    <Text style={[styles.selectedSongArtist, { color: colors.mutedForeground }]}>
+                      {selectedSong.artist_name}
+                    </Text>
                   </View>
-                  <TouchableOpacity onPress={() => setSelectedSong(null)} activeOpacity={0.7}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setSelectedSong(null);
+                      setSelectedSection(null);
+                      setSections([]);
+                    }}
+                    activeOpacity={0.7}
+                  >
                     <Ionicons name="close" size={18} color={colors.mutedForeground} />
                   </TouchableOpacity>
                 </View>
@@ -421,30 +645,273 @@ export default function PostScreen() {
                   {songResults.map((track) => (
                     <TouchableOpacity
                       key={track.track_id}
-                      onPress={() => { setSelectedSong(track); setSongResults([]); }}
+                      onPress={() => {
+                        setSelectedSong(track);
+                        setSongResults([]);
+                        setSelectedSection(null);
+                        setSections([]);
+                      }}
                       style={[styles.songResultRow, { borderBottomColor: colors.border }]}
                       activeOpacity={0.8}
                     >
                       <Ionicons name="musical-notes" size={16} color={colors.primary} />
                       <View style={styles.songResultInfo}>
-                        <Text style={[styles.songResultTitle, { color: colors.foreground }]} numberOfLines={1}>{track.track_name}</Text>
-                        <Text style={[styles.songResultArtist, { color: colors.mutedForeground }]} numberOfLines={1}>{track.artist_name}</Text>
+                        <Text
+                          style={[styles.songResultTitle, { color: colors.foreground }]}
+                          numberOfLines={1}
+                        >
+                          {track.track_name}
+                        </Text>
+                        <Text
+                          style={[styles.songResultArtist, { color: colors.mutedForeground }]}
+                          numberOfLines={1}
+                        >
+                          {track.artist_name}
+                        </Text>
                       </View>
                       <Ionicons name="add-circle-outline" size={20} color={colors.primary} />
                     </TouchableOpacity>
                   ))}
                 </View>
               )}
-              <TouchableOpacity onPress={() => setStep(4)} style={[styles.nextBtn, { marginTop: 16 }]} activeOpacity={0.85}>
-                <LinearGradient colors={["#A855F7", "#EC4899"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.nextBtnGradient}>
-                  <Text style={styles.nextBtnText}>{selectedSong ? "Continue" : "Skip"}</Text>
+              <TouchableOpacity
+                onPress={() => setStep(selectedSong ? 4 : 6)}
+                style={[styles.nextBtn, { marginTop: 16 }]}
+                activeOpacity={0.85}
+              >
+                <LinearGradient
+                  colors={["#A855F7", "#EC4899"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.nextBtnGradient}
+                >
+                  <Text style={styles.nextBtnText}>
+                    {selectedSong ? "Choose Lyric Section" : "Skip"}
+                  </Text>
                   <Ionicons name="chevron-forward" size={18} color="#fff" />
                 </LinearGradient>
               </TouchableOpacity>
             </View>
           )}
 
-          {step === 4 && (
+          {/* ── Step 4: Choose Lyric Section (cover + song only) ── */}
+          {step === 4 && performanceType === "cover" && selectedSong && (
+            <View style={styles.stepView}>
+              <Text style={[styles.stepLabel, { color: colors.foreground }]}>
+                3.5 — Choose a Lyric Section
+              </Text>
+              <Text style={[styles.stepHint, { color: colors.mutedForeground }]}>
+                Pick the part of the song you performed. Viewers will see synced lyrics as your video plays.
+              </Text>
+
+              <View
+                style={[
+                  styles.songRefCard,
+                  { backgroundColor: `${colors.primary}10`, borderColor: `${colors.primary}30` },
+                ]}
+              >
+                <Ionicons name="musical-notes" size={16} color={colors.primary} />
+                <Text style={[styles.songRefTitle, { color: colors.foreground }]} numberOfLines={1}>
+                  {selectedSong.track_name}
+                </Text>
+                <Text style={[styles.songRefArtist, { color: colors.mutedForeground }]}>
+                  {selectedSong.artist_name}
+                </Text>
+              </View>
+
+              {sectionsLoading && (
+                <View style={styles.centeredRow}>
+                  <ActivityIndicator color={colors.primary} size="small" />
+                  <Text style={[styles.stepHint, { color: colors.mutedForeground }]}>
+                    Loading sections…
+                  </Text>
+                </View>
+              )}
+
+              {sectionsError && !sectionsLoading && (
+                <View
+                  style={[
+                    styles.errorCard,
+                    { backgroundColor: "rgba(239,68,68,0.1)", borderColor: "rgba(239,68,68,0.3)" },
+                  ]}
+                >
+                  <Ionicons name="alert-circle-outline" size={16} color="#EF4444" />
+                  <Text style={[styles.stepHint, { color: "#EF4444" }]}>
+                    {sectionsError} — using Full Track.
+                  </Text>
+                </View>
+              )}
+
+              {!sectionsLoading &&
+                (sections.length > 0
+                  ? sections.map((seg) => (
+                      <TouchableOpacity
+                        key={seg.id}
+                        onPress={() => setSelectedSection(seg)}
+                        style={[
+                          styles.sectionCard,
+                          {
+                            backgroundColor:
+                              selectedSection?.id === seg.id
+                                ? `${colors.primary}18`
+                                : colors.card,
+                            borderColor:
+                              selectedSection?.id === seg.id
+                                ? colors.primary
+                                : colors.border,
+                          },
+                        ]}
+                        activeOpacity={0.8}
+                      >
+                        <View style={{ flex: 1 }}>
+                          <Text
+                            style={[
+                              styles.sectionLabel,
+                              {
+                                color:
+                                  selectedSection?.id === seg.id
+                                    ? colors.primary
+                                    : colors.foreground,
+                              },
+                            ]}
+                          >
+                            {seg.label}
+                          </Text>
+                          <Text style={[styles.sectionMeta, { color: colors.mutedForeground }]}>
+                            {fmtMs(seg.startMs)} – {seg.endMs >= 999999 ? "end" : fmtMs(seg.endMs)}
+                            {seg.lineCount > 0 ? ` · ${seg.lineCount} lines` : ""}
+                          </Text>
+                        </View>
+                        {selectedSection?.id === seg.id && (
+                          <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
+                        )}
+                      </TouchableOpacity>
+                    ))
+                  : selectedSection && (
+                      <View
+                        style={[
+                          styles.sectionCard,
+                          {
+                            backgroundColor: `${colors.primary}18`,
+                            borderColor: colors.primary,
+                          },
+                        ]}
+                      >
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.sectionLabel, { color: colors.primary }]}>
+                            {selectedSection.label}
+                          </Text>
+                          <Text style={[styles.sectionMeta, { color: colors.mutedForeground }]}>
+                            Full track
+                          </Text>
+                        </View>
+                        <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
+                      </View>
+                    ))}
+
+              <TouchableOpacity
+                onPress={() => setStep(5)}
+                style={[styles.nextBtn, !selectedSection && { opacity: 0.5 }]}
+                disabled={!selectedSection}
+                activeOpacity={0.85}
+              >
+                <LinearGradient
+                  colors={["#A855F7", "#EC4899"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.nextBtnGradient}
+                >
+                  <Text style={styles.nextBtnText}>Fine-Tune Timing</Text>
+                  <Ionicons name="chevron-forward" size={18} color="#fff" />
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* ── Step 5: Timing Adjustment (cover + song + section) ── */}
+          {step === 5 && performanceType === "cover" && selectedSong && selectedSection && (
+            <View style={styles.stepView}>
+              <Text style={[styles.stepLabel, { color: colors.foreground }]}>
+                3.6 — Fine-Tune Timing
+              </Text>
+              <Text style={[styles.stepHint, { color: colors.mutedForeground }]}>
+                If the lyrics appear slightly early or late compared to your singing, adjust the offset below. Leave at 0 if it feels right.
+              </Text>
+
+              <View
+                style={[
+                  styles.timingCard,
+                  { backgroundColor: colors.card, borderColor: colors.border },
+                ]}
+              >
+                <View style={styles.timingSection}>
+                  <Ionicons name="musical-note" size={16} color={colors.primary} />
+                  <Text style={[styles.timingSectionLabel, { color: colors.foreground }]}>
+                    {selectedSection.label}
+                  </Text>
+                </View>
+                <Text style={[styles.timingSectionMeta, { color: colors.mutedForeground }]}>
+                  {fmtMs(selectedSection.startMs)} –{" "}
+                  {selectedSection.endMs >= 999999 ? "end" : fmtMs(selectedSection.endMs)}
+                  {selectedSection.lineCount > 0
+                    ? ` · ${selectedSection.lineCount} lines`
+                    : ""}
+                </Text>
+              </View>
+
+              <View style={styles.offsetRow}>
+                <TouchableOpacity
+                  onPress={() => setTimingOffsetMs((v) => v - 200)}
+                  style={[styles.offsetBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.offsetBtnText, { color: colors.foreground }]}>−200 ms</Text>
+                </TouchableOpacity>
+
+                <View style={styles.offsetDisplay}>
+                  <Text style={[styles.offsetValue, { color: colors.foreground }]}>
+                    {timingOffsetMs > 0 ? `+${timingOffsetMs}` : timingOffsetMs} ms
+                  </Text>
+                  {timingOffsetMs !== 0 && (
+                    <TouchableOpacity onPress={() => setTimingOffsetMs(0)} activeOpacity={0.7}>
+                      <Text style={[styles.offsetReset, { color: colors.primary }]}>Reset</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                <TouchableOpacity
+                  onPress={() => setTimingOffsetMs((v) => v + 200)}
+                  style={[styles.offsetBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.offsetBtnText, { color: colors.foreground }]}>+200 ms</Text>
+                </TouchableOpacity>
+              </View>
+
+              <Text style={[styles.offsetHint, { color: colors.mutedForeground }]}>
+                Negative = lyrics appear earlier · Positive = lyrics appear later
+              </Text>
+
+              <TouchableOpacity
+                onPress={() => setStep(6)}
+                style={styles.nextBtn}
+                activeOpacity={0.85}
+              >
+                <LinearGradient
+                  colors={["#A855F7", "#EC4899"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.nextBtnGradient}
+                >
+                  <Text style={styles.nextBtnText}>Add Details</Text>
+                  <Ionicons name="chevron-forward" size={18} color="#fff" />
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* ── Step 6: Details ── */}
+          {step === 6 && (
             <View style={styles.stepView}>
               <Text style={[styles.stepLabel, { color: colors.foreground }]}>4. Add Details</Text>
               <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>Title *</Text>
@@ -453,7 +920,14 @@ export default function PostScreen() {
                 onChangeText={setTitle}
                 placeholder="Give your performance a title"
                 placeholderTextColor={colors.mutedForeground}
-                style={[styles.fieldInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+                style={[
+                  styles.fieldInput,
+                  {
+                    backgroundColor: colors.muted,
+                    borderColor: colors.border,
+                    color: colors.foreground,
+                  },
+                ]}
                 maxLength={100}
               />
               <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>Caption</Text>
@@ -462,23 +936,75 @@ export default function PostScreen() {
                 onChangeText={setCaption}
                 placeholder="Tell your story... #hashtags"
                 placeholderTextColor={colors.mutedForeground}
-                style={[styles.fieldInput, styles.captionInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+                style={[
+                  styles.fieldInput,
+                  styles.captionInput,
+                  {
+                    backgroundColor: colors.muted,
+                    borderColor: colors.border,
+                    color: colors.foreground,
+                  },
+                ]}
                 multiline
                 maxLength={280}
               />
               <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>Genre</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tagsList}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.tagsList}
+              >
                 {GENRES.map((g) => (
-                  <TouchableOpacity key={g} onPress={() => setGenre(g)} style={[styles.tagChip, { backgroundColor: genre === g ? colors.primary : colors.muted, borderColor: genre === g ? colors.primary : colors.border }]} activeOpacity={0.8}>
-                    <Text style={[styles.tagChipText, { color: genre === g ? "#fff" : colors.mutedForeground }]}>{g}</Text>
+                  <TouchableOpacity
+                    key={g}
+                    onPress={() => setGenre(g)}
+                    style={[
+                      styles.tagChip,
+                      {
+                        backgroundColor: genre === g ? colors.primary : colors.muted,
+                        borderColor: genre === g ? colors.primary : colors.border,
+                      },
+                    ]}
+                    activeOpacity={0.8}
+                  >
+                    <Text
+                      style={[
+                        styles.tagChipText,
+                        { color: genre === g ? "#fff" : colors.mutedForeground },
+                      ]}
+                    >
+                      {g}
+                    </Text>
                   </TouchableOpacity>
                 ))}
               </ScrollView>
               <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>Language</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tagsList}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.tagsList}
+              >
                 {LANGUAGES.map((l) => (
-                  <TouchableOpacity key={l} onPress={() => setLanguage(l)} style={[styles.tagChip, { backgroundColor: language === l ? colors.primary : colors.muted, borderColor: language === l ? colors.primary : colors.border }]} activeOpacity={0.8}>
-                    <Text style={[styles.tagChipText, { color: language === l ? "#fff" : colors.mutedForeground }]}>{l}</Text>
+                  <TouchableOpacity
+                    key={l}
+                    onPress={() => setLanguage(l)}
+                    style={[
+                      styles.tagChip,
+                      {
+                        backgroundColor: language === l ? colors.primary : colors.muted,
+                        borderColor: language === l ? colors.primary : colors.border,
+                      },
+                    ]}
+                    activeOpacity={0.8}
+                  >
+                    <Text
+                      style={[
+                        styles.tagChipText,
+                        { color: language === l ? "#fff" : colors.mutedForeground },
+                      ]}
+                    >
+                      {l}
+                    </Text>
                   </TouchableOpacity>
                 ))}
               </ScrollView>
@@ -487,10 +1013,22 @@ export default function PostScreen() {
                 onChangeText={setLocation}
                 placeholder="City, Country (optional)"
                 placeholderTextColor={colors.mutedForeground}
-                style={[styles.fieldInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+                style={[
+                  styles.fieldInput,
+                  {
+                    backgroundColor: colors.muted,
+                    borderColor: colors.border,
+                    color: colors.foreground,
+                  },
+                ]}
               />
-              <TouchableOpacity onPress={() => setStep(5)} style={styles.nextBtn} activeOpacity={0.85}>
-                <LinearGradient colors={["#A855F7", "#EC4899"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.nextBtnGradient}>
+              <TouchableOpacity onPress={() => setStep(7)} style={styles.nextBtn} activeOpacity={0.85}>
+                <LinearGradient
+                  colors={["#A855F7", "#EC4899"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.nextBtnGradient}
+                >
                   <Text style={styles.nextBtnText}>Review</Text>
                   <Ionicons name="chevron-forward" size={18} color="#fff" />
                 </LinearGradient>
@@ -498,27 +1036,70 @@ export default function PostScreen() {
             </View>
           )}
 
-          {step === 5 && (
+          {/* ── Step 7: Review ── */}
+          {step === 7 && (
             <View style={styles.stepView}>
               <Text style={[styles.stepLabel, { color: colors.foreground }]}>5. Review and Post</Text>
-              <View style={[styles.reviewCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <View
+                style={[
+                  styles.reviewCard,
+                  { backgroundColor: colors.card, borderColor: colors.border },
+                ]}
+              >
                 <ReviewRow label="Title" value={title || "—"} colors={colors} />
                 <ReviewRow label="Type" value={performanceType} colors={colors} />
                 <ReviewRow label="Genre" value={genre} colors={colors} />
                 <ReviewRow label="Language" value={language} colors={colors} />
-                <ReviewRow label="Video" value={videoUri ? `${formatDuration(videoDurationSec)} recorded` : "No video"} colors={colors} />
-                {selectedSong && <ReviewRow label="Song" value={`${selectedSong.track_name} — ${selectedSong.artist_name}`} colors={colors} />}
+                <ReviewRow
+                  label="Video"
+                  value={videoUri ? `${formatDuration(videoDurationSec)} recorded` : "No video"}
+                  colors={colors}
+                />
+                {selectedSong && (
+                  <ReviewRow
+                    label="Song"
+                    value={`${selectedSong.track_name} — ${selectedSong.artist_name}`}
+                    colors={colors}
+                  />
+                )}
+                {selectedSection && (
+                  <ReviewRow label="Section" value={selectedSection.label} colors={colors} />
+                )}
+                {selectedSection && timingOffsetMs !== 0 && (
+                  <ReviewRow
+                    label="Timing offset"
+                    value={`${timingOffsetMs > 0 ? "+" : ""}${timingOffsetMs} ms`}
+                    colors={colors}
+                  />
+                )}
                 {location && <ReviewRow label="Location" value={location} colors={colors} />}
               </View>
-              <TouchableOpacity onPress={() => setRightsConfirmed(!rightsConfirmed)} style={styles.rightsRow} activeOpacity={0.8}>
-                <View style={[styles.checkbox, { borderColor: rightsConfirmed ? colors.primary : colors.border, backgroundColor: rightsConfirmed ? colors.primary : "transparent" }]}>
+              <TouchableOpacity
+                onPress={() => setRightsConfirmed(!rightsConfirmed)}
+                style={styles.rightsRow}
+                activeOpacity={0.8}
+              >
+                <View
+                  style={[
+                    styles.checkbox,
+                    {
+                      borderColor: rightsConfirmed ? colors.primary : colors.border,
+                      backgroundColor: rightsConfirmed ? colors.primary : "transparent",
+                    },
+                  ]}
+                >
                   {rightsConfirmed && <Ionicons name="checkmark" size={14} color="#fff" />}
                 </View>
                 <Text style={[styles.rightsText, { color: colors.mutedForeground }]}>
                   I confirm this is my performance and I have the right to upload it.
                 </Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={handlePost} disabled={isPosting || !rightsConfirmed} style={[styles.nextBtn, !rightsConfirmed && { opacity: 0.5 }]} activeOpacity={0.85}>
+              <TouchableOpacity
+                onPress={handlePost}
+                disabled={isPosting || !rightsConfirmed}
+                style={[styles.nextBtn, !rightsConfirmed && { opacity: 0.5 }]}
+                activeOpacity={0.85}
+              >
                 <LinearGradient
                   colors={["#A855F7", "#EC4899", "#F59E0B"]}
                   start={{ x: 0, y: 0 }}
@@ -526,7 +1107,9 @@ export default function PostScreen() {
                   style={styles.nextBtnGradient}
                 >
                   <MaterialCommunityIcons name="microphone" size={20} color="#fff" />
-                  <Text style={styles.nextBtnText}>{isPosting ? "Posting..." : "Post Music Minute"}</Text>
+                  <Text style={styles.nextBtnText}>
+                    {isPosting ? "Posting..." : "Post Music Minute"}
+                  </Text>
                 </LinearGradient>
               </TouchableOpacity>
             </View>
@@ -537,11 +1120,21 @@ export default function PostScreen() {
   );
 }
 
-function ReviewRow({ label, value, colors }: { label: string; value: string; colors: ReturnType<typeof useColors> }) {
+function ReviewRow({
+  label,
+  value,
+  colors,
+}: {
+  label: string;
+  value: string;
+  colors: ReturnType<typeof useColors>;
+}) {
   return (
     <View style={[styles.reviewRow, { borderBottomColor: colors.border }]}>
       <Text style={[styles.reviewLabel, { color: colors.mutedForeground }]}>{label}</Text>
-      <Text style={[styles.reviewValue, { color: colors.foreground }]} numberOfLines={2}>{value}</Text>
+      <Text style={[styles.reviewValue, { color: colors.foreground }]} numberOfLines={2}>
+        {value}
+      </Text>
     </View>
   );
 }
@@ -568,10 +1161,7 @@ const styles = StyleSheet.create({
   stepView: { paddingHorizontal: 20, paddingTop: 8, gap: 14 },
   stepLabel: { fontSize: 18, fontWeight: "700", marginBottom: 4 },
   stepHint: { fontSize: 13, lineHeight: 18, marginTop: -8 },
-  uploadOptions: {
-    flexDirection: "row",
-    gap: 12,
-  },
+  uploadOptions: { flexDirection: "row", gap: 12 },
   uploadOption: {
     flex: 1,
     alignItems: "center",
@@ -590,10 +1180,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#000",
     position: "relative",
   },
-  videoPreview: {
-    width: "100%",
-    height: "100%",
-  },
+  videoPreview: { width: "100%", height: "100%" },
   videoMeta: {
     position: "absolute",
     bottom: 12,
@@ -602,11 +1189,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
   },
-  videoDuration: {
-    color: "#fff",
-    fontSize: 13,
-    fontWeight: "700",
-  },
+  videoDuration: { color: "#fff", fontSize: 13, fontWeight: "700" },
   changeVideoBtn: {
     position: "absolute",
     bottom: 12,
@@ -672,6 +1255,72 @@ const styles = StyleSheet.create({
   songResultInfo: { flex: 1 },
   songResultTitle: { fontSize: 14, fontWeight: "600" },
   songResultArtist: { fontSize: 12, marginTop: 2 },
+  // Section selection (step 4)
+  songRefCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  songRefTitle: { fontSize: 14, fontWeight: "700", flex: 1 },
+  songRefArtist: { fontSize: 12 },
+  centeredRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    justifyContent: "center",
+    paddingVertical: 12,
+  },
+  errorCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  sectionCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  sectionLabel: { fontSize: 15, fontWeight: "700" },
+  sectionMeta: { fontSize: 12, marginTop: 3 },
+  // Timing (step 5)
+  timingCard: {
+    padding: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    gap: 4,
+  },
+  timingSection: { flexDirection: "row", alignItems: "center", gap: 8 },
+  timingSectionLabel: { fontSize: 15, fontWeight: "700" },
+  timingSectionMeta: { fontSize: 12 },
+  offsetRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  offsetBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  offsetBtnText: { fontSize: 13, fontWeight: "700" },
+  offsetDisplay: {
+    flex: 1,
+    alignItems: "center",
+    gap: 4,
+  },
+  offsetValue: { fontSize: 20, fontWeight: "800" },
+  offsetReset: { fontSize: 12, fontWeight: "600" },
+  offsetHint: { fontSize: 12, textAlign: "center" },
+  // Details (step 6)
   fieldLabel: { fontSize: 12, fontWeight: "600", marginBottom: -4 },
   fieldInput: {
     paddingHorizontal: 14,
@@ -689,6 +1338,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   tagChipText: { fontSize: 13, fontWeight: "600" },
+  // Review (step 7)
   reviewCard: {
     borderRadius: 14,
     borderWidth: 1,
@@ -701,14 +1351,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    gap: 12,
   },
-  reviewLabel: { fontSize: 13, fontWeight: "600" },
-  reviewValue: { fontSize: 13, flex: 1, textAlign: "right" },
+  reviewLabel: { fontSize: 13 },
+  reviewValue: { fontSize: 13, fontWeight: "600", maxWidth: "60%", textAlign: "right" },
   rightsRow: {
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: 10,
+    gap: 12,
   },
   checkbox: {
     width: 22,
@@ -717,26 +1366,28 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     justifyContent: "center",
     alignItems: "center",
+    flexShrink: 0,
     marginTop: 1,
   },
-  rightsText: { fontSize: 12, lineHeight: 18, flex: 1 },
-  nextBtn: { width: "100%", borderRadius: 14, overflow: "hidden" },
+  rightsText: { fontSize: 13, lineHeight: 19, flex: 1 },
+  // Shared
+  nextBtn: { borderRadius: 16, overflow: "hidden" },
   nextBtnGradient: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
-    paddingVertical: 15,
+    paddingVertical: 16,
   },
   nextBtnText: { color: "#fff", fontSize: 16, fontWeight: "700" },
-  guestView: { flex: 1, alignItems: "center", justifyContent: "center", gap: 16, paddingHorizontal: 32 },
-  guestTitle: { fontSize: 26, fontWeight: "800", textAlign: "center" },
-  guestSubtitle: { fontSize: 14, textAlign: "center", lineHeight: 20 },
-  guestBtn: { width: "100%", borderRadius: 14, overflow: "hidden" },
-  guestBtnGradient: { paddingVertical: 15, alignItems: "center" },
+  // Guest / success views
+  guestView: { flex: 1, alignItems: "center", gap: 16, paddingHorizontal: 32 },
+  guestTitle: { fontSize: 24, fontWeight: "800", textAlign: "center" },
+  guestSubtitle: { fontSize: 14, textAlign: "center", lineHeight: 21 },
+  guestBtn: { width: "100%", borderRadius: 16, overflow: "hidden", marginTop: 8 },
+  guestBtnGradient: { paddingVertical: 16, alignItems: "center" },
   guestBtnText: { color: "#fff", fontSize: 16, fontWeight: "700" },
   successView: { flex: 1, alignItems: "center", justifyContent: "center", gap: 16, paddingHorizontal: 32 },
   successTitle: { fontSize: 26, fontWeight: "800", textAlign: "center" },
-  successSubtitle: { fontSize: 14, textAlign: "center", lineHeight: 20 },
-  gold: { color: "#F59E0B" },
+  successSubtitle: { fontSize: 14, textAlign: "center", lineHeight: 21 },
 });

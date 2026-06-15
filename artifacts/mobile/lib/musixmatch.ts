@@ -1,0 +1,174 @@
+/**
+ * Musixmatch API helper for StageOne mobile.
+ * All responses are in-memory cached per session (Map keyed by trackId / trackId+lang).
+ * Never stores lyric text — only fetches and returns it.
+ */
+
+// ---------------------------------------------------------------------------
+// Types — mirrors the API server's exported shapes (can't import across packages)
+// ---------------------------------------------------------------------------
+
+export type LyricSource = "musixmatch" | "demo";
+
+export interface LyricLine {
+  text: string;
+  startMs: number | null;
+  endMs: number | null;
+}
+
+export interface LyricsResponse {
+  source: LyricSource;
+  trackId: string;
+  durationMs: number | null;
+  hasSync: boolean;
+  lines: LyricLine[];
+}
+
+export interface Segment {
+  id: string;
+  label: string;
+  startMs: number;
+  endMs: number;
+  lineCount: number;
+}
+
+export interface SegmentsResponse {
+  source: LyricSource;
+  trackId: string;
+  segments: Segment[];
+}
+
+export interface TranslationResponse {
+  source: LyricSource;
+  trackId: string;
+  targetLanguage: string;
+  lines: LyricLine[] | null;
+  availableLanguages: string[];
+}
+
+export interface MoodResponse {
+  source: "derived";
+  trackId: string;
+  moodTags: string[];
+  primaryMood: string;
+  accentColor: string;
+}
+
+// ---------------------------------------------------------------------------
+// Base URL
+// ---------------------------------------------------------------------------
+
+function apiBase(): string | null {
+  const domain = process.env.EXPO_PUBLIC_DOMAIN;
+  if (domain) return `https://${domain}/api/musixmatch`;
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// In-memory cache
+// ---------------------------------------------------------------------------
+
+const lyricsCache = new Map<string, LyricsResponse>();
+const segmentsCache = new Map<string, SegmentsResponse>();
+const translationCache = new Map<string, TranslationResponse | null>();
+const moodCache = new Map<string, MoodResponse>();
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+async function apiFetch<T>(path: string): Promise<T> {
+  const base = apiBase();
+  if (!base) throw new Error("EXPO_PUBLIC_DOMAIN not set");
+  const res = await fetch(`${base}${path}`);
+  if (!res.ok) throw new Error(`API ${path} → ${res.status}`);
+  return res.json() as Promise<T>;
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+export async function fetchLyrics(trackId: string): Promise<LyricsResponse | null> {
+  const key = trackId;
+  if (lyricsCache.has(key)) return lyricsCache.get(key)!;
+  try {
+    const data = await apiFetch<LyricsResponse>(`/lyrics/${encodeURIComponent(trackId)}`);
+    lyricsCache.set(key, data);
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchSegments(trackId: string): Promise<SegmentsResponse | null> {
+  const key = trackId;
+  if (segmentsCache.has(key)) return segmentsCache.get(key)!;
+  try {
+    const data = await apiFetch<SegmentsResponse>(`/segments/${encodeURIComponent(trackId)}`);
+    segmentsCache.set(key, data);
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Returns null if the translation is unavailable (lines === null) or on fetch error.
+ * Caches the full TranslationResponse including null-lines variants so we don't re-probe.
+ */
+export async function fetchTranslation(
+  trackId: string,
+  lang: string,
+): Promise<TranslationResponse | null> {
+  const key = `${trackId}:${lang}`;
+  if (translationCache.has(key)) return translationCache.get(key) ?? null;
+  try {
+    const data = await apiFetch<TranslationResponse>(
+      `/translate/${encodeURIComponent(trackId)}/${encodeURIComponent(lang)}`,
+    );
+    translationCache.set(key, data);
+    return data;
+  } catch {
+    translationCache.set(key, null);
+    return null;
+  }
+}
+
+export async function fetchMood(trackId: string): Promise<MoodResponse | null> {
+  const key = trackId;
+  if (moodCache.has(key)) return moodCache.get(key)!;
+  try {
+    const data = await apiFetch<MoodResponse>(`/mood/${encodeURIComponent(trackId)}`);
+    moodCache.set(key, data);
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Probe a set of candidate languages for a given track and return only those
+ * where lines !== null. Used by the lyric overlay to populate language pills
+ * dynamically without hardcoding.
+ */
+export async function probeAvailableTranslations(
+  trackId: string,
+  candidates: string[] = ["es", "ar", "fr", "pt"],
+): Promise<string[]> {
+  const results = await Promise.all(
+    candidates.map(async (lang) => {
+      const r = await fetchTranslation(trackId, lang);
+      return r?.lines !== null ? lang : null;
+    }),
+  );
+  return results.filter((l): l is string => l !== null);
+}
+
+/** Clear all caches (useful for testing). */
+export function clearCache(): void {
+  lyricsCache.clear();
+  segmentsCache.clear();
+  translationCache.clear();
+  moodCache.clear();
+}

@@ -88,6 +88,18 @@ function RootLayoutNav() {
             headerShadowVisible: false,
           }}
         />
+        <Stack.Screen
+          name="lyric-challenge/[id]"
+          options={{
+            headerShown: true,
+            headerStyle: { backgroundColor: "#05020A" },
+            headerTintColor: "#fff",
+            headerBackTitle: "",
+            headerTitle: "LyricStage",
+            headerTitleStyle: { color: "#fff", fontWeight: "700" },
+            headerShadowVisible: false,
+          }}
+        />
       </Stack>
     </>
   );

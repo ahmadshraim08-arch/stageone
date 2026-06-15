@@ -110,6 +110,7 @@ export function MusicMinuteCard({ item, onCommentPress, onGoldenMicPress }: Prop
   const [activeLang, setActiveLang] = useState("en");
   const [availableLangs, setAvailableLangs] = useState<string[]>([]);
   const [translatedLines, setTranslatedLines] = useState<LyricLine[] | null>(null);
+  const [translationUnavailable, setTranslationUnavailable] = useState(false);
   const [videoPositionMs, setVideoPositionMs] = useState(0);
 
   const section = item.lyricSection ?? null;
@@ -135,12 +136,14 @@ export function MusicMinuteCard({ item, onCommentPress, onGoldenMicPress }: Prop
     : seedCreator?.avatarInitials ?? "?";
 
   // Find matching LyricStage challenge for "Sing This Part" CTA
+  // Filter by both trackId AND sectionId so the CTA targets the right challenge
   const matchingChallenge =
-    item.musixmatchTrackId
+    item.musixmatchTrackId && section
       ? SEED_CHALLENGES.find(
           (ch) =>
             ch.musixmatchTrackId === item.musixmatchTrackId &&
-            ch.challengeType === "lyric_stage",
+            ch.challengeType === "lyric_stage" &&
+            (ch.lyricSectionId === undefined || ch.lyricSectionId === section.sectionId),
         )
       : null;
 
@@ -177,11 +180,20 @@ export function MusicMinuteCard({ item, onCommentPress, onGoldenMicPress }: Prop
   useEffect(() => {
     if (!lyricVisible || !section || activeLang === "en") {
       setTranslatedLines(null);
+      setTranslationUnavailable(false);
       return;
     }
     let cancelled = false;
     fetchTranslation(section.trackId, activeLang).then((result) => {
-      if (!cancelled) setTranslatedLines(result?.lines ?? null);
+      if (!cancelled) {
+        if (!result || result.lines === null) {
+          setTranslationUnavailable(true);
+          setTranslatedLines(null);
+        } else {
+          setTranslationUnavailable(false);
+          setTranslatedLines(result.lines);
+        }
+      }
     });
     return () => {
       cancelled = true;
@@ -203,9 +215,25 @@ export function MusicMinuteCard({ item, onCommentPress, onGoldenMicPress }: Prop
   }, [lyricVisible, section]);
 
   // Compute the active lyric line
-  const displayLines = activeLang === "en" ? lyrics?.lines : (translatedLines ?? lyrics?.lines);
+  const displayLines =
+    activeLang === "en"
+      ? (lyrics?.lines ?? null)
+      : translationUnavailable
+        ? null
+        : translatedLines;
+
   const activeLine: LyricLine | null = (() => {
-    if (!displayLines || !section) return null;
+    if (!section) return null;
+    // hasSync:false → fixed-pace progression (divide section evenly among lines)
+    if (displayLines && displayLines.length > 0 && lyrics?.hasSync === false) {
+      const sectionDuration = section.endMs - section.startMs;
+      if (sectionDuration <= 0) return null;
+      const msPerLine = sectionDuration / displayLines.length;
+      const elapsed = videoPositionMs + section.timingOffsetMs;
+      const idx = Math.min(Math.floor(elapsed / msPerLine), displayLines.length - 1);
+      return displayLines[idx] ?? null;
+    }
+    if (!displayLines) return null;
     const absMs = videoPositionMs + section.startMs + section.timingOffsetMs;
     return (
       displayLines.find(
@@ -328,6 +356,8 @@ export function MusicMinuteCard({ item, onCommentPress, onGoldenMicPress }: Prop
               <ActivityIndicator color="#fff" size="small" />
             ) : lyricError ? (
               <Text style={styles.lyricUnavailable}>{lyricError}</Text>
+            ) : activeLang !== "en" && translationUnavailable ? (
+              <Text style={styles.lyricUnavailable}>Translation not available</Text>
             ) : activeLine ? (
               <Text style={styles.lyricActiveLine}>{activeLine.text}</Text>
             ) : lyrics ? (

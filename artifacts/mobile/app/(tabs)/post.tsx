@@ -2,9 +2,9 @@ import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { Video, ResizeMode } from "expo-av";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -23,7 +23,13 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useApp } from "@/context/AppContext";
 import { MusicMinute } from "@/data/seedData";
 import { useColors } from "@/hooks/useColors";
-import { fetchSegments, type Segment } from "@/lib/musixmatch";
+import {
+  fetchSegments,
+  fetchLyrics,
+  type Segment,
+  type LyricsResponse,
+  type LyricLine,
+} from "@/lib/musixmatch";
 
 type PerformanceType = "original" | "cover" | "freestyle";
 
@@ -93,6 +99,15 @@ export default function PostScreen() {
 
   // Timing (step 5)
   const [timingOffsetMs, setTimingOffsetMs] = useState(0);
+  // Section lyric previews: first lyric line text per sectionId
+  const [sectionPreviews, setSectionPreviews] = useState<Record<string, string>>({});
+  // No lyrics mode: user explicitly opted out of lyric overlay
+  const [noLyricsMode, setNoLyricsMode] = useState(false);
+  // Timing preview state (step 5)
+  const [previewLyricsData, setPreviewLyricsData] = useState<LyricsResponse | null>(null);
+  const [isPreviewingTiming, setIsPreviewingTiming] = useState(false);
+  const [previewPositionMs, setPreviewPositionMs] = useState(0);
+  const previewIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Details (step 6)
   const [title, setTitle] = useState("");
@@ -108,6 +123,13 @@ export default function PostScreen() {
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
 
+  // Prefill from challenge Join button deep-link
+  const { prefillTrackId, prefillSectionId } = useLocalSearchParams<{
+    prefillTrackId?: string;
+    prefillSectionId?: string;
+  }>();
+  const prefillAppliedRef = useRef(false);
+
   // Fetch lyric segments when reaching step 4 with a selected song
   useEffect(() => {
     if (step !== 4 || !selectedSong) return;
@@ -121,13 +143,85 @@ export default function PostScreen() {
       setSectionsLoading(false);
       setSelectedSection((prev) => {
         if (prev) return prev;
-        if (segs.length > 0) return segs[0];
-        return { id: "full", label: "Full Track", startMs: 0, endMs: 999999, lineCount: 0 };
+        if (prefillSectionId) {
+          const match = segs.find((s) => s.id === prefillSectionId);
+          if (match) return match;
+        }
+        return null; // no auto-select — user must choose or pick "No lyrics needed"
       });
       if (!result) setSectionsError("Could not load song sections");
+      // Fetch first-line lyric preview for each section card
+      if (segs.length > 0 && selectedSong) {
+        fetchLyrics(selectedSong.track_id).then((lyricsData) => {
+          if (cancelled || !lyricsData) return;
+          const previews: Record<string, string> = {};
+          segs.forEach((seg) => {
+            const firstLine = lyricsData.lines.find(
+              (l) =>
+                l.startMs !== null &&
+                l.startMs >= seg.startMs &&
+                (seg.endMs >= 999999 || l.startMs < seg.endMs),
+            );
+            if (firstLine) previews[seg.id] = firstLine.text;
+          });
+          setSectionPreviews(previews);
+        });
+      }
     });
     return () => { cancelled = true; };
   }, [step, selectedSong?.track_id]);
+
+  // Apply prefill params from challenge Join button
+  useEffect(() => {
+    if (prefillAppliedRef.current || !prefillTrackId) return;
+    const track = MOCK_TRACKS.find((t) => t.track_id === prefillTrackId);
+    if (!track) return;
+    prefillAppliedRef.current = true;
+    setPerformanceType("cover");
+    setSelectedSong(track);
+    setSections([]);
+    setSelectedSection(null);
+    setSectionPreviews({});
+    setNoLyricsMode(false);
+    setStep(4);
+  }, [prefillTrackId]);
+
+  // Fetch lyrics for timing preview when entering step 5
+  useEffect(() => {
+    if (step !== 5 || !selectedSong) return;
+    fetchLyrics(selectedSong.track_id).then((data) => {
+      setPreviewLyricsData(data);
+    });
+  }, [step, selectedSong?.track_id]);
+
+  // Preview timing interval — max 5 s or section duration, steps 250 ms
+  useEffect(() => {
+    if (!isPreviewingTiming || !selectedSection) {
+      if (previewIntervalRef.current) {
+        clearInterval(previewIntervalRef.current);
+        previewIntervalRef.current = null;
+      }
+      return;
+    }
+    setPreviewPositionMs(0);
+    const maxDuration = Math.min(selectedSection.endMs - selectedSection.startMs, 5000);
+    previewIntervalRef.current = setInterval(() => {
+      setPreviewPositionMs((p) => {
+        const next = p + 250;
+        if (next >= maxDuration) {
+          setIsPreviewingTiming(false);
+          return 0;
+        }
+        return next;
+      });
+    }, 250);
+    return () => {
+      if (previewIntervalRef.current) {
+        clearInterval(previewIntervalRef.current);
+        previewIntervalRef.current = null;
+      }
+    };
+  }, [isPreviewingTiming, selectedSection?.startMs, selectedSection?.endMs]);
 
   if (!currentUser) {
     return (
@@ -203,7 +297,8 @@ export default function PostScreen() {
   function goBack(): void {
     if (step === 7) { setStep(6); return; }
     if (step === 6) {
-      if (performanceType === "cover" && selectedSong) { setStep(5); return; }
+      if (performanceType === "cover" && selectedSong && selectedSection) { setStep(5); return; }
+      if (performanceType === "cover" && selectedSong) { setStep(4); return; }
       if (performanceType === "cover") { setStep(3); return; }
       setStep(2); return;
     }
@@ -354,6 +449,28 @@ export default function PostScreen() {
   };
 
   const visualStep = toVisualStep(step);
+
+  // Active line during timing preview (step 5)
+  const previewActiveLine: LyricLine | null = (() => {
+    if (!isPreviewingTiming || !previewLyricsData || !selectedSection) return null;
+    const lines = previewLyricsData.lines;
+    if (!previewLyricsData.hasSync && lines.length > 0) {
+      const sectionDuration = selectedSection.endMs - selectedSection.startMs;
+      if (sectionDuration <= 0) return null;
+      const msPerLine = sectionDuration / lines.length;
+      const idx = Math.min(
+        Math.floor((previewPositionMs + timingOffsetMs) / msPerLine),
+        lines.length - 1,
+      );
+      return lines[idx] ?? null;
+    }
+    const absMs = previewPositionMs + selectedSection.startMs + timingOffsetMs;
+    return (
+      lines.find(
+        (l) => l.startMs !== null && l.endMs !== null && absMs >= l.startMs! && absMs < l.endMs!,
+      ) ?? null
+    );
+  })();
 
   const StepIndicator = () => (
     <View style={styles.stepRow}>
@@ -742,77 +859,118 @@ export default function PostScreen() {
                 </View>
               )}
 
+              {/* "No lyrics needed" skip option — always visible */}
+              {!sectionsLoading && (
+                <TouchableOpacity
+                  onPress={() => {
+                    setNoLyricsMode(true);
+                    setSelectedSection(null);
+                  }}
+                  style={[
+                    styles.sectionCard,
+                    {
+                      backgroundColor: noLyricsMode
+                        ? `${colors.muted}60`
+                        : colors.card,
+                      borderColor: noLyricsMode ? colors.mutedForeground : colors.border,
+                    },
+                  ]}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons
+                    name="close-circle-outline"
+                    size={20}
+                    color={noLyricsMode ? colors.mutedForeground : colors.foreground}
+                  />
+                  <View style={{ flex: 1, marginLeft: 8 }}>
+                    <Text
+                      style={[
+                        styles.sectionLabel,
+                        { color: noLyricsMode ? colors.mutedForeground : colors.foreground },
+                      ]}
+                    >
+                      No lyrics needed
+                    </Text>
+                    <Text style={[styles.sectionMeta, { color: colors.mutedForeground }]}>
+                      Post without lyric overlay
+                    </Text>
+                  </View>
+                  {noLyricsMode && (
+                    <Ionicons name="checkmark-circle" size={20} color={colors.mutedForeground} />
+                  )}
+                </TouchableOpacity>
+              )}
+
+              {/* Section cards from Musixmatch */}
               {!sectionsLoading &&
-                (sections.length > 0
-                  ? sections.map((seg) => (
-                      <TouchableOpacity
-                        key={seg.id}
-                        onPress={() => setSelectedSection(seg)}
+                sections.map((seg) => (
+                  <TouchableOpacity
+                    key={seg.id}
+                    onPress={() => {
+                      setSelectedSection(seg);
+                      setNoLyricsMode(false);
+                    }}
+                    style={[
+                      styles.sectionCard,
+                      {
+                        backgroundColor:
+                          selectedSection?.id === seg.id
+                            ? `${colors.primary}18`
+                            : colors.card,
+                        borderColor:
+                          selectedSection?.id === seg.id
+                            ? colors.primary
+                            : colors.border,
+                      },
+                    ]}
+                    activeOpacity={0.8}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text
                         style={[
-                          styles.sectionCard,
+                          styles.sectionLabel,
                           {
-                            backgroundColor:
-                              selectedSection?.id === seg.id
-                                ? `${colors.primary}18`
-                                : colors.card,
-                            borderColor:
+                            color:
                               selectedSection?.id === seg.id
                                 ? colors.primary
-                                : colors.border,
-                          },
-                        ]}
-                        activeOpacity={0.8}
-                      >
-                        <View style={{ flex: 1 }}>
-                          <Text
-                            style={[
-                              styles.sectionLabel,
-                              {
-                                color:
-                                  selectedSection?.id === seg.id
-                                    ? colors.primary
-                                    : colors.foreground,
-                              },
-                            ]}
-                          >
-                            {seg.label}
-                          </Text>
-                          <Text style={[styles.sectionMeta, { color: colors.mutedForeground }]}>
-                            {fmtMs(seg.startMs)} – {seg.endMs >= 999999 ? "end" : fmtMs(seg.endMs)}
-                            {seg.lineCount > 0 ? ` · ${seg.lineCount} lines` : ""}
-                          </Text>
-                        </View>
-                        {selectedSection?.id === seg.id && (
-                          <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
-                        )}
-                      </TouchableOpacity>
-                    ))
-                  : selectedSection && (
-                      <View
-                        style={[
-                          styles.sectionCard,
-                          {
-                            backgroundColor: `${colors.primary}18`,
-                            borderColor: colors.primary,
+                                : colors.foreground,
                           },
                         ]}
                       >
-                        <View style={{ flex: 1 }}>
-                          <Text style={[styles.sectionLabel, { color: colors.primary }]}>
-                            {selectedSection.label}
-                          </Text>
-                          <Text style={[styles.sectionMeta, { color: colors.mutedForeground }]}>
-                            Full track
-                          </Text>
-                        </View>
-                        <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
-                      </View>
-                    ))}
+                        {seg.label}
+                      </Text>
+                      <Text style={[styles.sectionMeta, { color: colors.mutedForeground }]}>
+                        {fmtMs(seg.startMs)} – {seg.endMs >= 999999 ? "end" : fmtMs(seg.endMs)}
+                        {seg.lineCount > 0 ? ` · ${seg.lineCount} lines` : ""}
+                      </Text>
+                      {sectionPreviews[seg.id] ? (
+                        <Text
+                          style={[styles.sectionPreview, { color: colors.mutedForeground }]}
+                          numberOfLines={1}
+                        >
+                          "{sectionPreviews[seg.id]}"
+                        </Text>
+                      ) : null}
+                    </View>
+                    {selectedSection?.id === seg.id && (
+                      <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
+                    )}
+                  </TouchableOpacity>
+                ))}
 
               <TouchableOpacity
-                onPress={() => setStep(5)}
-                style={[styles.nextBtn, !selectedSection && { opacity: 0.5 }]}
-                disabled={!selectedSection}
+                onPress={() => {
+                  if (noLyricsMode) {
+                    setStep(6);
+                  } else {
+                    setStep(5);
+                  }
+                }}
+                style={[
+                  styles.nextBtn,
+                  !selectedSection && !noLyricsMode && { opacity: 0.5 },
+                ]}
+                disabled={!selectedSection && !noLyricsMode}
                 activeOpacity={0.85}
               >
                 <LinearGradient
@@ -821,7 +979,9 @@ export default function PostScreen() {
                   end={{ x: 1, y: 0 }}
                   style={styles.nextBtnGradient}
                 >
-                  <Text style={styles.nextBtnText}>Fine-Tune Timing</Text>
+                  <Text style={styles.nextBtnText}>
+                    {noLyricsMode ? "Continue without Lyrics" : "Fine-Tune Timing"}
+                  </Text>
                   <Ionicons name="chevron-forward" size={18} color="#fff" />
                 </LinearGradient>
               </TouchableOpacity>
@@ -861,11 +1021,11 @@ export default function PostScreen() {
 
               <View style={styles.offsetRow}>
                 <TouchableOpacity
-                  onPress={() => setTimingOffsetMs((v) => v - 200)}
+                  onPress={() => setTimingOffsetMs((v) => Math.max(-2000, v - 250))}
                   style={[styles.offsetBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
                   activeOpacity={0.8}
                 >
-                  <Text style={[styles.offsetBtnText, { color: colors.foreground }]}>−200 ms</Text>
+                  <Text style={[styles.offsetBtnText, { color: colors.foreground }]}>−250 ms</Text>
                 </TouchableOpacity>
 
                 <View style={styles.offsetDisplay}>
@@ -880,17 +1040,63 @@ export default function PostScreen() {
                 </View>
 
                 <TouchableOpacity
-                  onPress={() => setTimingOffsetMs((v) => v + 200)}
+                  onPress={() => setTimingOffsetMs((v) => Math.min(2000, v + 250))}
                   style={[styles.offsetBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
                   activeOpacity={0.8}
                 >
-                  <Text style={[styles.offsetBtnText, { color: colors.foreground }]}>+200 ms</Text>
+                  <Text style={[styles.offsetBtnText, { color: colors.foreground }]}>+250 ms</Text>
                 </TouchableOpacity>
               </View>
 
               <Text style={[styles.offsetHint, { color: colors.mutedForeground }]}>
-                Negative = lyrics appear earlier · Positive = lyrics appear later
+                Range: −2000 ms to +2000 ms · Negative = lyrics earlier · Positive = lyrics later
               </Text>
+
+              {/* Preview timing button */}
+              <TouchableOpacity
+                onPress={() => setIsPreviewingTiming((v) => !v)}
+                style={[
+                  styles.previewBtn,
+                  { backgroundColor: `${colors.primary}18`, borderColor: `${colors.primary}40` },
+                ]}
+                activeOpacity={0.85}
+              >
+                <Ionicons
+                  name={isPreviewingTiming ? "stop-circle-outline" : "play-circle-outline"}
+                  size={18}
+                  color={colors.primary}
+                />
+                <Text style={[styles.offsetBtnText, { color: colors.primary }]}>
+                  {isPreviewingTiming ? "Stop Preview" : "Preview Timing (5 s)"}
+                </Text>
+              </TouchableOpacity>
+
+              {/* Live lyric line during preview */}
+              {isPreviewingTiming && (
+                <View
+                  style={[
+                    styles.previewLineBox,
+                    {
+                      borderColor: `${colors.primary}30`,
+                      backgroundColor: `${colors.primary}08`,
+                    },
+                  ]}
+                >
+                  {previewLyricsData ? (
+                    previewActiveLine ? (
+                      <Text style={[styles.previewActiveLine, { color: colors.foreground }]}>
+                        {previewActiveLine.text}
+                      </Text>
+                    ) : (
+                      <Text style={[styles.offsetHint, { color: colors.mutedForeground }]}>
+                        ♪ waiting for lyric line…
+                      </Text>
+                    )
+                  ) : (
+                    <ActivityIndicator size="small" color={colors.primary} />
+                  )}
+                </View>
+              )}
 
               <TouchableOpacity
                 onPress={() => setStep(6)}
@@ -1290,7 +1496,32 @@ const styles = StyleSheet.create({
   },
   sectionLabel: { fontSize: 15, fontWeight: "700" },
   sectionMeta: { fontSize: 12, marginTop: 3 },
+  sectionPreview: { fontSize: 11, marginTop: 4, fontStyle: "italic" },
   // Timing (step 5)
+  previewBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  previewLineBox: {
+    minHeight: 52,
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  previewActiveLine: {
+    fontSize: 16,
+    fontWeight: "700",
+    textAlign: "center",
+    lineHeight: 24,
+  },
   timingCard: {
     padding: 16,
     borderRadius: 14,

@@ -81,6 +81,7 @@ export interface Challenge {
   accentColor: string;
   challengeType?: "lyric_stage";
   lyricSectionLabel?: string;
+  lyricSectionId?: string;
   musixmatchTrackId?: string;
   performerCount?: number;
   representedLanguages?: string[];
@@ -909,6 +910,7 @@ export const SEED_CHALLENGES: Challenge[] = [
     artistName: "Demo Artist",
     challengeType: "lyric_stage",
     lyricSectionLabel: "Selected Section",
+    lyricSectionId: "seg_0",
     musixmatchTrackId: "demo_001",
     performerCount: 312,
     representedLanguages: ["en", "es", "ar"],
@@ -925,6 +927,7 @@ export const SEED_CHALLENGES: Challenge[] = [
     artistName: "Demo Artist",
     challengeType: "lyric_stage",
     lyricSectionLabel: "Selected Section",
+    lyricSectionId: "seg_0",
     musixmatchTrackId: "demo_002",
     performerCount: 198,
     representedLanguages: ["en", "es"],

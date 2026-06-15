@@ -46,7 +46,11 @@ export default function LyricChallengeScreen() {
   }
 
   const performers = musicMinutes.filter(
-    (mm) => mm.musixmatchTrackId === challenge.musixmatchTrackId && mm.lyricSection,
+    (mm) =>
+      mm.musixmatchTrackId === challenge.musixmatchTrackId &&
+      mm.lyricSection !== undefined &&
+      (challenge.lyricSectionId === undefined ||
+        mm.lyricSection.sectionId === challenge.lyricSectionId),
   );
 
   const formatMs = (ms: number) => {
@@ -220,7 +224,15 @@ export default function LyricChallengeScreen() {
 
       <View style={[styles.joinFooter, { backgroundColor: colors.background, borderTopColor: colors.border }]}>
         <TouchableOpacity
-          onPress={() => router.push("/(tabs)/post")}
+          onPress={() =>
+            router.push({
+              pathname: "/(tabs)/post",
+              params: {
+                prefillTrackId: challenge.musixmatchTrackId ?? "",
+                prefillSectionId: challenge.lyricSectionId ?? "",
+              },
+            })
+          }
           style={styles.joinBtn}
           activeOpacity={0.85}
         >

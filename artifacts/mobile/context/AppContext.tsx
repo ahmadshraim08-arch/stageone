@@ -107,6 +107,7 @@ interface AppContextType {
   logout: () => void;
   signUp: (data: { username: string; displayName: string; email: string; genres: string[] }) => Promise<void>;
   updateAvatar: (avatarUrl: string) => void;
+  updateProfile: (displayName: string, bio: string) => Promise<void>;
   toggleLike: (musicMinuteId: string) => void;
   toggleFollow: (userId: string) => void;
   toggleSave: (musicMinuteId: string) => void;
@@ -598,6 +599,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [getToken],
   );
 
+  const updateProfile = useCallback(
+    async (displayName: string, bio: string) => {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated");
+      const updated = await patchMe(token, { displayName: displayName.trim(), bio: bio.trim() });
+      setCurrentUser((u) =>
+        u ? { ...u, displayName: updated.displayName, bio: updated.bio ?? "" } : u,
+      );
+    },
+    [getToken],
+  );
+
   const addComment = useCallback(
     (musicMinuteId: string, content: string) => {
       if (!currentUser) return;
@@ -756,6 +769,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         logout,
         signUp,
         updateAvatar,
+        updateProfile,
         toggleLike,
         toggleFollow,
         toggleSave,

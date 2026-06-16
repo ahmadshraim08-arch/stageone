@@ -8,10 +8,13 @@ import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
+  Modal,
   Platform,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -34,9 +37,36 @@ export default function ProfileScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { getToken } = useAuth();
-  const { currentUser, musicMinutes, likedIds, savedIds, unreadMessages, logout, isLoaded, updateAvatar } = useApp();
+  const { currentUser, musicMinutes, likedIds, savedIds, unreadMessages, logout, isLoaded, updateAvatar, updateProfile } = useApp();
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [myApiPosts, setMyApiPosts] = useState<MusicMinute[]>([]);
+
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [editDisplayName, setEditDisplayName] = useState("");
+  const [editBio, setEditBio] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+
+  const openEditModal = () => {
+    setEditDisplayName(currentUser?.displayName ?? "");
+    setEditBio(currentUser?.bio ?? "");
+    setEditModalVisible(true);
+  };
+
+  const handleSaveProfile = async () => {
+    if (!editDisplayName.trim()) {
+      Alert.alert("Display name required", "Please enter a display name.");
+      return;
+    }
+    setIsSaving(true);
+    try {
+      await updateProfile(editDisplayName.trim(), editBio.trim());
+      setEditModalVisible(false);
+    } catch {
+      Alert.alert("Save failed", "Could not update your profile. Please try again.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   // Fetch the signed-in user's own posts directly (not derived from home feed cache)
   useEffect(() => {
@@ -186,8 +216,21 @@ export default function ProfileScreen() {
             </View>
           </TouchableOpacity>
           <View style={styles.profileInfo}>
-            <Text style={[styles.displayName, { color: colors.foreground }]}>{currentUser.displayName}</Text>
+            <View style={styles.displayNameRow}>
+              <Text style={[styles.displayName, { color: colors.foreground }]}>{currentUser.displayName}</Text>
+              <TouchableOpacity
+                onPress={openEditModal}
+                activeOpacity={0.7}
+                style={[styles.editProfileBtn, { borderColor: colors.border }]}
+              >
+                <Ionicons name="pencil" size={12} color={colors.mutedForeground} />
+                <Text style={[styles.editProfileBtnText, { color: colors.mutedForeground }]}>Edit</Text>
+              </TouchableOpacity>
+            </View>
             <Text style={[styles.username, { color: colors.mutedForeground }]}>@{currentUser.username}</Text>
+            {currentUser.bio ? (
+              <Text style={[styles.bioText, { color: colors.foreground }]} numberOfLines={2}>{currentUser.bio}</Text>
+            ) : null}
             <View style={[styles.gmBalanceBadge, { backgroundColor: `${colors.gold}15`, borderColor: `${colors.gold}40` }]}>
               <MaterialCommunityIcons name="microphone" size={14} color={colors.gold} />
               <Text style={[styles.gmBalanceText, { color: colors.gold }]}>
@@ -315,6 +358,66 @@ export default function ProfileScreen() {
         </View>
       )}
 
+      <Modal
+        visible={editModalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setEditModalVisible(false)}
+      >
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+        >
+          <View style={[styles.modalSheet, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.foreground }]}>Edit Profile</Text>
+              <TouchableOpacity onPress={() => setEditModalVisible(false)} activeOpacity={0.7}>
+                <Ionicons name="close" size={22} color={colors.mutedForeground} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>Display Name</Text>
+            <TextInput
+              style={[styles.textInput, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background }]}
+              value={editDisplayName}
+              onChangeText={setEditDisplayName}
+              placeholder="Your display name"
+              placeholderTextColor={colors.mutedForeground}
+              maxLength={50}
+              autoCapitalize="words"
+              returnKeyType="next"
+            />
+
+            <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>Bio</Text>
+            <TextInput
+              style={[styles.textInput, styles.bioInput, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background }]}
+              value={editBio}
+              onChangeText={setEditBio}
+              placeholder="Tell the world about your voice…"
+              placeholderTextColor={colors.mutedForeground}
+              maxLength={200}
+              multiline
+              numberOfLines={4}
+              textAlignVertical="top"
+            />
+            <Text style={[styles.charCount, { color: colors.mutedForeground }]}>{editBio.length}/200</Text>
+
+            <TouchableOpacity
+              onPress={handleSaveProfile}
+              activeOpacity={0.85}
+              disabled={isSaving}
+              style={[styles.saveBtn, isSaving && { opacity: 0.6 }]}
+            >
+              <LinearGradient colors={["#A855F7", "#EC4899"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.saveBtnGradient}>
+                {isSaving
+                  ? <ActivityIndicator size="small" color="#fff" />
+                  : <Text style={styles.saveBtnText}>Save Changes</Text>}
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
       {savedMMs.length > 0 && (
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: colors.foreground, paddingHorizontal: 16 }]}>
@@ -414,7 +517,19 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   profileInfo: { flex: 1, gap: 4 },
+  displayNameRow: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
   displayName: { fontSize: 20, fontWeight: "800" },
+  editProfileBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  editProfileBtnText: { fontSize: 11, fontWeight: "600" },
+  bioText: { fontSize: 13, lineHeight: 18, marginTop: 2 },
   username: { fontSize: 14 },
   gmBalanceBadge: {
     flexDirection: "row",
@@ -518,4 +633,39 @@ const styles = StyleSheet.create({
   emptyMMsCTA: { borderRadius: 14, overflow: "hidden", marginTop: 6 },
   emptyMMsCTAGradient: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 12, paddingHorizontal: 24 },
   emptyMMsCTAText: { color: "#fff", fontSize: 14, fontWeight: "700" },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(0,0,0,0.6)",
+  },
+  modalSheet: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    borderWidth: 1,
+    padding: 24,
+    gap: 12,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 4,
+  },
+  modalTitle: { fontSize: 18, fontWeight: "800" },
+  fieldLabel: { fontSize: 12, fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.5, marginTop: 4 },
+  textInput: {
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+  },
+  bioInput: {
+    minHeight: 90,
+    paddingTop: 12,
+  },
+  charCount: { fontSize: 11, textAlign: "right", marginTop: -4 },
+  saveBtn: { borderRadius: 14, overflow: "hidden", marginTop: 8 },
+  saveBtnGradient: { paddingVertical: 14, alignItems: "center", justifyContent: "center" },
+  saveBtnText: { color: "#fff", fontSize: 15, fontWeight: "700" },
 });

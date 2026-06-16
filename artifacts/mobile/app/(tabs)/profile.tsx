@@ -167,6 +167,18 @@ export default function ProfileScreen() {
                 />
                 <LinearGradient colors={["transparent", "rgba(5,2,10,0.9)"]} style={StyleSheet.absoluteFill} />
                 <View style={styles.mmTileInfo}>
+                  {mm.trackTitle && (mm.performanceType === "cover" || !!mm.musixmatchTrackId) && (
+                    <View style={styles.mmSongTag}>
+                      <Ionicons name="musical-note" size={9} color="#A855F7" />
+                      <Text style={styles.mmSongText} numberOfLines={1}>
+                        {mm.performanceType === "cover"
+                          ? mm.trackTitle
+                          : mm.performanceType === "freestyle"
+                            ? `Backing: ${mm.trackTitle}`
+                            : `Inspired by: ${mm.trackTitle}`}
+                      </Text>
+                    </View>
+                  )}
                   <Text style={styles.mmTileTitle} numberOfLines={1}>{mm.title}</Text>
                   <View style={styles.mmTileStats}>
                     <Ionicons name="heart" size={10} color="#EF4444" />
@@ -214,6 +226,18 @@ export default function ProfileScreen() {
                 />
                 <LinearGradient colors={["transparent", "rgba(5,2,10,0.9)"]} style={StyleSheet.absoluteFill} />
                 <View style={styles.mmTileInfo}>
+                  {mm.trackTitle && (mm.performanceType === "cover" || !!mm.musixmatchTrackId) && (
+                    <View style={styles.mmSongTag}>
+                      <Ionicons name="musical-note" size={9} color="#A855F7" />
+                      <Text style={styles.mmSongText} numberOfLines={1}>
+                        {mm.performanceType === "cover"
+                          ? mm.trackTitle
+                          : mm.performanceType === "freestyle"
+                            ? `Backing: ${mm.trackTitle}`
+                            : `Inspired by: ${mm.trackTitle}`}
+                      </Text>
+                    </View>
+                  )}
                   <Text style={styles.mmTileTitle} numberOfLines={1}>{mm.title}</Text>
                 </View>
               </View>
@@ -322,7 +346,10 @@ const styles = StyleSheet.create({
     bottom: 8,
     left: 8,
     right: 8,
+    gap: 3,
   },
+  mmSongTag: { flexDirection: "row", alignItems: "center", gap: 3 },
+  mmSongText: { color: "#A855F7", fontSize: 9, fontWeight: "600", flex: 1 },
   mmTileTitle: { color: "#fff", fontSize: 11, fontWeight: "600" },
   mmTileStats: { flexDirection: "row", alignItems: "center", gap: 3, marginTop: 2 },
   mmTileStatText: { color: "rgba(255,255,255,0.7)", fontSize: 10 },

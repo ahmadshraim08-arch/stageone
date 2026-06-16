@@ -105,27 +105,28 @@ interface CatalogueTrack {
   track_name: string;
   artist_name: string;
   album_name: string;
+  genre?: string;
 }
 
 const CATALOGUE: CatalogueTrack[] = [
-  { track_id: "demo_001", track_name: "Neon Mornings", artist_name: "StageOne Artists", album_name: "Demo Sessions Vol. 1" },
-  { track_id: "demo_002", track_name: "Echo in the Rain", artist_name: "StageOne Artists", album_name: "Demo Sessions Vol. 1" },
-  { track_id: "demo_003", track_name: "Thousand Lights", artist_name: "StageOne Artists", album_name: "Demo Sessions Vol. 1" },
-  { track_id: "12345", track_name: "Golden Hour", artist_name: "JVKE", album_name: "this is what falling in love feels like" },
-  { track_id: "67890", track_name: "Fix You", artist_name: "Coldplay", album_name: "X&Y" },
-  { track_id: "11111", track_name: "Starlight", artist_name: "Taylor Swift", album_name: "Taylor Swift" },
-  { track_id: "22222", track_name: "Blinding Lights", artist_name: "The Weeknd", album_name: "After Hours" },
-  { track_id: "33333", track_name: "Someone Like You", artist_name: "Adele", album_name: "21" },
-  { track_id: "44444", track_name: "Shallow", artist_name: "Lady Gaga & Bradley Cooper", album_name: "A Star Is Born" },
-  { track_id: "55555", track_name: "Perfect", artist_name: "Ed Sheeran", album_name: "Divide" },
-  { track_id: "66666", track_name: "Bohemian Rhapsody", artist_name: "Queen", album_name: "A Night at the Opera" },
-  { track_id: "77777", track_name: "Hallelujah", artist_name: "Leonard Cohen", album_name: "Various Positions" },
-  { track_id: "88888", track_name: "Try Again", artist_name: "Aaliyah", album_name: "Romeo Must Die" },
-  { track_id: "99999", track_name: "Home", artist_name: "Michael Bublé", album_name: "It's Time" },
-  { track_id: "10001", track_name: "Stay", artist_name: "The Kid LAROI & Justin Bieber", album_name: "F*CK LOVE 3" },
-  { track_id: "10002", track_name: "As It Was", artist_name: "Harry Styles", album_name: "Harry's House" },
-  { track_id: "10003", track_name: "Levitating", artist_name: "Dua Lipa", album_name: "Future Nostalgia" },
-  { track_id: "10004", track_name: "Flowers", artist_name: "Miley Cyrus", album_name: "Endless Summer Vacation" },
+  { track_id: "demo_001", track_name: "Neon Mornings", artist_name: "StageOne Artists", album_name: "Demo Sessions Vol. 1", genre: "Pop" },
+  { track_id: "demo_002", track_name: "Echo in the Rain", artist_name: "StageOne Artists", album_name: "Demo Sessions Vol. 1", genre: "Indie" },
+  { track_id: "demo_003", track_name: "Thousand Lights", artist_name: "StageOne Artists", album_name: "Demo Sessions Vol. 1", genre: "Pop" },
+  { track_id: "12345", track_name: "Golden Hour", artist_name: "JVKE", album_name: "this is what falling in love feels like", genre: "Pop" },
+  { track_id: "67890", track_name: "Fix You", artist_name: "Coldplay", album_name: "X&Y", genre: "Rock" },
+  { track_id: "11111", track_name: "Starlight", artist_name: "Taylor Swift", album_name: "Taylor Swift", genre: "Pop" },
+  { track_id: "22222", track_name: "Blinding Lights", artist_name: "The Weeknd", album_name: "After Hours", genre: "Pop" },
+  { track_id: "33333", track_name: "Someone Like You", artist_name: "Adele", album_name: "21", genre: "Soul" },
+  { track_id: "44444", track_name: "Shallow", artist_name: "Lady Gaga & Bradley Cooper", album_name: "A Star Is Born", genre: "Pop" },
+  { track_id: "55555", track_name: "Perfect", artist_name: "Ed Sheeran", album_name: "Divide", genre: "Singer-Songwriter" },
+  { track_id: "66666", track_name: "Bohemian Rhapsody", artist_name: "Queen", album_name: "A Night at the Opera", genre: "Rock" },
+  { track_id: "77777", track_name: "Hallelujah", artist_name: "Leonard Cohen", album_name: "Various Positions", genre: "Singer-Songwriter" },
+  { track_id: "88888", track_name: "Try Again", artist_name: "Aaliyah", album_name: "Romeo Must Die", genre: "R&B" },
+  { track_id: "99999", track_name: "Home", artist_name: "Michael Bublé", album_name: "It's Time", genre: "Jazz" },
+  { track_id: "10001", track_name: "Stay", artist_name: "The Kid LAROI & Justin Bieber", album_name: "F*CK LOVE 3", genre: "Pop" },
+  { track_id: "10002", track_name: "As It Was", artist_name: "Harry Styles", album_name: "Harry's House", genre: "Pop" },
+  { track_id: "10003", track_name: "Levitating", artist_name: "Dua Lipa", album_name: "Future Nostalgia", genre: "Pop" },
+  { track_id: "10004", track_name: "Flowers", artist_name: "Miley Cyrus", album_name: "Endless Summer Vacation", genre: "Pop" },
 ];
 
 // ---------------------------------------------------------------------------
@@ -646,11 +647,16 @@ router.get("/musixmatch/search", async (req, res) => {
         const trackList = (result.body.track_list as Array<Record<string, Record<string, unknown>>>) ?? [];
         const tracks = trackList.map((item) => {
           const t = item.track;
+          const genreList = (t.primary_genres as Record<string, unknown>)?.music_genre_list as
+            | Array<{ music_genre: { music_genre_name: string } }>
+            | undefined;
+          const genre = genreList?.[0]?.music_genre?.music_genre_name || undefined;
           return {
             track_id: String(t.track_id),
             track_name: t.track_name,
             artist_name: t.artist_name,
             album_name: t.album_name,
+            ...(genre ? { genre } : {}),
           };
         });
         return res.json({ tracks, source: "musixmatch" });

@@ -141,17 +141,18 @@ interface MusixmatchResult {
   track_name: string;
   artist_name: string;
   album_name?: string;
+  genre?: string;
 }
 
 const MOCK_TRACKS: MusixmatchResult[] = [
-  { track_id: "demo_001", track_name: "Neon Mornings", artist_name: "Demo Artist" },
-  { track_id: "demo_002", track_name: "Echo in the Rain", artist_name: "Demo Artist" },
-  { track_id: "demo_003", track_name: "Thousand Lights", artist_name: "Demo Artist" },
-  { track_id: "12345", track_name: "Golden Hour", artist_name: "JVKE", album_name: "this is what falling in love feels like" },
-  { track_id: "67890", track_name: "Fix You", artist_name: "Coldplay", album_name: "X&Y" },
-  { track_id: "33333", track_name: "Someone Like You", artist_name: "Adele", album_name: "21" },
-  { track_id: "44444", track_name: "Shallow", artist_name: "Lady Gaga & Bradley Cooper", album_name: "A Star Is Born" },
-  { track_id: "55555", track_name: "Perfect", artist_name: "Ed Sheeran", album_name: "Divide" },
+  { track_id: "demo_001", track_name: "Neon Mornings", artist_name: "Demo Artist", genre: "Pop" },
+  { track_id: "demo_002", track_name: "Echo in the Rain", artist_name: "Demo Artist", genre: "Indie" },
+  { track_id: "demo_003", track_name: "Thousand Lights", artist_name: "Demo Artist", genre: "Pop" },
+  { track_id: "12345", track_name: "Golden Hour", artist_name: "JVKE", album_name: "this is what falling in love feels like", genre: "Pop" },
+  { track_id: "67890", track_name: "Fix You", artist_name: "Coldplay", album_name: "X&Y", genre: "Rock" },
+  { track_id: "33333", track_name: "Someone Like You", artist_name: "Adele", album_name: "21", genre: "Soul" },
+  { track_id: "44444", track_name: "Shallow", artist_name: "Lady Gaga & Bradley Cooper", album_name: "A Star Is Born", genre: "Pop" },
+  { track_id: "55555", track_name: "Perfect", artist_name: "Ed Sheeran", album_name: "Divide", genre: "Singer-Songwriter" },
 ];
 
 // ─── Step layout ──────────────────────────────────────────────────────────────
@@ -1676,7 +1677,19 @@ export default function PostScreen() {
                     {songResults.map((track) => (
                       <TouchableOpacity
                         key={track.track_id}
-                        onPress={() => { setSelectedSong(track); setSongResults([]); setFullLyrics(null); setNoLyricsMode(false); }}
+                        onPress={() => {
+                          setSelectedSong(track);
+                          setSongResults([]);
+                          setFullLyrics(null);
+                          setNoLyricsMode(false);
+                          if (track.genre) {
+                            const mapped = mapMusixmatchGenre(track.genre);
+                            if (mapped && GENRES.includes(mapped)) {
+                              setGenre(mapped);
+                              setDetectedGenre(mapped);
+                            }
+                          }
+                        }}
                         style={[styles.songResultRow, { borderBottomColor: colors.border }]}
                         activeOpacity={0.8}
                         disabled={isSongSearching}

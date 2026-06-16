@@ -31,6 +31,7 @@ import Animated, {
   withSpring,
   withTiming,
   withSequence,
+  withDelay,
   Easing,
   FadeInDown,
 } from "react-native-reanimated";
@@ -224,6 +225,144 @@ function AnimatedCheckItem({
       </Animated.View>
       <Text style={[styles.stageCheckLabel, { color: textColor }]}>{label}</Text>
     </Animated.View>
+  );
+}
+
+// ─── Post Success Overlay ─────────────────────────────────────────────────────
+
+const SUCCESS_NOTE_CONFIGS = [
+  { note: "♪", x: 38,  y: 155, delay: 0   },
+  { note: "♫", x: 258, y: 115, delay: 180 },
+  { note: "♩", x: 78,  y: 345, delay: 350 },
+  { note: "♬", x: 228, y: 365, delay: 520 },
+  { note: "♪", x: 158, y: 95,  delay: 700 },
+  { note: "♫", x: 298, y: 275, delay: 240 },
+];
+
+function SuccessNote({
+  note, x, y, delay, color,
+}: { note: string; x: number; y: number; delay: number; color: string }) {
+  const ty = useSharedValue(0);
+  const op = useSharedValue(0);
+  const sc = useSharedValue(0.4);
+
+  useEffect(() => {
+    op.value = withDelay(
+      delay,
+      withSequence(
+        withTiming(0.9, { duration: 350, easing: Easing.out(Easing.quad) }),
+        withTiming(0.9, { duration: 900 }),
+        withTiming(0,   { duration: 500, easing: Easing.in(Easing.quad) }),
+      ),
+    );
+    ty.value = withDelay(delay, withTiming(-90, { duration: 1750, easing: Easing.out(Easing.quad) }));
+    sc.value = withDelay(delay, withSpring(1, { damping: 12, stiffness: 200 }));
+  }, []);
+
+  const style = useAnimatedStyle(() => ({
+    opacity:   op.value,
+    transform: [{ translateY: ty.value }, { scale: sc.value }],
+  }));
+
+  return (
+    <Animated.Text style={[{ position: "absolute", left: x, top: y, fontSize: 26, color }, style]}>
+      {note}
+    </Animated.Text>
+  );
+}
+
+function PostSuccessOverlay({
+  onDone,
+  backgroundColor,
+  foregroundColor,
+  mutedColor,
+  primaryColor,
+}: {
+  onDone: () => void;
+  backgroundColor: string;
+  foregroundColor: string;
+  mutedColor: string;
+  primaryColor: string;
+}) {
+  const checkScale   = useSharedValue(0);
+  const checkOpacity = useSharedValue(0);
+  const glowScale    = useSharedValue(0.5);
+  const glowOpacity  = useSharedValue(0);
+  const textOpacity  = useSharedValue(0);
+
+  useEffect(() => {
+    checkOpacity.value = withTiming(1, { duration: 80 });
+    checkScale.value   = withSpring(1, { damping: 9, stiffness: 200 });
+
+    glowOpacity.value = withSequence(
+      withDelay(100, withTiming(0.55, { duration: 250 })),
+      withTiming(0.3,  { duration: 350 }),
+      withTiming(0,    { duration: 600, easing: Easing.out(Easing.quad) }),
+    );
+    glowScale.value = withDelay(
+      100,
+      withTiming(2.2, { duration: 1200, easing: Easing.out(Easing.cubic) }),
+    );
+
+    textOpacity.value = withDelay(300, withTiming(1, { duration: 400 }));
+
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+    const timer = setTimeout(onDone, 2000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  const checkStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: checkScale.value }],
+    opacity:   checkOpacity.value,
+  }));
+
+  const glowStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: glowScale.value }],
+    opacity:   glowOpacity.value,
+  }));
+
+  const textStyle = useAnimatedStyle(() => ({ opacity: textOpacity.value }));
+
+  return (
+    <View style={[StyleSheet.absoluteFill, { backgroundColor, alignItems: "center", justifyContent: "center" }]}>
+      {/* Floating musical notes */}
+      <View style={{ position: "absolute", width: "100%", height: "100%" }}>
+        {SUCCESS_NOTE_CONFIGS.map((cfg, i) => (
+          <SuccessNote key={i} {...cfg} color={primaryColor} />
+        ))}
+      </View>
+
+      {/* Checkmark + expanding glow ring */}
+      <View style={{ alignItems: "center", justifyContent: "center" }}>
+        <Animated.View
+          style={[
+            {
+              position: "absolute",
+              width: 100,
+              height: 100,
+              borderRadius: 50,
+              borderWidth: 3,
+              borderColor: "#22C55E",
+            },
+            glowStyle,
+          ]}
+        />
+        <Animated.View style={checkStyle}>
+          <Ionicons name="checkmark-circle" size={100} color="#22C55E" />
+        </Animated.View>
+      </View>
+
+      {/* Labels */}
+      <Animated.View style={[styles.successOverlayText, textStyle]}>
+        <Text style={[styles.successTitle, { color: foregroundColor }]}>
+          Your Music Minute is live!
+        </Text>
+        <Text style={[styles.successSubtitle, { color: mutedColor }]}>
+          Your performance is now live in the feed.{"\n"}Time to rise.
+        </Text>
+      </Animated.View>
+    </View>
   );
 }
 
@@ -831,7 +970,6 @@ export default function PostScreen() {
     };
 
     postMusicMinute(mm);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setUploadPhase("done");
     setIsPosting(false);
     setPosted(true);
@@ -877,35 +1015,30 @@ export default function PostScreen() {
     );
   }
 
+  // ─── Reset helper ─────────────────────────────────────────────────────────
+
+  const handleReset = () => {
+    setPosted(false); setStep(1); setVideoUri(null); setTitle(""); setCaption("");
+    setSelectedSong(null); setSongQuery(""); setFullLyrics(null); setNoLyricsMode(false);
+    setTimingOffsetMs(0); setRightsConfirmed(false);
+    setUploadedVideoUrl(null); setUploadedObjectKey(null);
+    setAnalysisPhase("idle"); setAnalysisJobId(null); setAnalysisResult(null);
+    setCyaniteGenreAccepted(false); setCyaniteMoodsAccepted(false);
+    router.push("/");
+  };
+
   // ─── Guard: posted ─────────────────────────────────────────────────────────
 
   if (posted) {
     return (
       <View style={[styles.container, { backgroundColor: colors.background }]}>
-        <View style={styles.successView}>
-          <MaterialCommunityIcons name="microphone" size={80} color={colors.gold} />
-          <Text style={[styles.successTitle, { color: colors.foreground }]}>Music Minute Posted!</Text>
-          <Text style={[styles.successSubtitle, { color: colors.mutedForeground }]}>
-            Your performance is now live in the feed. Time to rise.
-          </Text>
-          <TouchableOpacity
-            onPress={() => {
-              setPosted(false); setStep(1); setVideoUri(null); setTitle(""); setCaption("");
-              setSelectedSong(null); setSongQuery(""); setFullLyrics(null); setNoLyricsMode(false);
-              setTimingOffsetMs(0); setRightsConfirmed(false);
-              setUploadedVideoUrl(null); setUploadedObjectKey(null);
-              setAnalysisPhase("idle"); setAnalysisJobId(null); setAnalysisResult(null);
-              setCyaniteGenreAccepted(false); setCyaniteMoodsAccepted(false);
-              router.push("/");
-            }}
-            activeOpacity={0.85}
-            style={styles.guestBtn}
-          >
-            <LinearGradient colors={["#A855F7", "#EC4899", "#F59E0B"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.guestBtnGradient}>
-              <Text style={styles.guestBtnText}>View in Feed</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-        </View>
+        <PostSuccessOverlay
+          onDone={handleReset}
+          backgroundColor={colors.background}
+          foregroundColor={colors.foreground}
+          mutedColor={colors.mutedForeground}
+          primaryColor={colors.primary}
+        />
       </View>
     );
   }
@@ -2142,6 +2275,7 @@ const styles = StyleSheet.create({
   guestBtnGradient: { paddingVertical: 16, alignItems: "center" },
   guestBtnText: { color: "#fff", fontSize: 16, fontWeight: "700" },
   successView: { flex: 1, alignItems: "center", justifyContent: "center", gap: 16, paddingHorizontal: 32 },
+  successOverlayText: { alignItems: "center", gap: 10, marginTop: 28, paddingHorizontal: 32 },
   successTitle: { fontSize: 26, fontWeight: "800", textAlign: "center" },
   successSubtitle: { fontSize: 14, textAlign: "center", lineHeight: 21 },
 });

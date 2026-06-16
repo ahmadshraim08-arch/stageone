@@ -222,10 +222,7 @@ export default function PostScreen() {
 
   // ── Timing (step 6) ───────────────────────────────────────────────────────
   const [timingOffsetMs, setTimingOffsetMs] = useState(0);
-  const [previewLyricsData, setPreviewLyricsData] = useState<{ lines: LyricLine[] } | null>(null);
-  const [isPreviewingTiming, setIsPreviewingTiming] = useState(false);
-  const [previewPositionMs, setPreviewPositionMs] = useState(0);
-  const previewIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [isVideoPlaying, setIsVideoPlaying] = useState(true);
 
   // ── Cyanite chips (step 7) ────────────────────────────────────────────────
   const [cyaniteGenreAccepted, setCyaniteGenreAccepted] = useState(false);
@@ -339,47 +336,6 @@ export default function PostScreen() {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, selectedSong?.track_id]);
-
-  // Fetch lyrics for timing preview (step 6)
-  useEffect(() => {
-    if (step !== 6 || !selectedSong || fullLyrics) return;
-    fetchLyrics(selectedSong.track_id).then((data) => {
-      if (data) setPreviewLyricsData({ lines: data.lines });
-    });
-  }, [step, selectedSong?.track_id]);
-
-  // Use already-loaded fullLyrics for timing preview
-  useEffect(() => {
-    if (step !== 6 || !fullLyrics || previewLyricsData) return;
-    const rangedLines = fullLyrics.slice(lyricRangeStartLine, lyricRangeEndLine + 1);
-    setPreviewLyricsData({ lines: rangedLines });
-  }, [step, fullLyrics]);
-
-  // Timing preview interval
-  useEffect(() => {
-    if (!isPreviewingTiming) {
-      if (previewIntervalRef.current) {
-        clearInterval(previewIntervalRef.current);
-        previewIntervalRef.current = null;
-      }
-      return;
-    }
-    setPreviewPositionMs(0);
-    const maxDuration = 5000;
-    previewIntervalRef.current = setInterval(() => {
-      setPreviewPositionMs((p) => {
-        const next = p + 250;
-        if (next >= maxDuration) { setIsPreviewingTiming(false); return 0; }
-        return next;
-      });
-    }, 250);
-    return () => {
-      if (previewIntervalRef.current) {
-        clearInterval(previewIntervalRef.current);
-        previewIntervalRef.current = null;
-      }
-    };
-  }, [isPreviewingTiming]);
 
   // ─── Navigation ──────────────────────────────────────────────────────────
 
@@ -803,22 +759,6 @@ export default function PostScreen() {
       return Math.round((endL.endMs - startL.startMs) / 1000);
     }
     return null;
-  })();
-
-  const previewActiveLine: LyricLine | null = (() => {
-    if (!isPreviewingTiming || !previewLyricsData) return null;
-    const lines = previewLyricsData.lines;
-    if (lines.length === 0) return null;
-    if (!lines[0]?.startMs) {
-      const msPerLine = 5000 / lines.length;
-      const idx = Math.min(Math.floor((previewPositionMs + timingOffsetMs) / msPerLine), lines.length - 1);
-      return lines[idx] ?? null;
-    }
-    const base = lines[0]?.startMs ?? 0;
-    const absMs = previewPositionMs + base + timingOffsetMs;
-    return lines.find((l) =>
-      l.startMs !== null && l.endMs !== null && absMs >= l.startMs! && absMs < l.endMs!
-    ) ?? null;
   })();
 
   // ─── Guard: guest ──────────────────────────────────────────────────────────
@@ -1577,15 +1517,19 @@ export default function PostScreen() {
                 If the lyrics appear slightly early or late, adjust the offset. Leave at 0 if it feels right.
               </Text>
 
-              {/* Video preview (available when early upload ran) */}
-              {uploadedVideoUrl && (
-                <View style={styles.videoPreviewContainer}>
+              {/* Video preview with live lyric sync */}
+              {uploadedVideoUrl ? (
+                <TouchableOpacity
+                  style={styles.videoPreviewContainer}
+                  activeOpacity={1}
+                  onPress={() => setIsVideoPlaying((v) => !v)}
+                >
                   <Video
                     ref={videoRef}
                     source={{ uri: uploadedVideoUrl }}
                     style={styles.videoPreview}
                     resizeMode={ResizeMode.COVER}
-                    shouldPlay
+                    shouldPlay={isVideoPlaying}
                     isLooping
                     isMuted={false}
                     onPlaybackStatusUpdate={(status) => {
@@ -1655,6 +1599,17 @@ export default function PostScreen() {
                       </View>
                     );
                   })()}
+                  {/* Play/pause overlay */}
+                  {!isVideoPlaying && (
+                    <View style={styles.videoPauseOverlay} pointerEvents="none">
+                      <Ionicons name="play-circle" size={56} color="rgba(255,255,255,0.85)" />
+                    </View>
+                  )}
+                </TouchableOpacity>
+              ) : (
+                <View style={[styles.videoPreviewContainer, styles.videoPreviewPlaceholder]}>
+                  <ActivityIndicator size="large" color="#A855F7" />
+                  <Text style={styles.videoPreviewPlaceholderText}>Video still uploading…</Text>
                 </View>
               )}
 
@@ -1691,32 +1646,6 @@ export default function PostScreen() {
               <Text style={[styles.offsetHint, { color: colors.mutedForeground }]}>
                 Negative shifts lyrics earlier · Positive shifts later
               </Text>
-
-              {/* Preview button */}
-              <TouchableOpacity
-                onPress={() => setIsPreviewingTiming((v) => !v)}
-                style={[styles.previewBtn, { backgroundColor: `${colors.primary}18`, borderColor: `${colors.primary}40` }]}
-                activeOpacity={0.85}
-              >
-                <Ionicons name={isPreviewingTiming ? "stop-circle-outline" : "play-circle-outline"} size={18} color={colors.primary} />
-                <Text style={[styles.offsetBtnText, { color: colors.primary }]}>
-                  {isPreviewingTiming ? "Stop Preview" : "Preview Timing (5 s)"}
-                </Text>
-              </TouchableOpacity>
-
-              {isPreviewingTiming && (
-                <View style={[styles.previewLineBox, { borderColor: `${colors.primary}30`, backgroundColor: `${colors.primary}08` }]}>
-                  {previewLyricsData ? (
-                    previewActiveLine ? (
-                      <Text style={[styles.previewActiveLine, { color: colors.foreground }]}>{previewActiveLine.text}</Text>
-                    ) : (
-                      <Text style={[styles.offsetHint, { color: colors.mutedForeground }]}>♪ waiting for lyric line…</Text>
-                    )
-                  ) : (
-                    <ActivityIndicator size="small" color={colors.primary} />
-                  )}
-                </View>
-              )}
 
               <TouchableOpacity onPress={() => setStep(7)} style={styles.nextBtn} activeOpacity={0.85}>
                 <LinearGradient colors={["#A855F7", "#EC4899"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.nextBtnGradient}>
@@ -2055,15 +1984,14 @@ const styles = StyleSheet.create({
   timingCard: { padding: 16, borderRadius: 14, borderWidth: 1, gap: 4 },
   timingSection: { flexDirection: "row", alignItems: "center", gap: 8 },
   timingSectionLabel: { fontSize: 15, fontWeight: "700" },
-  previewBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12, borderWidth: 1 },
-  previewLineBox: { minHeight: 52, borderRadius: 12, borderWidth: 1, padding: 14, alignItems: "center", justifyContent: "center" },
-  previewActiveLine: { fontSize: 16, fontWeight: "700", textAlign: "center", lineHeight: 24 },
+  videoPauseOverlay: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center" },
+  videoPreviewPlaceholder: { alignItems: "center", justifyContent: "center", gap: 12 },
+  videoPreviewPlaceholderText: { color: "rgba(255,255,255,0.6)", fontSize: 13 },
   sliderLabel: { fontSize: 13, fontWeight: "600", textAlign: "center" },
   offsetDisplay: { flex: 1, alignItems: "center", gap: 4 },
   offsetValue: { fontSize: 20, fontWeight: "800" },
   offsetReset: { fontSize: 12, fontWeight: "600" },
   offsetHint: { fontSize: 12, textAlign: "center" },
-  offsetBtnText: { fontSize: 13, fontWeight: "700" },
   // Cyanite chips
   cyaniteSection: { padding: 12, borderRadius: 14, borderWidth: 1, gap: 8 },
   cyaniteHeader: { flexDirection: "row", alignItems: "center", gap: 6 },

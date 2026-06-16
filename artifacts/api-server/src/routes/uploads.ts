@@ -31,6 +31,29 @@ function parsePath(path: string): { bucketName: string; objectName: string } {
   };
 }
 
+/**
+ * Derive the expected GCS bucket name and the required object-name prefix for
+ * server-minted video keys from PRIVATE_OBJECT_DIR.
+ *
+ * PRIVATE_OBJECT_DIR example: /replit-objstore-abc123/.private
+ *   → expectedBucket      = "replit-objstore-abc123"
+ *   → videoObjectPrefix   = ".private/videos/"
+ *
+ * Only keys matching `${expectedBucket}/${videoObjectPrefix}*` are accepted by
+ * the confirm endpoint, preventing a client from making arbitrary GCS objects public.
+ */
+function getVideoObjectKeyPrefix(): { expectedBucket: string; videoObjectPrefix: string } {
+  const privateDir = process.env.PRIVATE_OBJECT_DIR;
+  if (!privateDir) throw new Error("PRIVATE_OBJECT_DIR is not set");
+  // Remove leading slash so we can split on the first segment
+  const stripped = privateDir.startsWith("/") ? privateDir.slice(1) : privateDir;
+  const firstSlash = stripped.indexOf("/");
+  const expectedBucket = firstSlash === -1 ? stripped : stripped.slice(0, firstSlash);
+  const privatePath = firstSlash === -1 ? "" : stripped.slice(firstSlash + 1);
+  const videoObjectPrefix = privatePath ? `${privatePath}/videos/` : "videos/";
+  return { expectedBucket, videoObjectPrefix };
+}
+
 async function uploadToGcs(
   buffer: Buffer,
   contentType: string,
@@ -56,7 +79,10 @@ router.post(
   "/uploads/video/sign",
   requireAuth,
   async (req, res): Promise<void> => {
-    const { mimeType } = req.body as { mimeType?: string };
+    const { mimeType, uploadRequestId } = req.body as {
+      mimeType?: string;
+      uploadRequestId?: string;
+    };
     if (!mimeType || !ACCEPTED_VIDEO_MIMES.has(mimeType)) {
       res.status(415).json({
         error: `Unsupported video type: ${mimeType ?? "(missing)"}. Accepted: video/mp4, video/quicktime, video/x-m4v`,
@@ -65,10 +91,13 @@ router.post(
     }
     try {
       const { signedUrl, objectKey } = await signVideoUploadUrl(mimeType);
-      req.log.info({ mime: mimeType }, "Video upload URL signed");
+      req.log.info(
+        { mime: mimeType, uploadRequestId: uploadRequestId ?? "none" },
+        "Video upload URL signed",
+      );
       res.status(200).json({ signedUrl, objectKey });
     } catch (err) {
-      req.log.error({ err }, "Failed to sign video upload URL");
+      req.log.error({ err, uploadRequestId: uploadRequestId ?? "none" }, "Failed to sign video upload URL");
       res.status(503).json({ error: "Storage unavailable. Please try again." });
     }
   },
@@ -77,12 +106,21 @@ router.post(
 /**
  * Step 2 of the two-phase direct-to-GCS video upload.
  * Verifies the object was uploaded, makes it public, and returns the permanent URL.
+ *
+ * Security: objectKey is validated against the server-controlled PRIVATE_OBJECT_DIR
+ * prefix (bucket name + video path prefix) before any GCS operation is performed.
+ * This prevents a client from supplying an arbitrary objectKey and making unrelated
+ * GCS objects public.
  */
 router.post(
   "/uploads/video/confirm",
   requireAuth,
   async (req, res): Promise<void> => {
-    const { objectKey, mimeType } = req.body as { objectKey?: string; mimeType?: string };
+    const { objectKey, mimeType, uploadRequestId } = req.body as {
+      objectKey?: string;
+      mimeType?: string;
+      uploadRequestId?: string;
+    };
     if (!objectKey || typeof objectKey !== "string" || !objectKey.includes("/")) {
       res.status(400).json({ error: "objectKey is required and must be a valid bucket/path string" });
       return;
@@ -91,27 +129,60 @@ router.post(
       res.status(415).json({ error: "mimeType is required and must be a supported video type" });
       return;
     }
+
+    // ── Security: enforce server-controlled prefix before touching GCS ──────────
+    let expectedBucket: string;
+    let videoObjectPrefix: string;
     try {
-      const slashIdx = objectKey.indexOf("/");
-      const bucketName = objectKey.slice(0, slashIdx);
-      const objectName = objectKey.slice(slashIdx + 1);
-      const bucket = objectStorageClient.bucket(bucketName);
-      const file = bucket.file(objectName);
+      ({ expectedBucket, videoObjectPrefix } = getVideoObjectKeyPrefix());
+    } catch (err) {
+      req.log.error({ err }, "PRIVATE_OBJECT_DIR not configured — cannot validate objectKey");
+      res.status(503).json({ error: "Storage unavailable. Please try again." });
+      return;
+    }
+
+    const firstSlash = objectKey.indexOf("/");
+    const clientBucket = objectKey.slice(0, firstSlash);
+    const clientObjectName = objectKey.slice(firstSlash + 1);
+
+    if (clientBucket !== expectedBucket || !clientObjectName.startsWith(videoObjectPrefix)) {
+      req.log.warn(
+        { clientBucket, clientObjectName, expectedBucket, videoObjectPrefix, uploadRequestId: uploadRequestId ?? "none" },
+        "Rejected confirm — objectKey does not match expected prefix",
+      );
+      res.status(400).json({ error: "Invalid objectKey" });
+      return;
+    }
+
+    try {
+      const bucket = objectStorageClient.bucket(clientBucket);
+      const file = bucket.file(clientObjectName);
 
       const [exists] = await file.exists();
       if (!exists) {
-        res.status(404).json({ error: "Uploaded video not found in storage. The upload may not have completed — please retry." });
+        res.status(404).json({
+          error: "Uploaded video not found in storage. The upload may not have completed — please retry.",
+        });
         return;
       }
 
       await file.makePublic();
 
       const [metadata] = await file.getMetadata();
-      const videoUrl = `https://storage.googleapis.com/${bucketName}/${objectName}`;
-      req.log.info({ size: metadata.size, mime: mimeType }, "Video upload confirmed and made public");
+      const videoUrl = `https://storage.googleapis.com/${clientBucket}/${clientObjectName}`;
+      const sizeBytes = Number(metadata.size ?? 0);
+      req.log.info(
+        {
+          sizeBytes,
+          sizeMb: (sizeBytes / 1_048_576).toFixed(2),
+          mime: mimeType,
+          uploadRequestId: uploadRequestId ?? "none",
+        },
+        "Video upload confirmed and made public",
+      );
       res.status(200).json({ videoUrl, thumbnailUrl: null });
     } catch (err) {
-      req.log.error({ err }, "Failed to confirm video upload");
+      req.log.error({ err, uploadRequestId: uploadRequestId ?? "none" }, "Failed to confirm video upload");
       res.status(503).json({ error: "Storage unavailable. Please try again." });
     }
   },
@@ -135,14 +206,24 @@ router.post(
   },
   async (req, res): Promise<void> => {
     if (!req.file) {
-      res.status(400).json({ error: "No image file provided. Send a multipart/form-data request with field 'avatar'." });
+      res.status(400).json({
+        error: "No image file provided. Send a multipart/form-data request with field 'avatar'.",
+      });
       return;
     }
 
     try {
-      const ext = req.file.mimetype === "image/png" ? ".png" : req.file.mimetype === "image/webp" ? ".webp" : ".jpg";
+      const ext =
+        req.file.mimetype === "image/png"
+          ? ".png"
+          : req.file.mimetype === "image/webp"
+            ? ".webp"
+            : ".jpg";
       const avatarUrl = await uploadToGcs(req.file.buffer, req.file.mimetype, "avatars", ext);
-      req.log.info({ size: req.file.size, mime: req.file.mimetype }, "Avatar uploaded to object storage");
+      req.log.info(
+        { size: req.file.size, mime: req.file.mimetype },
+        "Avatar uploaded to object storage",
+      );
       res.status(201).json({ avatarUrl });
     } catch (err) {
       req.log.error({ err }, "Failed to upload avatar to object storage");

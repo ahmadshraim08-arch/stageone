@@ -66,10 +66,10 @@ describe("computeActiveLine — hasSync:false fixed-pace pacing", () => {
   };
 
   const lines: LyricLine[] = [
-    { text: "Line A", startMs: null, endMs: null },
-    { text: "Line B", startMs: null, endMs: null },
-    { text: "Line C", startMs: null, endMs: null },
-    { text: "Line D", startMs: null, endMs: null },
+    { index: 0, text: "Line A", startMs: null, endMs: null, words: [] },
+    { index: 1, text: "Line B", startMs: null, endMs: null, words: [] },
+    { index: 2, text: "Line C", startMs: null, endMs: null, words: [] },
+    { index: 3, text: "Line D", startMs: null, endMs: null, words: [] },
   ];
   // sectionDuration = 8000, msPerLine = 2000
 
@@ -130,8 +130,8 @@ describe("computeActiveLine — hasSync:true uses timestamp matching", () => {
   };
 
   const lines: LyricLine[] = [
-    { text: "First synced line", startMs: 1000, endMs: 4000 },
-    { text: "Second synced line", startMs: 4000, endMs: 8000 },
+    { index: 0, text: "First synced line", startMs: 1000, endMs: 4000, words: [] },
+    { index: 1, text: "Second synced line", startMs: 4000, endMs: 8000, words: [] },
   ];
 
   test("absMs within first line's window → returns first line", () => {
@@ -164,25 +164,37 @@ function computeLyricsAvailable(result: LyricsResponse | null): boolean {
 }
 
 describe("lyricsAvailable probe — ♪ button visibility", () => {
-  const baseLine: LyricLine = { text: "Hello", startMs: 0, endMs: 4000 };
+  const baseLine: LyricLine = { index: 0, text: "Hello", startMs: 0, endMs: 4000, words: [] };
 
   test("null result → button hidden", () => {
     expect(computeLyricsAvailable(null)).toBe(false);
   });
 
+  const baseResponse = {
+    mode: "richsync" as const,
+    hasRichsync: true,
+    language: "en" as string | null,
+    copyright: null as string | null,
+    available: true,
+  };
+
   test("hasSync:false with lines → button hidden (plain lyrics don't power overlay)", () => {
     const result: LyricsResponse = {
+      ...baseResponse,
+      mode: "plain",
+      hasRichsync: false,
       source: "musixmatch",
       trackId: "real_001",
       durationMs: 180000,
       hasSync: false,
-      lines: [{ text: "Unsynced line", startMs: null, endMs: null }],
+      lines: [{ index: 0, text: "Unsynced line", startMs: null, endMs: null, words: [] }],
     };
     expect(computeLyricsAvailable(result)).toBe(false);
   });
 
   test("hasSync:true with lines → button shown", () => {
     const result: LyricsResponse = {
+      ...baseResponse,
       source: "musixmatch",
       trackId: "real_001",
       durationMs: 180000,
@@ -194,6 +206,7 @@ describe("lyricsAvailable probe — ♪ button visibility", () => {
 
   test("hasSync:true but empty lines → button hidden", () => {
     const result: LyricsResponse = {
+      ...baseResponse,
       source: "musixmatch",
       trackId: "real_001",
       durationMs: 180000,
@@ -205,6 +218,8 @@ describe("lyricsAvailable probe — ♪ button visibility", () => {
 
   test("demo source with hasSync:true and lines → button shown", () => {
     const result: LyricsResponse = {
+      ...baseResponse,
+      mode: "demo",
       source: "demo",
       trackId: "demo_001",
       durationMs: 176000,

@@ -8,35 +8,55 @@
 // Types — mirrors the API server's exported shapes (can't import across packages)
 // ---------------------------------------------------------------------------
 
-export type LyricSource = "musixmatch" | "demo";
+export type LyricSource = "musixmatch" | "demo" | "unavailable";
+export type LyricMode   = "richsync" | "subtitle" | "plain" | "demo";
+export type TimingMode  = "richsync" | "subtitle" | "manual" | "demo";
+
+export interface LyricWord {
+  text: string;
+  startMs: number;
+  endMs: number;
+}
 
 export interface LyricLine {
+  index: number;
   text: string;
   startMs: number | null;
   endMs: number | null;
+  words: LyricWord[];
 }
 
 export interface LyricsResponse {
   source: LyricSource;
+  mode: LyricMode;
   trackId: string;
   durationMs: number | null;
   hasSync: boolean;
+  hasRichsync: boolean;
+  language: string | null;
+  copyright: string | null;
+  available: boolean;
+  reason?: string;
   lines: LyricLine[];
 }
 
 export interface Segment {
   id: string;
   label: string;
-  startMs: number;
-  endMs: number;
+  startMs: number | null;
+  endMs: number | null;
+  startLineIndex: number;
+  endLineIndex: number;
   lineCount: number;
 }
 
 export interface SegmentsResponse {
   source: LyricSource;
   trackId: string;
+  timingMode: TimingMode;
   hasSync: boolean;
   segments: Segment[];
+  reason: string | null;
 }
 
 export interface TranslationResponse {
@@ -99,12 +119,12 @@ function apiBase(): string {
 // In-memory cache
 // ---------------------------------------------------------------------------
 
-const lyricsCache = new Map<string, LyricsResponse>();
-const segmentsCache = new Map<string, SegmentsResponse>();
+const lyricsCache    = new Map<string, LyricsResponse>();
+const segmentsCache  = new Map<string, SegmentsResponse>();
 const translationCache = new Map<string, TranslationResponse | null>();
-const moodCache = new Map<string, MoodResponse>();
-const richsyncCache = new Map<string, RichsyncResponse>();
-const searchCache = new Map<string, { tracks: TrackResult[]; source: string }>();
+const moodCache      = new Map<string, MoodResponse>();
+const richsyncCache  = new Map<string, RichsyncResponse>();
+const searchCache    = new Map<string, { tracks: TrackResult[]; source: string }>();
 
 const SEARCH_CACHE_MAX = 50;
 

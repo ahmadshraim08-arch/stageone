@@ -70,58 +70,65 @@ async function httpGet(path: string): Promise<{ status: number; body: unknown }>
 // ---------------------------------------------------------------------------
 
 describe("deriveSegments", () => {
-  it("returns 'Selected Section' when no gaps ≥ 2000 ms", () => {
+  it("returns single 'Full Song' segment when no gaps ≥ 2000 ms", () => {
     const lines: LyricLine[] = [
-      { text: "A", startMs: 0,    endMs: 4000 },
-      { text: "B", startMs: 4500, endMs: 9000 },
+      { index: 0, text: "A", startMs: 0,    endMs: 4000, words: [] },
+      { index: 1, text: "B", startMs: 4500, endMs: 9000, words: [] },
     ];
     const segs = deriveSegments(lines);
     assert.equal(segs.length, 1);
-    assert.equal(segs[0].label, "Selected Section");
+    assert.equal(segs[0].label, "Full Song");
     assert.equal(segs[0].lineCount, 2);
+    assert.equal(segs[0].startMs, 0);
+    assert.equal(segs[0].startLineIndex, 0);
   });
 
-  it("returns 'Selected Section' with exactly 1 gap break (fewer than 2 breaks)", () => {
+  it("splits into Opening/Closing with exactly 1 gap break", () => {
     const lines: LyricLine[] = [
-      { text: "A", startMs: 0,    endMs: 3000 },
+      { index: 0, text: "A", startMs: 0,    endMs: 3000, words: [] },
       // 2600 ms gap — 1 break
-      { text: "B", startMs: 5600, endMs: 9000 },
+      { index: 1, text: "B", startMs: 5600, endMs: 9000, words: [] },
     ];
     const segs = deriveSegments(lines);
-    assert.equal(segs.length, 1,              "1 break must still yield 'Selected Section'");
-    assert.equal(segs[0].label, "Selected Section");
-    assert.equal(segs[0].lineCount, 2);
+    assert.equal(segs.length, 2,  "1 break yields 2 segments");
+    assert.equal(segs[0].label, "Opening");
+    assert.equal(segs[1].label, "Closing");
   });
 
-  it("splits into Section N only with 2 or more gap breaks", () => {
+  it("splits into Opening / middle / Closing with 2 or more gap breaks", () => {
     const lines: LyricLine[] = [
-      { text: "A", startMs: 0,     endMs: 3000 },
+      { index: 0, text: "A", startMs: 0,     endMs: 3000, words: [] },
       // break 1
-      { text: "B", startMs: 5600,  endMs: 8000 },
+      { index: 1, text: "B", startMs: 5600,  endMs: 8000, words: [] },
       // break 2
-      { text: "C", startMs: 10600, endMs: 14000 },
+      { index: 2, text: "C", startMs: 10600, endMs: 14000, words: [] },
     ];
     const segs = deriveSegments(lines);
     assert.equal(segs.length, 3);
-    assert.equal(segs[0].label, "Section 1");
+    assert.equal(segs[0].label, "Opening");
     assert.equal(segs[1].label, "Section 2");
-    assert.equal(segs[2].label, "Section 3");
+    assert.equal(segs[2].label, "Closing");
+    // verify startLineIndex / endLineIndex are set
+    assert.equal(segs[0].startLineIndex, 0);
+    assert.equal(segs[2].endLineIndex, 2);
   });
 
-  it("handles empty lines array", () => {
+  it("returns empty array for empty lines", () => {
     const segs = deriveSegments([]);
-    assert.equal(segs.length, 1);
-    assert.equal(segs[0].label, "Selected Section");
+    assert.equal(segs.length, 0);
   });
 
-  it("ignores lines with null timing", () => {
+  it("returns plain 'Selected Section' for null-timed lines", () => {
     const lines: LyricLine[] = [
-      { text: "A", startMs: null, endMs: null },
-      { text: "B", startMs: null, endMs: null },
+      { index: 0, text: "A", startMs: null, endMs: null, words: [] },
+      { index: 1, text: "B", startMs: null, endMs: null, words: [] },
     ];
     const segs = deriveSegments(lines);
     assert.equal(segs.length, 1);
     assert.equal(segs[0].label, "Selected Section");
+    assert.equal(segs[0].startMs, null);
+    assert.equal(segs[0].startLineIndex, 0);
+    assert.equal(segs[0].endLineIndex, 1);
   });
 });
 

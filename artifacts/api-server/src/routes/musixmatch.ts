@@ -6,35 +6,55 @@ const router = Router();
 // Types — exported at the bottom of this file for the mobile layer to import
 // ---------------------------------------------------------------------------
 
-export type LyricSource = "musixmatch" | "demo";
+export type LyricSource = "musixmatch" | "demo" | "unavailable";
+export type LyricMode  = "richsync" | "subtitle" | "plain" | "demo";
+export type TimingMode = "richsync" | "subtitle" | "manual" | "demo";
+
+export interface LyricWord {
+  text: string;
+  startMs: number;
+  endMs: number;
+}
 
 export interface LyricLine {
+  index: number;
   text: string;
   startMs: number | null;
   endMs: number | null;
+  words: LyricWord[];
 }
 
 export interface LyricsResponse {
   source: LyricSource;
+  mode: LyricMode;
   trackId: string;
   durationMs: number | null;
   hasSync: boolean;
+  hasRichsync: boolean;
+  language: string | null;
+  copyright: string | null;
+  available: boolean;
+  reason?: string;
   lines: LyricLine[];
 }
 
 export interface Segment {
   id: string;
   label: string;
-  startMs: number;
-  endMs: number;
+  startMs: number | null;
+  endMs: number | null;
+  startLineIndex: number;
+  endLineIndex: number;
   lineCount: number;
 }
 
 export interface SegmentsResponse {
   source: LyricSource;
   trackId: string;
+  timingMode: TimingMode;
   hasSync: boolean;
   segments: Segment[];
+  reason: string | null;
 }
 
 export interface TranslationResponse {
@@ -113,11 +133,17 @@ const CATALOGUE: CatalogueTrack[] = [
 // Section breaks are gaps ≥ 2600 ms between consecutive lines.
 // ---------------------------------------------------------------------------
 
+interface RawLine {
+  text: string;
+  startMs: number | null;
+  endMs: number | null;
+}
+
 interface DemoTrack {
   genre: string;
   durationMs: number;
-  lines: LyricLine[];
-  translations: Partial<Record<string, LyricLine[]>>;
+  lines: RawLine[];
+  translations: Partial<Record<string, RawLine[]>>;
 }
 
 const DEMO_TRACKS: Record<string, DemoTrack> = {
@@ -233,7 +259,7 @@ const DEMO_TRACKS: Record<string, DemoTrack> = {
 };
 
 // Generic fallback lines for non-demo tracks (no copyrighted content)
-const GENERIC_DEMO_LINES: LyricLine[] = [
+const GENERIC_DEMO_LINES: RawLine[] = [
   { text: "The stage is set and the lights are low",                           startMs: 0,     endMs: 4900 },
   { text: "I step into the moment and let the music flow",                     startMs: 5000,  endMs: 9900 },
   { text: "Every note I sing is something new to find",                        startMs: 10000, endMs: 14900 },
@@ -263,8 +289,8 @@ async function mxFetch(path: string, apiKey: string): Promise<{ status: number; 
   return { status: mxStatus(data), body: mxBody(data) };
 }
 
-// Parse Musixmatch subtitle_body JSON into LyricLine[]
-function parseSubtitleBody(raw: string): LyricLine[] {
+// Parse Musixmatch subtitle_body JSON into RawLine[]
+function parseSubtitleBody(raw: string): RawLine[] {
   try {
     const parsed = JSON.parse(raw) as Array<{
       text: string;
@@ -283,7 +309,7 @@ function parseSubtitleBody(raw: string): LyricLine[] {
 }
 
 // Parse plain lyrics_body text (no timing)
-function parsePlainLyrics(raw: string): LyricLine[] {
+function parsePlainLyrics(raw: string): RawLine[] {
   return raw
     .split("\n")
     .map((t) => t.trim())
@@ -291,108 +317,216 @@ function parsePlainLyrics(raw: string): LyricLine[] {
     .map((text) => ({ text, startMs: null, endMs: null }));
 }
 
-// Derive segments from timed lines using ≥ 2000 ms silence gaps
+// Convert RawLine[] to LyricLine[] by adding index and words.
+// For synced lines (startMs/endMs set), words is a single-word entry spanning the line.
+// For plain lines (null timing), words is empty.
+function toIndexedLines(raws: RawLine[]): LyricLine[] {
+  return raws.map((r, i) => ({
+    index: i,
+    text: r.text,
+    startMs: r.startMs,
+    endMs: r.endMs,
+    words: r.startMs !== null && r.endMs !== null
+      ? [{ text: r.text, startMs: r.startMs, endMs: r.endMs }]
+      : [],
+  }));
+}
+
+// Segment label helpers
+function timedSegLabel(s: number, total: number): string {
+  if (total === 1) return "Full Song";
+  if (s === 0) return "Opening";
+  if (s === total - 1) return "Closing";
+  return `Section ${s + 1}`;
+}
+function plainSegLabel(s: number, total: number): string {
+  if (total === 1) return "Selected Section";
+  return ["Opening Lines", "Middle Section", "Closing Lines"][s] ?? `Section ${s + 1}`;
+}
+
+// Derive segments from lines.
+// – Timed lines  → group by ≥ 2000 ms silence gaps; each segment carries real startMs/endMs.
+// – Plain lines  → split into ≤ 3 equal groups; startMs/endMs are null.
+// Never returns startMs === 0 and endMs === 0 (the old broken placeholder).
 export function deriveSegments(lines: LyricLine[]): Segment[] {
-  const synced = lines.filter((l) => l.startMs !== null && l.endMs !== null);
+  if (lines.length === 0) return [];
 
-  if (synced.length === 0) {
-    return [{ id: "seg_0", label: "Selected Section", startMs: 0, endMs: 0, lineCount: lines.length }];
+  const timed = lines.filter((l) => l.startMs !== null && l.endMs !== null);
+
+  if (timed.length >= 2) {
+    // Find section break-points (gaps ≥ 2 s)
+    const breaks: number[] = [];
+    for (let i = 1; i < timed.length; i++) {
+      const gap = (timed[i].startMs ?? 0) - (timed[i - 1].endMs ?? 0);
+      if (gap >= 2000) breaks.push(i);
+    }
+    const boundaries = [0, ...breaks, timed.length];
+    const total = boundaries.length - 1;
+    return boundaries.slice(0, -1).map((si, s) => {
+      const ei = boundaries[s + 1] - 1;
+      const seg = timed.slice(si, ei + 1);
+      // Map back to original line indexes
+      const startLineIndex = lines.indexOf(seg[0]);
+      const endLineIndex   = lines.indexOf(seg[seg.length - 1]);
+      return {
+        id: `seg_${s}`,
+        label: timedSegLabel(s, total),
+        startMs: seg[0].startMs,
+        endMs:   seg[seg.length - 1].endMs,
+        startLineIndex: startLineIndex >= 0 ? startLineIndex : si,
+        endLineIndex:   endLineIndex   >= 0 ? endLineIndex   : ei,
+        lineCount: seg.length,
+      };
+    });
   }
 
-  const breakPoints: number[] = [];
-  for (let i = 1; i < synced.length; i++) {
-    const gap = (synced[i].startMs ?? 0) - (synced[i - 1].endMs ?? 0);
-    if (gap >= 2000) breakPoints.push(i);
+  if (timed.length === 1) {
+    const l = timed[0];
+    const idx = lines.indexOf(l);
+    return [{
+      id: "seg_0",
+      label: "Full Song",
+      startMs: l.startMs,
+      endMs: l.endMs,
+      startLineIndex: idx >= 0 ? idx : 0,
+      endLineIndex:   idx >= 0 ? idx : 0,
+      lineCount: 1,
+    }];
   }
 
-  if (breakPoints.length < 2) {
-    return [
-      {
-        id: "seg_0",
-        label: "Selected Section",
-        startMs: synced[0].startMs ?? 0,
-        endMs: synced[synced.length - 1].endMs ?? 0,
-        lineCount: synced.length,
-      },
-    ];
-  }
-
-  const boundaries = [0, ...breakPoints, synced.length];
-  return boundaries.slice(0, -1).map((startIdx, s) => {
-    const endIdx = boundaries[s + 1] - 1;
-    const segLines = synced.slice(startIdx, endIdx + 1);
+  // Plain / no timing — split into ≤ 3 equal sections
+  const n = lines.length;
+  const sectionCount = n <= 4 ? 1 : n <= 10 ? 2 : 3;
+  const chunk = Math.ceil(n / sectionCount);
+  return Array.from({ length: sectionCount }, (_, s) => {
+    const startLineIndex = s * chunk;
+    const endLineIndex   = Math.min((s + 1) * chunk - 1, n - 1);
     return {
       id: `seg_${s}`,
-      label: `Section ${s + 1}`,
-      startMs: segLines[0].startMs ?? 0,
-      endMs: segLines[segLines.length - 1].endMs ?? 0,
-      lineCount: segLines.length,
+      label: plainSegLabel(s, sectionCount),
+      startMs: null,
+      endMs: null,
+      startLineIndex,
+      endLineIndex,
+      lineCount: endLineIndex - startLineIndex + 1,
     };
   });
 }
 
-// Fetch lyrics for a trackId; returns LyricsResponse.
-// Calls track.get first to honour the has_subtitles / track_length flags.
-// When Musixmatch returns a 200 (even with an empty body) it is NOT replaced
-// by demo content — the empty / unsynced response is returned with
-// source: "musixmatch" so the caller always knows where data originated.
+// ---------------------------------------------------------------------------
+// getLyrics — unified resolver with priority chain:
+//   1. RichSync (word-level timing)
+//   2. Subtitles (line-level timing)   — skipped when body is empty (plan restriction)
+//   3. Plain lyrics (no timing)
+//   4. Demo / generic fallback
+//   5. source:"unavailable" when everything fails for a real track
+//
+// Never returns hasSync:true with lines:[] — either real lines are present
+// or we fall to the next tier.
+// ---------------------------------------------------------------------------
 async function getLyrics(trackId: string, apiKey: string | undefined): Promise<LyricsResponse> {
   const demo = DEMO_TRACKS[trackId];
 
   if (apiKey) {
+    // ── Step 1: track metadata ──────────────────────────────────────────────
+    let durationMs: number | null = null;
+    let language: string | null   = null;
     try {
-      // Step 1 — track.get: read has_subtitles flag and track_length
       const trackResult = await mxFetch(`track.get?track_id=${trackId}`, apiKey);
-
       if (trackResult.status === 200) {
         const track = trackResult.body.track as Record<string, unknown> | undefined;
-        const hasSubtitles = (track?.has_subtitles as number) === 1;
-        const trackLengthSec = track?.track_length as number | undefined;
-        const durationMs = trackLengthSec != null ? Math.round(trackLengthSec * 1000) : null;
+        const sec   = track?.track_length as number | undefined;
+        durationMs  = sec != null ? Math.round(sec * 1000) : null;
+        language    = (track?.lyrics_language as string | undefined) ?? null;
+      }
+    } catch { /* non-fatal — carry on without duration */ }
 
-        if (hasSubtitles) {
-          // Step 2a — subtitle (line-level synced)
-          const sub = await mxFetch(`track.subtitle.get?track_id=${trackId}`, apiKey);
-          if (sub.status === 200) {
-            const subtitleBody = (sub.body.subtitle as Record<string, unknown>)?.subtitle_body as string | undefined;
-            // Return musixmatch source even if body is empty (200 = successful API call)
+    // ── Step 2: RichSync ────────────────────────────────────────────────────
+    try {
+      const richResult = await mxFetch(`track.richsync.get?track_id=${trackId}`, apiKey);
+      if (richResult.status === 200) {
+        const richObj  = richResult.body.richsync as Record<string, unknown> | undefined;
+        const richBody = richObj?.richsync_body as string | undefined;
+        if (richBody) {
+          const parsed = parseRichsyncBody(richBody);
+          if (parsed.length > 0) {
+            const copyright = (richObj?.richsync_copyright_notice as string | undefined) ?? null;
+            const lines: LyricLine[] = parsed.map((l, i) => ({
+              index: i,
+              text:  l.text,
+              startMs: l.startMs,
+              endMs:   l.endMs,
+              words:   l.words,
+            }));
             return {
-              source: "musixmatch",
-              trackId,
-              durationMs,
-              hasSync: true,
-              lines: subtitleBody ? parseSubtitleBody(subtitleBody) : [],
+              source: "musixmatch", mode: "richsync", trackId, durationMs,
+              hasSync: true, hasRichsync: true, language, copyright, available: true, lines,
             };
           }
         }
-
-        // Step 2b — plain lyrics (has_subtitles=0 or subtitle call failed)
-        const plain = await mxFetch(`track.lyrics.get?track_id=${trackId}`, apiKey);
-        if (plain.status === 200) {
-          const lyricsBody = (plain.body.lyrics as Record<string, unknown>)?.lyrics_body as string | undefined;
-          return {
-            source: "musixmatch",
-            trackId,
-            durationMs,
-            hasSync: false, // per spec: has_subtitles=0 → hasSync: false, timings null
-            lines: lyricsBody ? parsePlainLyrics(lyricsBody) : [],
-          };
-        }
-
-        // track.get succeeded but both subtitle and lyrics failed
-        return { source: "musixmatch", trackId, durationMs, hasSync: false, lines: [] };
       }
+      // 404 = no richsync for this track; 403 = plan; empty body → fall through
+    } catch { /* fall through */ }
 
-      // track.get returned non-200 (401, 404, …) → fall through to demo
-    } catch {
-      // network / parse error → fall through to demo
-    }
+    // ── Step 3: Subtitles ───────────────────────────────────────────────────
+    try {
+      const subResult = await mxFetch(`track.subtitle.get?track_id=${trackId}`, apiKey);
+      if (subResult.status === 200) {
+        const subObj  = subResult.body.subtitle as Record<string, unknown> | undefined;
+        const subBody = subObj?.subtitle_body as string | undefined;
+        if (subBody) {
+          const parsed = parseSubtitleBody(subBody);
+          if (parsed.length > 0) {
+            const copyright = (subObj?.subtitle_copyright_notice as string | undefined) ?? null;
+            return {
+              source: "musixmatch", mode: "subtitle", trackId, durationMs,
+              hasSync: true, hasRichsync: false, language, copyright, available: true,
+              lines: toIndexedLines(parsed),
+            };
+          }
+          // body exists but parsed to 0 lines (empty string on restricted plan) → fall through
+        }
+      }
+    } catch { /* fall through */ }
+
+    // ── Step 4: Plain lyrics ─────────────────────────────────────────────────
+    try {
+      const plainResult = await mxFetch(`track.lyrics.get?track_id=${trackId}`, apiKey);
+      if (plainResult.status === 200) {
+        const lyrObj    = plainResult.body.lyrics as Record<string, unknown> | undefined;
+        const lyrBody   = lyrObj?.lyrics_body as string | undefined;
+        const copyright = (lyrObj?.lyrics_copyright_notice as string | undefined) ?? null;
+        if (lyrBody) {
+          const parsed = parsePlainLyrics(lyrBody);
+          if (parsed.length > 0) {
+            return {
+              source: "musixmatch", mode: "plain", trackId, durationMs,
+              hasSync: false, hasRichsync: false, language, copyright, available: true,
+              lines: toIndexedLines(parsed),
+            };
+          }
+        }
+      }
+    } catch { /* fall through */ }
+
+    // ── All Musixmatch methods failed for this real track ───────────────────
+    return {
+      source: "unavailable", mode: "plain", trackId, durationMs,
+      hasSync: false, hasRichsync: false, language: null, copyright: null,
+      available: false, reason: "No usable lyric body was returned for this track.",
+      lines: [],
+    };
   }
 
-  // Demo fallback
-  const lines = demo?.lines ?? GENERIC_DEMO_LINES;
-  const durationMs = demo?.durationMs ?? null;
-  return { source: "demo", trackId, durationMs, hasSync: true, lines };
+  // ── Demo / no-API-key fallback ────────────────────────────────────────────
+  const rawLines  = demo?.lines ?? GENERIC_DEMO_LINES;
+  const demoMs    = demo?.durationMs ?? null;
+  const demoLines = toIndexedLines(rawLines);
+  return {
+    source: "demo", mode: "demo", trackId, durationMs: demoMs,
+    hasSync: true, hasRichsync: false, language: null, copyright: null,
+    available: true, lines: demoLines,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -564,94 +698,52 @@ router.get("/musixmatch/track/:trackId", async (req, res) => {
 // Route: GET /musixmatch/richsync/:trackId
 // Returns word-level timing when available (hasRichsync=true), otherwise
 // line-level data wrapped in the same shape (hasRichsync=false).
+// Uses getLyrics() so the full richsync → subtitle → plain fallback chain
+// is applied consistently.
 // ---------------------------------------------------------------------------
 
 router.get("/musixmatch/richsync/:trackId", async (req, res) => {
   const { trackId } = req.params;
   const apiKey = process.env.MUSIXMATCH_API_KEY;
 
-  if (apiKey) {
-    // Try real word-level richsync first
-    try {
-      const result = await mxFetch(`track.richsync.get?track_id=${trackId}`, apiKey);
-      if (result.status === 200) {
-        const richsyncObj = result.body.richsync as Record<string, unknown> | undefined;
-        const richsyncBody = richsyncObj?.richsync_body as string | undefined;
-        const durationMs = richsyncObj?.richsync_length
-          ? Math.round((richsyncObj.richsync_length as number) * 1000)
-          : null;
+  const lyricResult = await getLyrics(trackId, apiKey).catch((): LyricsResponse => ({
+    source: "demo", mode: "demo", trackId, durationMs: null,
+    hasSync: true, hasRichsync: false, language: null, copyright: null, available: true,
+    lines: toIndexedLines(GENERIC_DEMO_LINES),
+  }));
 
-        if (richsyncBody) {
-          const lines = parseRichsyncBody(richsyncBody);
-          if (lines.length > 0) {
-            const response: RichsyncResponse = {
-              source: "musixmatch",
-              trackId,
-              durationMs,
-              hasRichsync: true,
-              lines,
-            };
-            return res.json(response);
-          }
-        }
-      }
-      // 404 = no richsync for this track; 403 = not on plan → fall through
-    } catch (err) {
-      req.log.warn({ err }, "Musixmatch richsync.get error, falling back to subtitle");
-    }
-
-    // Richsync unavailable — fall back to subtitle lines as single-word lines
-    try {
-      const lyricResult = await getLyrics(trackId, apiKey);
-      if (lyricResult.hasSync && lyricResult.lines.length > 0) {
-        const lines: RichsyncLine[] = lyricResult.lines
-          .filter((l): l is { text: string; startMs: number; endMs: number } =>
-            l.startMs !== null && l.endMs !== null,
-          )
-          .map((l) => ({
-            text: l.text,
-            startMs: l.startMs,
-            endMs: l.endMs,
-            words: [{ text: l.text, startMs: l.startMs, endMs: l.endMs }],
-          }));
-        const response: RichsyncResponse = {
-          source: lyricResult.source as LyricSource,
-          trackId,
-          durationMs: lyricResult.durationMs,
-          hasRichsync: false,
-          lines,
-        };
-        return res.json(response);
-      }
-    } catch (err) {
-      req.log.warn({ err }, "Musixmatch richsync subtitle fallback error");
-    }
-  }
-
-  // Demo fallback — only for known tracks
-  if (!isKnownTrack(trackId)) {
+  if (lyricResult.source === "demo" && !isKnownTrack(trackId)) {
     return res.status(404).json({ error: "track_not_found" });
   }
-  const demo = DEMO_TRACKS[trackId];
-  if (!demo) return res.status(404).json({ error: "track_not_found" });
+  if (lyricResult.source === "unavailable" || lyricResult.lines.length === 0) {
+    return res.status(404).json({ error: "track_not_found" });
+  }
 
-  const lines: RichsyncLine[] = demo.lines
-    .filter((l): l is { text: string; startMs: number; endMs: number } =>
-      l.startMs !== null && l.endMs !== null,
-    )
+  // Build RichsyncResponse from the resolved lyrics.
+  // When mode="richsync" lines already carry per-word timing from getLyrics.
+  // When mode="subtitle" or "plain", wrap each line as a single-word entry.
+  const richLines: RichsyncLine[] = lyricResult.lines
+    .filter((l) => l.startMs !== null && l.endMs !== null)
     .map((l) => ({
       text: l.text,
-      startMs: l.startMs,
-      endMs: l.endMs,
-      words: [{ text: l.text, startMs: l.startMs, endMs: l.endMs }],
+      startMs: l.startMs as number,
+      endMs:   l.endMs   as number,
+      words: l.words.length > 0
+        ? l.words
+        : [{ text: l.text, startMs: l.startMs as number, endMs: l.endMs as number }],
     }));
 
+  if (richLines.length === 0 && lyricResult.mode !== "richsync") {
+    // Plain lyrics have no timing — return 404 for richsync endpoint
+    return res.status(404).json({ error: "no_richsync_available" });
+  }
+
   const response: RichsyncResponse = {
-    source: "demo",
+    source: lyricResult.source as LyricSource,
     trackId,
-    durationMs: demo.durationMs,
-    hasRichsync: false,
-    lines,
+    durationMs: lyricResult.durationMs,
+    hasRichsync: lyricResult.hasRichsync,
+    lines: richLines,
   };
   return res.json(response);
 });
@@ -665,14 +757,11 @@ router.get("/musixmatch/lyrics/:trackId", async (req, res) => {
   const apiKey = process.env.MUSIXMATCH_API_KEY;
 
   const result = await getLyrics(trackId, apiKey).catch((): LyricsResponse => ({
-    source: "demo",
-    trackId,
-    durationMs: null,
-    hasSync: false,
-    lines: GENERIC_DEMO_LINES,
+    source: "demo", mode: "demo", trackId, durationMs: null,
+    hasSync: true, hasRichsync: false, language: null, copyright: null, available: true,
+    lines: toIndexedLines(GENERIC_DEMO_LINES),
   }));
 
-  // In demo fallback, only return data for tracks we actually know about
   if (result.source === "demo" && !isKnownTrack(trackId)) {
     return res.status(404).json({ error: "track_not_found" });
   }
@@ -688,19 +777,40 @@ router.get("/musixmatch/segments/:trackId", async (req, res) => {
   const apiKey = process.env.MUSIXMATCH_API_KEY;
 
   const lyricResult = await getLyrics(trackId, apiKey).catch((): LyricsResponse => ({
-    source: "demo",
-    trackId,
-    durationMs: null,
-    hasSync: false,
-    lines: GENERIC_DEMO_LINES,
+    source: "demo", mode: "demo", trackId, durationMs: null,
+    hasSync: true, hasRichsync: false, language: null, copyright: null, available: true,
+    lines: toIndexedLines(GENERIC_DEMO_LINES),
   }));
 
-  // In demo fallback, only return data for tracks we actually know about
   if (lyricResult.source === "demo" && !isKnownTrack(trackId)) {
     return res.status(404).json({ error: "track_not_found" });
   }
+
+  // Unavailable or empty — return clear state, no segments
+  if (lyricResult.source === "unavailable" || lyricResult.lines.length === 0) {
+    const response: SegmentsResponse = {
+      source: "unavailable", trackId, timingMode: "manual",
+      hasSync: false, segments: [],
+      reason: lyricResult.reason ?? "No usable lyrics available for this track.",
+    };
+    return res.json(response);
+  }
+
   const segments = deriveSegments(lyricResult.lines);
-  const response: SegmentsResponse = { source: lyricResult.source as LyricSource, trackId, hasSync: lyricResult.hasSync, segments };
+  const timingMode: TimingMode =
+    lyricResult.mode === "richsync" ? "richsync"
+    : lyricResult.mode === "subtitle" ? "subtitle"
+    : lyricResult.mode === "demo"     ? "demo"
+    : "manual";
+
+  const response: SegmentsResponse = {
+    source: lyricResult.source as LyricSource,
+    trackId,
+    timingMode,
+    hasSync: lyricResult.hasSync,
+    segments,
+    reason: null,
+  };
   return res.json(response);
 });
 
@@ -740,17 +850,22 @@ router.get("/musixmatch/translate/:trackId/:lang", async (req, res) => {
 
           if (lyricsBody) {
             const originalResult = await getLyrics(trackId, apiKey).catch(() => null);
-            const translatedLines = parsePlainLyrics(lyricsBody);
+            const translRaw = parsePlainLyrics(lyricsBody);
 
             let alignedLines: LyricLine[];
-            if (originalResult?.hasSync && translatedLines.length === originalResult.lines.length) {
-              alignedLines = originalResult.lines.map((orig, i) => ({
-                text: translatedLines[i].text,
+            const origLines = originalResult?.lines ?? [];
+            if (originalResult?.hasSync && translRaw.length === origLines.length) {
+              alignedLines = origLines.map((orig, i) => ({
+                index: i,
+                text: translRaw[i].text,
                 startMs: orig.startMs,
                 endMs: orig.endMs,
+                words: [],
               }));
             } else {
-              alignedLines = translatedLines;
+              alignedLines = translRaw.map((r, i) => ({
+                index: i, text: r.text, startMs: null, endMs: null, words: [],
+              }));
             }
 
             const response: TranslationResponse = {
@@ -804,7 +919,7 @@ router.get("/musixmatch/translate/:trackId/:lang", async (req, res) => {
       source: "demo",
       trackId,
       targetLanguage: lang,
-      lines: demo.translations[lang]!,
+      lines: toIndexedLines(demo.translations[lang]!),
       availableLanguages: [], // empty per spec when Musixmatch 401
     };
     return res.json(response);

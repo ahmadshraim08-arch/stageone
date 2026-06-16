@@ -38,6 +38,7 @@ import {
   type Segment,
   type LyricsResponse,
   type LyricLine,
+  type TimingMode,
 } from "@/lib/musixmatch";
 import { apiBase } from "@/lib/api";
 import { uploadVideo, createPost } from "@/lib/uploads";
@@ -147,6 +148,10 @@ export default function PostScreen() {
   const [sectionsError, setSectionsError] = useState<string | null>(null);
   const [selectedSection, setSelectedSection] = useState<Segment | null>(null);
   const [noSyncedLyrics, setNoSyncedLyrics] = useState(false);
+  // timingMode reported by the segments endpoint: "richsync"|"subtitle"|"manual"|"demo"|null
+  const [sectionTimingMode, setSectionTimingMode] = useState<TimingMode | null>(null);
+  // When true, track has plain (untimed) lyrics — show manual line picker label
+  const [isManualLyricMode, setIsManualLyricMode] = useState(false);
 
   // Timing (step 5)
   const [timingOffsetMs, setTimingOffsetMs] = useState(0);
@@ -193,27 +198,47 @@ export default function PostScreen() {
     setSectionsLoading(true);
     setSectionsError(null);
     setNoSyncedLyrics(false);
+    setIsManualLyricMode(false);
     fetchSegments(selectedSong.track_id).then((result) => {
       if (cancelled) return;
       const segs = result?.segments ?? [];
       setSections(segs);
       setSectionsLoading(false);
+      setSectionTimingMode(result?.timingMode ?? null);
 
-      // Detect real Musixmatch tracks with no synced lyrics
-      const isMusixmatch = result?.source === "musixmatch";
-      const trackHasSync = result?.hasSync ?? true;
-      if (isMusixmatch && !trackHasSync) {
+      const tm = result?.timingMode;
+      const isUnavailable = result?.source === "unavailable" || segs.length === 0;
+      const isManual = tm === "manual" && segs.length > 0;
+
+      if (isUnavailable) {
+        // No usable lyrics at all
         setNoSyncedLyrics(true);
         setNoLyricsMode(true);
+        setIsManualLyricMode(false);
         setSelectedSection(null);
-      } else {
+      } else if (isManual) {
+        // Plain (untimed) lyrics — show lines, do not force noLyricsMode
+        setNoSyncedLyrics(true);
+        setIsManualLyricMode(true);
+        setNoLyricsMode(false);
         setSelectedSection((prev) => {
           if (prev) return prev;
           if (prefillSectionId) {
             const match = segs.find((s) => s.id === prefillSectionId);
             if (match) return match;
           }
-          return null; // no auto-select — user must choose or pick "No lyrics needed"
+          return segs[0] ?? null;
+        });
+      } else {
+        setNoSyncedLyrics(false);
+        setIsManualLyricMode(false);
+        setSelectedSection((prev) => {
+          if (prev) return prev;
+          if (prefillSectionId) {
+            const match = segs.find((s) => s.id === prefillSectionId);
+            if (match) return match;
+          }
+          return null;
         });
       }
 
@@ -224,12 +249,19 @@ export default function PostScreen() {
           if (cancelled || !lyricsData) return;
           const previews: Record<string, string> = {};
           segs.forEach((seg) => {
-            const firstLine = lyricsData.lines.find(
-              (l) =>
-                l.startMs !== null &&
-                l.startMs >= seg.startMs &&
-                (seg.endMs >= 999999 || l.startMs < seg.endMs),
-            );
+            let firstLine;
+            if (seg.startMs !== null && seg.endMs !== null) {
+              // Timed segment — find line by timestamp
+              firstLine = lyricsData.lines.find(
+                (l) =>
+                  l.startMs !== null &&
+                  l.startMs >= seg.startMs! &&
+                  (seg.endMs! >= 999999 || l.startMs < seg.endMs!),
+              );
+            } else {
+              // Plain segment — use startLineIndex
+              firstLine = lyricsData.lines[seg.startLineIndex];
+            }
             if (firstLine) previews[seg.id] = firstLine.text;
           });
           setSectionPreviews(previews);
@@ -307,7 +339,9 @@ export default function PostScreen() {
       return;
     }
     setPreviewPositionMs(0);
-    const maxDuration = Math.min(selectedSection.endMs - selectedSection.startMs, 5000);
+    const secStart = selectedSection.startMs ?? 0;
+    const secEnd   = selectedSection.endMs   ?? secStart + 60000;
+    const maxDuration = Math.min(secEnd - secStart, 5000);
     previewIntervalRef.current = setInterval(() => {
       setPreviewPositionMs((p) => {
         const next = p + 250;
@@ -397,10 +431,13 @@ export default function PostScreen() {
 
   // ----- Navigation helpers -----
 
+  // Plain-lyrics mode skips step 5 (no timing to adjust)
+  const skipTimingStep = isManualLyricMode || noLyricsMode;
+
   function goBack(): void {
     if (step === 7) { setStep(6); return; }
     if (step === 6) {
-      if (performanceType === "cover" && selectedSong && selectedSection) { setStep(5); return; }
+      if (performanceType === "cover" && selectedSong && selectedSection && !skipTimingStep) { setStep(5); return; }
       if (performanceType === "cover" && selectedSong) { setStep(4); return; }
       setStep(3); return;
     }
@@ -566,9 +603,12 @@ export default function PostScreen() {
             sectionId: selectedSection.id,
             sectionLabel: selectedSection.label,
             trackId: selectedSong.track_id,
-            startMs: selectedSection.startMs,
-            endMs: selectedSection.endMs,
+            startMs: selectedSection.startMs ?? 0,
+            endMs: selectedSection.endMs ?? 999999,
+            startLineIndex: selectedSection.startLineIndex,
+            endLineIndex: selectedSection.endLineIndex,
             lineCount: selectedSection.lineCount,
+            timingMode: sectionTimingMode ?? "manual",
             timingOffsetMs,
             language: "en",
           }
@@ -647,8 +687,10 @@ export default function PostScreen() {
   const previewActiveLine: LyricLine | null = (() => {
     if (!isPreviewingTiming || !previewLyricsData || !selectedSection) return null;
     const lines = previewLyricsData.lines;
+    const secStart = selectedSection.startMs ?? 0;
+    const secEnd   = selectedSection.endMs   ?? secStart + 60000;
     if (!previewLyricsData.hasSync && lines.length > 0) {
-      const sectionDuration = selectedSection.endMs - selectedSection.startMs;
+      const sectionDuration = secEnd - secStart;
       if (sectionDuration <= 0) return null;
       const msPerLine = sectionDuration / lines.length;
       const idx = Math.min(
@@ -657,7 +699,7 @@ export default function PostScreen() {
       );
       return lines[idx] ?? null;
     }
-    const absMs = previewPositionMs + selectedSection.startMs + timingOffsetMs;
+    const absMs = previewPositionMs + secStart + timingOffsetMs;
     return (
       lines.find(
         (l) => l.startMs !== null && l.endMs !== null && absMs >= l.startMs! && absMs < l.endMs!,
@@ -998,6 +1040,8 @@ export default function PostScreen() {
                       setSections([]);
                       setNoSyncedLyrics(false);
                       setNoLyricsMode(false);
+                      setIsManualLyricMode(false);
+                      setSectionTimingMode(null);
                     }}
                     activeOpacity={0.7}
                   >
@@ -1042,6 +1086,8 @@ export default function PostScreen() {
                           setSongResults([]);
                           setSelectedSection(null);
                           setSections([]);
+                          setIsManualLyricMode(false);
+                          setSectionTimingMode(null);
                         }}
                         style={[styles.songResultRow, { borderBottomColor: colors.border }]}
                         activeOpacity={0.8}
@@ -1165,20 +1211,30 @@ export default function PostScreen() {
                 </View>
               )}
 
-              {/* No synced lyrics warning — shown when Musixmatch has no sync for this track */}
+              {/* Lyric status notice — different message for plain vs unavailable */}
               {noSyncedLyrics && !sectionsLoading && (
                 <View
                   style={[
                     styles.noSyncCard,
                     {
-                      backgroundColor: "rgba(255,191,0,0.08)",
-                      borderColor: "rgba(255,191,0,0.30)",
+                      backgroundColor: isManualLyricMode
+                        ? "rgba(99,102,241,0.08)"
+                        : "rgba(255,191,0,0.08)",
+                      borderColor: isManualLyricMode
+                        ? "rgba(99,102,241,0.30)"
+                        : "rgba(255,191,0,0.30)",
                     },
                   ]}
                 >
-                  <MaterialCommunityIcons name="music-note-off" size={18} color="#CC9A00" />
+                  <MaterialCommunityIcons
+                    name={isManualLyricMode ? "text" : "music-note-off"}
+                    size={18}
+                    color={isManualLyricMode ? "#6366F1" : "#CC9A00"}
+                  />
                   <Text style={[styles.noSyncText, { color: colors.mutedForeground }]}>
-                    This track has no synced lyrics on Musixmatch — you can still post without a lyric overlay
+                    {isManualLyricMode
+                      ? "Timing unavailable — lyrics will display without automatic synchronization. Select a section below."
+                      : "Lyrics are unavailable for this track — you can still post without a lyric overlay."}
                   </Text>
                 </View>
               )}
@@ -1264,7 +1320,9 @@ export default function PostScreen() {
                         {seg.label}
                       </Text>
                       <Text style={[styles.sectionMeta, { color: colors.mutedForeground }]}>
-                        {fmtMs(seg.startMs)} – {seg.endMs >= 999999 ? "end" : fmtMs(seg.endMs)}
+                        {seg.startMs !== null && seg.endMs !== null
+                          ? `${fmtMs(seg.startMs)} – ${seg.endMs >= 999999 ? "end" : fmtMs(seg.endMs)}`
+                          : `Lines ${seg.startLineIndex + 1}–${seg.endLineIndex + 1}`}
                         {seg.lineCount > 0 ? ` · ${seg.lineCount} lines` : ""}
                       </Text>
                       {sectionPreviews[seg.id] ? (
@@ -1284,7 +1342,7 @@ export default function PostScreen() {
 
               <TouchableOpacity
                 onPress={() => {
-                  if (noLyricsMode) {
+                  if (noLyricsMode || skipTimingStep) {
                     setStep(6);
                   } else {
                     setStep(5);
@@ -1335,8 +1393,9 @@ export default function PostScreen() {
                   </Text>
                 </View>
                 <Text style={[styles.timingSectionMeta, { color: colors.mutedForeground }]}>
-                  {fmtMs(selectedSection.startMs)} –{" "}
-                  {selectedSection.endMs >= 999999 ? "end" : fmtMs(selectedSection.endMs)}
+                  {selectedSection.startMs !== null && selectedSection.endMs !== null
+                    ? `${fmtMs(selectedSection.startMs)} – ${selectedSection.endMs >= 999999 ? "end" : fmtMs(selectedSection.endMs)}`
+                    : `Lines ${selectedSection.startLineIndex + 1}–${selectedSection.endLineIndex + 1}`}
                   {selectedSection.lineCount > 0
                     ? ` · ${selectedSection.lineCount} lines`
                     : ""}
@@ -1430,10 +1489,12 @@ export default function PostScreen() {
                   {previewLyricsData.lines
                     .filter(
                       (l) =>
+                        selectedSection.startMs === null ||
                         l.startMs === null ||
-                        (l.startMs >= selectedSection.startMs &&
-                          (selectedSection.endMs >= 999_999 ||
-                            l.startMs < selectedSection.endMs)),
+                        (l.startMs >= selectedSection.startMs! &&
+                          (selectedSection.endMs === null ||
+                            selectedSection.endMs >= 999_999 ||
+                            l.startMs < selectedSection.endMs!)),
                     )
                     .map((l, idx) => (
                       <View

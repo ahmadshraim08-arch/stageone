@@ -25,7 +25,10 @@ export interface LyricSectionData {
   trackId: string;
   startMs: number;
   endMs: number;
+  startLineIndex?: number;
+  endLineIndex?: number;
   lineCount: number;
+  timingMode?: string;
   timingOffsetMs: number;
   language: string;
 }

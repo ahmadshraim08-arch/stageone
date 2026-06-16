@@ -11,12 +11,17 @@ import { fetchLyrics, clearCache, type LyricsResponse } from "../lib/musixmatch"
 
 const DEMO_RESPONSE: LyricsResponse = {
   source: "demo",
+  mode: "demo",
   trackId: "demo_001",
   durationMs: 32000,
   hasSync: true,
+  hasRichsync: false,
+  language: "en",
+  copyright: null,
+  available: true,
   lines: [
-    { text: "Oh the city lights are calling out your name", startMs: 1000, endMs: 4000 },
-    { text: "Neon mornings fade to gold", startMs: 4000, endMs: 8000 },
+    { index: 0, text: "Oh the city lights are calling out your name", startMs: 1000, endMs: 4000, words: [] },
+    { index: 1, text: "Neon mornings fade to gold", startMs: 4000, endMs: 8000, words: [] },
   ],
 };
 

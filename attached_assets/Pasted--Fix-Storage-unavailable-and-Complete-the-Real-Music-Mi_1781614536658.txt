@@ -1,0 +1,509 @@
+# Fix “Storage unavailable” and Complete the Real Music Minute Upload Cycle
+
+Do not add new features.
+
+The video picker now works and the user reaches the final Review and Post screen. The current blocking error is:
+
+`Storage unavailable. Please try again.`
+
+This prevents every real Music Minute from being uploaded and blocks full app testing.
+
+Important architecture requirement:
+
+* Store the actual video file in Replit App Storage.
+* Store only the video reference and post metadata in PostgreSQL.
+* Do not save the complete video binary or Base64 content inside the database.
+
+The production database is available and has sufficient capacity for post records and metadata, but the video file must be uploaded to App Storage and then linked to its database post.
+
+## Immediate objective
+
+Complete this real end-to-end path:
+
+1. Physical iPhone selects video
+2. App prepares local file
+3. Mobile requests an upload session or signed upload URL
+4. API verifies the authenticated user
+5. Replit App Storage accepts the video
+6. Storage returns an object key or persistent media URL
+7. API creates the Music Minute database record
+8. Post appears in Home
+9. Post appears on creator Profile
+10. Post plays after restarting the app
+
+Do not stop after fixing only the error message.
+
+---
+
+# 1. Find the exact origin of “Storage unavailable”
+
+Search the complete codebase for the exact text:
+
+`Storage unavailable. Please try again.`
+
+Report:
+
+* File and function that produces it
+* API request that happens immediately before it
+* Expected response shape
+* Actual response shape
+* HTTP status
+* Server log connected to that request
+* Whether the failure occurs before an App Storage upload URL is created
+* Whether the mobile app receives an empty or malformed upload configuration
+* Whether the message is hiding a more specific backend error
+
+Do not expose secrets, tokens, or private signed URLs.
+
+Replace vague logging with a sanitized technical error code such as:
+
+* `STORAGE_NOT_CONFIGURED`
+* `STORAGE_SIGNING_FAILED`
+* `STORAGE_BUCKET_UNAVAILABLE`
+* `UPLOAD_SESSION_FAILED`
+* `STORAGE_PERMISSION_DENIED`
+
+The user can still see a friendly message, but development logs must reveal the real cause.
+
+---
+
+# 2. Verify that App Storage exists and is accessible
+
+Inspect the Replit project’s App Storage configuration.
+
+Confirm:
+
+* An App Storage bucket exists for this application
+* The current development runtime can access it
+* The published deployment can access it
+* The API server uses the correct bucket
+* Required App Storage environment configuration exists in the running process
+* The App Storage SDK or signing mechanism initializes successfully
+* Development and production are not pointing to incompatible buckets or missing configuration
+* The API server was restarted after storage configuration changed
+
+Do not assume configuration is valid because an environment-variable name exists.
+
+Run a real server-side storage health test:
+
+1. Upload a small text object
+2. Confirm it exists
+3. Read it back
+4. Delete it
+5. Report every result
+
+Then run a small binary-object test.
+
+If either test fails, fix App Storage configuration before continuing with mobile video upload.
+
+---
+
+# 3. Separate Database and App Storage responsibilities
+
+Use this architecture:
+
+## App Storage stores
+
+* Original uploaded video
+* Optional future thumbnail
+* Optional profile images
+
+## PostgreSQL stores
+
+* Music Minute post ID
+* Creator user ID
+* Video object key
+* Persistent video URL or media-serving route
+* MIME type
+* File size
+* Duration
+* Width and height
+* Title
+* Performance type
+* Genre
+* Language
+* Musixmatch track ID
+* Song title
+* Artist
+* Lyric section label
+* Start/end line indexes
+* Start/end timestamps when available
+* Timing mode
+* Timing offset
+* Created timestamp
+* Processing or publication status
+
+Do not place the full video byte content into PostgreSQL.
+
+Do not store a local iPhone URI in PostgreSQL.
+
+Do not store a temporary signed upload URL as the permanent video URL.
+
+---
+
+# 4. Verify the current upload-session or signed-URL endpoint
+
+Inspect the API endpoint used before the video upload begins.
+
+Confirm:
+
+* Correct route
+* Correct HTTP method
+* Clerk authentication succeeds
+* User ID is available
+* MIME type is accepted
+* Filename is sanitized
+* File size is validated
+* Object key is unique
+* Bucket or storage path is valid
+* The endpoint returns the exact response expected by mobile
+
+The response should clearly provide the information required by the chosen upload flow, such as:
+
+* Upload URL or upload session
+* Required method
+* Required headers
+* Object key
+* Expiration time
+* Upload/request ID
+
+Do not return a generic success response without the data required by the phone.
+
+If the signing route fails, return structured JSON rather than allowing the app to report only “Storage unavailable.”
+
+---
+
+# 5. Verify development versus production configuration
+
+The Replit project shows separate Development and Production databases.
+
+Inspect whether the mobile app and API are currently connected to:
+
+* Development API and development database
+* Published API and production database
+* A mixture of development and production services
+
+Report the exact environment used by the physical phone without revealing credentials.
+
+Check:
+
+* Mobile API base URL
+* API deployment URL
+* PostgreSQL connection environment
+* App Storage bucket/environment
+* Clerk environment
+* Musixmatch environment
+* Whether the API server is currently running and healthy
+
+The phone must not request a signed upload URL from one environment and create the database post in another.
+
+Choose one consistent environment for testing.
+
+For immediate physical testing, either:
+
+* Use development API + development database + accessible App Storage consistently
+
+or:
+
+* Use published API + production database + production-accessible App Storage consistently
+
+Do not mix them.
+
+---
+
+# 6. Confirm the mobile upload request
+
+Inspect what happens after the upload session is returned.
+
+Confirm:
+
+* Local cached video exists
+* File size is greater than zero
+* MIME type is correct
+* `.mov` uses `video/quicktime`
+* `.mp4` uses `video/mp4`
+* Upload uses binary data, not Base64
+* Required signed-upload headers are included exactly
+* No unrelated Authorization header is added to a signed storage URL unless required
+* Content type matches what was signed
+* The complete file is transmitted
+* The phone receives the storage response
+* Errors include the real storage status
+
+Do not manually alter signed URL query parameters.
+
+Do not reuse expired signed URLs on Retry.
+
+Request a new upload session when necessary.
+
+---
+
+# 7. Verify storage permissions and access policy
+
+Determine whether the bucket is:
+
+* Private
+* Public
+* Served through an authenticated API media route
+* Served through temporary download URLs
+
+Choose a stable approach compatible with the current app.
+
+The post must store either:
+
+* A persistent public media URL
+
+or:
+
+* A stable object key consumed by a backend media-serving endpoint
+
+Do not rely permanently on an upload-only signed URL.
+
+After upload, verify that:
+
+* The object exists
+* The creator can play it
+* Another authenticated user can play it
+* A guest can play it if guest feed viewing is intended
+* The media remains accessible after server restart
+* The media remains accessible after mobile app restart
+
+---
+
+# 8. Complete database post creation
+
+Only create the published Music Minute after App Storage confirms upload success.
+
+Recommended sequence:
+
+1. Create upload session
+2. Upload video to App Storage
+3. Confirm storage object
+4. Send post metadata and object key to API
+5. Insert post row into PostgreSQL
+6. Return hydrated post
+7. Refresh Home and Profile
+
+Use a post status if needed:
+
+* `uploading`
+* `ready`
+* `failed`
+
+Do not expose an incomplete post in the feed.
+
+If video upload succeeds but database insertion fails:
+
+* Preserve the object key
+* Allow post-creation Retry without re-uploading
+* Prevent duplicate posts
+* Schedule cleanup for abandoned objects
+
+---
+
+# 9. Verify the database schema
+
+Inspect the real posts table.
+
+Confirm it can store the required media reference fields.
+
+Report the current relevant columns.
+
+If required media fields are missing, add only the minimal safe migration needed for:
+
+* Storage object key
+* Video URL or media path
+* MIME type
+* File size
+* Duration
+* Publication/upload status
+
+Do not migrate or copy complete video files into the database.
+
+Verify the app is writing to the database environment used by the phone.
+
+After successful publication, query the new row and confirm:
+
+* Correct creator ID
+* Correct title
+* Correct video object key
+* Correct media URL/path
+* Correct Musixmatch track reference
+* Correct lyric-section metadata
+* Correct created timestamp
+
+---
+
+# 10. Add a storage health endpoint for development
+
+Add or repair a protected diagnostic endpoint that reports only safe information:
+
+* App Storage configured: yes/no
+* Bucket accessible: yes/no
+* Database accessible: yes/no
+* Environment: development/production
+* Upload-session generation: healthy/unhealthy
+* Last storage error code
+* API server version/build identifier
+
+Do not reveal:
+
+* Bucket credentials
+* Signed URLs
+* Database URL
+* Secrets
+* Tokens
+
+Use it to distinguish:
+
+* Database failure
+* App Storage failure
+* Signing failure
+* Mobile configuration failure
+
+---
+
+# 11. Fix the user-facing progress states
+
+The final screen should display accurate stages:
+
+1. Preparing video
+2. Connecting to storage
+3. Uploading video
+4. Saving Music Minute
+5. Published
+
+If the failure occurs while creating an upload session, display:
+
+**Couldn’t connect to video storage. Please try again.**
+
+If the actual upload fails, display:
+
+**The video upload failed. Check your connection and retry.**
+
+If database post creation fails after upload:
+
+**Your video was uploaded, but the Music Minute could not be saved. Retry saving.**
+
+Do not collapse all failures into “Storage unavailable.”
+
+Retry must resume from the appropriate stage and must not create duplicate objects or posts.
+
+---
+
+# 12. Required physical-iPhone testing
+
+Test in this order:
+
+## Test A — Storage health
+
+* Server uploads and deletes a tiny test object
+* Result must pass
+
+## Test B — Very small video
+
+* 3–5 second local iPhone video
+* Confirm App Storage object exists
+* Confirm database row exists
+* Confirm playback works
+
+## Test C — Medium video
+
+* 15–20 second video
+* Confirm full flow
+
+## Test D — Real Music Minute
+
+* Current 53-second video
+* Confirm full flow
+
+## Test E — Format coverage
+
+* `.mov`
+* `.mp4`
+
+## Test F — Persistence
+
+* Close the mobile app
+* Restart API server
+* Reopen app
+* Confirm video still exists and plays
+
+## Test G — Second account
+
+* Open the post from another account/device
+* Confirm remote playback works
+
+---
+
+# 13. Full-cycle acceptance test with Musixmatch
+
+After storage works, complete this exact flow:
+
+1. Sign into a real account
+2. Select a real video
+3. Choose Cover
+4. Search a real Musixmatch track
+5. Select the track
+6. Select a valid lyric section
+7. Review the Music Minute
+8. Confirm upload rights
+9. Upload video to App Storage
+10. Save post metadata to PostgreSQL
+11. Open the new post in Home
+12. Open it from Profile
+13. Play the video
+14. Show real Musixmatch lyrics
+15. Switch translation
+16. Tap “Sing This Part”
+17. Reopen the creator flow with the same track and section
+
+This is the required judge-ready journey.
+
+---
+
+# 14. Acceptance criteria
+
+This issue is complete only when:
+
+* App Storage is configured and reachable from the active API environment.
+* The storage health test passes.
+* A physical iPhone receives a valid upload session.
+* A real `.mov` or `.mp4` uploads successfully.
+* The video object exists in App Storage.
+* PostgreSQL stores the correct object key and media metadata.
+* No full video binary is stored in PostgreSQL.
+* A Music Minute row is created.
+* The post appears in Home and Profile.
+* The video plays on a second device.
+* The video still plays after app and API restart.
+* The 53-second test video uploads.
+* Retry does not create duplicate objects or posts.
+* No “Storage unavailable” error occurs in the successful path.
+* Mobile and API-server typechecks pass.
+
+---
+
+# 15. Completion report
+
+Report:
+
+1. Exact origin of “Storage unavailable.”
+2. Underlying technical error.
+3. Whether the bucket was missing, inaccessible, misconfigured, or connected to the wrong environment.
+4. Development versus production configuration found.
+5. App Storage health-test result.
+6. Database environment used.
+7. Storage object key strategy.
+8. Database fields used for the video reference.
+9. Mobile upload method.
+10. Files changed.
+11. Migrations performed, if any.
+12. Results for 5-second, 20-second, and 53-second videos.
+13. Second-device playback result.
+14. Typecheck results.
+15. Remaining limitations.
+
+Do not report this as fixed after only creating a database row.
+
+The uploaded video must exist in App Storage, its reference must be stored in PostgreSQL, and it must play from Home and Profile on a physical phone.

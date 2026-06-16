@@ -3,6 +3,24 @@ import { db, postsTable, usersTable, likesTable, followsTable, goldenMicTransact
 import { eq, desc, isNull, and, lt, inArray, sql, gte } from "drizzle-orm";
 import { requireAuth, optionalAuth } from "../middleware/auth";
 import { createNotification } from "../lib/notifications";
+import { signVideoGetUrl } from "../lib/objectStorage";
+
+/**
+ * Re-sign a video URL for private-bucket objects.
+ * Falls back to the stored URL if objectKey is absent or signing fails.
+ */
+async function freshenVideoUrl(videoUrl: string, videoObjectKey: string | null): Promise<string> {
+  if (!videoObjectKey) return videoUrl;
+  try {
+    const slash = videoObjectKey.indexOf("/");
+    if (slash === -1) return videoUrl;
+    const bucket = videoObjectKey.slice(0, slash);
+    const objectName = videoObjectKey.slice(slash + 1);
+    return await signVideoGetUrl(bucket, objectName);
+  } catch {
+    return videoUrl;
+  }
+}
 
 const router: IRouter = Router();
 
@@ -36,6 +54,7 @@ type FeedRow = {
   id: number;
   userId: number;
   videoUrl: string;
+  videoObjectKey: string | null;
   thumbnailUrl: string | null;
   title: string;
   caption: string | null;
@@ -124,6 +143,7 @@ async function fetchPersonalizedFeed(
         p.id,
         p.user_id,
         p.video_url,
+        p.video_object_key,
         p.thumbnail_url,
         p.title,
         p.caption,
@@ -178,6 +198,7 @@ async function fetchPersonalizedFeed(
     id: Number(r["id"]),
     userId: Number(r["user_id"]),
     videoUrl: r["video_url"] as string,
+    videoObjectKey: (r["video_object_key"] as string | null) ?? null,
     thumbnailUrl: (r["thumbnail_url"] as string | null) ?? null,
     title: r["title"] as string,
     caption: (r["caption"] as string | null) ?? null,
@@ -233,7 +254,13 @@ router.get("/posts", optionalAuth, async (req, res): Promise<void> => {
     const lastItem = items[items.length - 1];
     const nextCursor = hasMore && lastItem ? encodeCursor(lastItem.score, lastItem.id) : null;
 
-    res.json({ items, nextCursor });
+    const signedItems = await Promise.all(
+      items.map(async (item) => ({
+        ...item,
+        videoUrl: await freshenVideoUrl(item.videoUrl, item.videoObjectKey),
+      })),
+    );
+    res.json({ items: signedItems, nextCursor });
     return;
   }
 
@@ -258,6 +285,7 @@ router.get("/posts", optionalAuth, async (req, res): Promise<void> => {
       id: postsTable.id,
       userId: postsTable.userId,
       videoUrl: postsTable.videoUrl,
+      videoObjectKey: postsTable.videoObjectKey,
       thumbnailUrl: postsTable.thumbnailUrl,
       title: postsTable.title,
       caption: postsTable.caption,
@@ -300,12 +328,19 @@ router.get("/posts", optionalAuth, async (req, res): Promise<void> => {
   const items = hasMore ? rows.slice(0, limit) : rows;
   const nextCursor = hasMore ? String(items[items.length - 1].id) : null;
 
-  res.json({ items, nextCursor });
+  const signedItems = await Promise.all(
+    items.map(async (item) => ({
+      ...item,
+      videoUrl: await freshenVideoUrl(item.videoUrl, item.videoObjectKey),
+    })),
+  );
+  res.json({ items: signedItems, nextCursor });
 });
 
 router.post("/posts", requireAuth, async (req, res): Promise<void> => {
   const body = req.body as {
     videoUrl?: string;
+    videoObjectKey?: string;
     thumbnailUrl?: string;
     title?: string;
     caption?: string;
@@ -336,6 +371,7 @@ router.post("/posts", requireAuth, async (req, res): Promise<void> => {
     .values({
       userId: req.userId,
       videoUrl: body.videoUrl,
+      videoObjectKey: body.videoObjectKey ?? null,
       thumbnailUrl: body.thumbnailUrl ?? null,
       title: body.title,
       caption: body.caption ?? null,
@@ -409,6 +445,7 @@ router.get("/posts/:id", optionalAuth, async (req, res): Promise<void> => {
       id: postsTable.id,
       userId: postsTable.userId,
       videoUrl: postsTable.videoUrl,
+      videoObjectKey: postsTable.videoObjectKey,
       thumbnailUrl: postsTable.thumbnailUrl,
       title: postsTable.title,
       caption: postsTable.caption,
@@ -451,7 +488,11 @@ router.get("/posts/:id", optionalAuth, async (req, res): Promise<void> => {
     return;
   }
 
-  res.json(rows[0]);
+  const row = rows[0];
+  res.json({
+    ...row,
+    videoUrl: await freshenVideoUrl(row.videoUrl, row.videoObjectKey),
+  });
 });
 
 // ---------------------------------------------------------------------------

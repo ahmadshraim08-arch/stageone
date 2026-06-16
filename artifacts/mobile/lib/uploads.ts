@@ -21,6 +21,7 @@ function apiBase(): string {
 export interface UploadVideoResult {
   videoUrl: string;
   thumbnailUrl: string | null;
+  objectKey: string;
 }
 
 export interface UploadAvatarResult {
@@ -247,6 +248,7 @@ export async function uploadVideo(
   const result = (await confirmRes.json()) as {
     videoUrl: string;
     thumbnailUrl: string | null;
+    objectKey: string;
   };
 
   const totalMs = Date.now() - startMs;
@@ -285,6 +287,7 @@ export async function uploadAvatar(
 export async function createPost(
   payload: {
     videoUrl: string;
+    videoObjectKey?: string;
     thumbnailUrl?: string;
     title: string;
     caption?: string;

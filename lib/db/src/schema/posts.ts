@@ -18,6 +18,7 @@ export const postsTable = pgTable("posts", {
   musixmatchTrackId: text("musixmatch_track_id"),
   trackTitle: text("track_title"),
   trackArtist: text("track_artist"),
+  videoObjectKey: text("video_object_key"),
   lyricSectionId: text("lyric_section_id"),
   lyricSectionLabel: text("lyric_section_label"),
   lyricSectionStartMs: integer("lyric_section_start_ms"),

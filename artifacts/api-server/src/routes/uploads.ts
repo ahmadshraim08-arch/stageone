@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import multer from "multer";
-import { objectStorageClient, signVideoUploadUrl } from "../lib/objectStorage";
+import { objectStorageClient, signVideoGetUrl, signVideoUploadUrl } from "../lib/objectStorage";
 import { requireAuth } from "../middleware/auth";
 
 const router: IRouter = Router();
@@ -170,19 +170,42 @@ router.post(
       const bucket = objectStorageClient.bucket(clientBucket);
       const file = bucket.file(clientObjectName);
 
-      const [exists] = await file.exists();
+      // Retry file.exists() up to 4 times (GCS is eventually consistent after a PUT)
+      const RETRY_DELAYS_MS = [500, 1_000, 2_000, 3_000];
+      let exists = false;
+      for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+        const [found] = await file.exists();
+        if (found) { exists = true; break; }
+        if (attempt < RETRY_DELAYS_MS.length) {
+          req.log.info(
+            { uploadRequestId: uploadRequestId ?? "none", attempt },
+            "Object not yet visible — retrying",
+          );
+          await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt]));
+        }
+      }
       if (!exists) {
         res.status(404).json({
-          error: "Uploaded video not found in storage. The upload may not have completed — please retry.",
+          error: "Upload not found. The upload may not have completed — please retry.",
+          code: "UPLOAD_OBJECT_NOT_FOUND",
         });
         return;
       }
 
-      await file.makePublic();
-
       const [metadata] = await file.getMetadata();
-      const videoUrl = `https://storage.googleapis.com/${clientBucket}/${clientObjectName}`;
       const sizeBytes = Number(metadata.size ?? 0);
+      if (sizeBytes === 0) {
+        res.status(422).json({
+          error: "Upload appears empty. Please try again.",
+          code: "UPLOAD_OBJECT_EMPTY",
+        });
+        return;
+      }
+
+      // Bucket has public access prevention enforced — makePublic() is unavailable.
+      // Generate a signed GET URL (7-day TTL) for playback instead.
+      const videoUrl = await signVideoGetUrl(clientBucket, clientObjectName);
+
       req.log.info(
         {
           sizeBytes,
@@ -190,12 +213,12 @@ router.post(
           mime: mimeType,
           uploadRequestId: uploadRequestId ?? "none",
         },
-        "Video upload confirmed and made public",
+        "Video upload confirmed",
       );
-      res.status(200).json({ videoUrl, thumbnailUrl: null });
+      res.status(200).json({ videoUrl, objectKey, thumbnailUrl: null });
     } catch (err) {
       req.log.error({ err, uploadRequestId: uploadRequestId ?? "none" }, "Failed to confirm video upload");
-      res.status(503).json({ error: "Couldn't verify your upload. Please try again." });
+      res.status(503).json({ error: "Couldn't verify your upload. Please try again.", code: "UPLOAD_CONFIRM_FAILED" });
     }
   },
 );

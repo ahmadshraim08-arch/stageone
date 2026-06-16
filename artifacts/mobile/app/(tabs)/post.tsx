@@ -581,11 +581,13 @@ export default function PostScreen() {
     }
 
     let cloudVideoUrl: string;
+    let cloudObjectKey: string | undefined;
     try {
       const result = await uploadVideo(videoUri, videoMimeType, token, (pct) => {
         setUploadProgress(pct);
       });
       cloudVideoUrl = result.videoUrl;
+      cloudObjectKey = result.objectKey;
     } catch (err) {
       const message = err instanceof Error ? err.message : "Upload failed";
       setUploadError(message);
@@ -618,6 +620,7 @@ export default function PostScreen() {
       await createPost(
         {
           videoUrl: cloudVideoUrl,
+          videoObjectKey: cloudObjectKey,
           title,
           caption,
           performanceType,

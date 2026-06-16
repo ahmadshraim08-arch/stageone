@@ -227,6 +227,19 @@ function parseObjectPath(path: string): {
   };
 }
 
+/**
+ * Generate a signed GET URL for private video playback.
+ * Bucket has public access prevention enforced, so makePublic() is unavailable.
+ * TTL defaults to 7 days (GCS V4 RSA maximum).
+ */
+export async function signVideoGetUrl(
+  bucketName: string,
+  objectName: string,
+  ttlSec: number = 604_800,
+): Promise<string> {
+  return signObjectURL({ bucketName, objectName, method: "GET", ttlSec });
+}
+
 export async function signVideoUploadUrl(mimeType: string): Promise<{
   signedUrl: string;
   objectKey: string;

@@ -70,6 +70,7 @@ export interface ApiPost {
   id: number;
   userId: number;
   videoUrl: string;
+  videoObjectKey: string | null;
   thumbnailUrl: string | null;
   title: string;
   caption: string | null;

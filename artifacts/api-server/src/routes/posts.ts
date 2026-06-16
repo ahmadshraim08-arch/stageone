@@ -358,7 +358,19 @@ router.post("/posts", requireAuth, async (req, res): Promise<void> => {
     lyricSectionEndLine?: number;
     lyricTimingMode?: string;
     lyricTimingOffsetMs?: number;
+    lyricTimingAnchors?: Record<string, unknown>[] | null;
+    lyricStartWord?: number;
+    lyricEndWord?: number;
     rightsConfirmed?: boolean;
+    // AI analysis fields
+    analysisJobId?: string;
+    songMatchConfidence?: number;
+    vocalIsolationUsed?: boolean;
+    transcriptionSource?: string;
+    cyaniteGenre?: string;
+    cyaniteMoods?: string[];
+    cyaniteEnergy?: string;
+    audioAnalysisSource?: string;
   };
 
   if (!body.videoUrl || !body.title || !body.performanceType) {
@@ -389,7 +401,19 @@ router.post("/posts", requireAuth, async (req, res): Promise<void> => {
       lyricSectionEndLine: body.lyricSectionEndLine ?? null,
       lyricTimingMode: body.lyricTimingMode ?? null,
       lyricTimingOffsetMs: body.lyricTimingOffsetMs ?? null,
+      lyricTimingAnchors: body.lyricTimingAnchors ?? null,
+      lyricStartWord: body.lyricStartWord ?? null,
+      lyricEndWord: body.lyricEndWord ?? null,
       rightsConfirmed: body.rightsConfirmed ?? false,
+      // AI analysis fields
+      analysisJobId: body.analysisJobId ?? null,
+      songMatchConfidence: body.songMatchConfidence ?? null,
+      vocalIsolationUsed: body.vocalIsolationUsed ?? null,
+      transcriptionSource: body.transcriptionSource ?? null,
+      cyaniteGenre: body.cyaniteGenre ?? null,
+      cyaniteMoods: body.cyaniteMoods ?? null,
+      cyaniteEnergy: body.cyaniteEnergy ?? null,
+      audioAnalysisSource: body.audioAnalysisSource ?? null,
     })
     .returning();
 

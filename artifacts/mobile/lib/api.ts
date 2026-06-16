@@ -316,3 +316,76 @@ export const registerPushToken = (token: string, pushToken: string) =>
 
 export const checkHealth = (): Promise<HealthResponse> =>
   apiFetch<HealthResponse>("/healthz", null);
+
+// ---------------------------------------------------------------------------
+// Analysis jobs
+// ---------------------------------------------------------------------------
+
+export interface AnalysisCandidate {
+  trackId: string;
+  trackTitle: string;
+  artistName: string;
+  albumArt?: string;
+  score: number;
+}
+
+export interface AnalysisTimingAnchor {
+  videoMs: number;
+  lyricMs: number;
+  confidence?: number;
+}
+
+export interface ApiAnalysisResult {
+  vocalIsolationUsed?: boolean;
+  isolationStatus?: "used" | "skipped" | "failed";
+  transcriptionSource?: string;
+  detectedLanguage?: string;
+  detectedTrackId?: string;
+  detectedTrackTitle?: string;
+  detectedTrackArtist?: string;
+  detectedAlbumArt?: string;
+  songMatchConfidence?: number;
+  topCandidates?: AnalysisCandidate[];
+  startLineIndex?: number;
+  endLineIndex?: number;
+  startWordIndex?: number;
+  endWordIndex?: number;
+  lyricRangeConfidence?: number;
+  lyricsMode?: "richsync" | "subtitle" | "plain";
+  timingMode?: string;
+  timingAnchors?: AnalysisTimingAnchor[];
+  timingOffsetMs?: number;
+  syncConfidence?: number;
+  cyaniteGenre?: string;
+  cyaniteMoods?: string[];
+  cyaniteEnergy?: string;
+  stageErrors?: Record<string, string>;
+  fatalError?: string;
+}
+
+export interface ApiAnalysisJob {
+  jobId: string;
+  status: "running" | "ready" | "failed" | "canceled";
+  stage: string;
+  progressPct: number;
+  retryable: boolean;
+  stageErrors: Record<string, string>;
+  result: ApiAnalysisResult | null;
+}
+
+export const startAnalysisJob = (
+  token: string,
+  body: {
+    videoObjectKey: string;
+    performanceType: string;
+    artistHint?: string;
+    titleHint?: string;
+  },
+): Promise<{ jobId: string; status: string; stage: string; progressPct: number }> =>
+  apiFetch("/analysis/jobs", token, { method: "POST", body: JSON.stringify(body) });
+
+export const getAnalysisJob = (token: string, jobId: string): Promise<ApiAnalysisJob> =>
+  apiFetch(`/analysis/jobs/${jobId}`, token);
+
+export const cancelAnalysisJob = (token: string, jobId: string): Promise<void> =>
+  apiFetch(`/analysis/jobs/${jobId}`, token, { method: "DELETE" });

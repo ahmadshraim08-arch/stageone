@@ -305,7 +305,19 @@ export async function createPost(
     lyricSectionEndLine?: number;
     lyricTimingMode?: string;
     lyricTimingOffsetMs?: number;
+    lyricTimingAnchors?: object | null;
+    lyricStartWord?: number;
+    lyricEndWord?: number;
     rightsConfirmed?: boolean;
+    // AI analysis fields
+    analysisJobId?: string;
+    songMatchConfidence?: number;
+    vocalIsolationUsed?: boolean;
+    transcriptionSource?: string;
+    cyaniteGenre?: string;
+    cyaniteMoods?: string[];
+    cyaniteEnergy?: string;
+    audioAnalysisSource?: string;
   },
   token: string,
 ): Promise<{ id: number }> {

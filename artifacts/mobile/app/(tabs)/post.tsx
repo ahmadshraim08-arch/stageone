@@ -14,6 +14,7 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -31,20 +32,106 @@ import { useAuth } from "@clerk/expo";
 import { useApp } from "@/context/AppContext";
 import { MusicMinute } from "@/data/seedData";
 import { useColors } from "@/hooks/useColors";
+import { useAnalysisJob } from "@/hooks/useAnalysisJob";
 import {
-  fetchSegments,
   fetchLyrics,
   searchTracks,
-  type Segment,
-  type LyricsResponse,
   type LyricLine,
   type TimingMode,
 } from "@/lib/musixmatch";
-import { apiBase } from "@/lib/api";
+import {
+  apiBase,
+  startAnalysisJob,
+  cancelAnalysisJob,
+  type ApiAnalysisResult,
+  type AnalysisCandidate,
+} from "@/lib/api";
 import { uploadVideo, createPost } from "@/lib/uploads";
 import { TimingSlider } from "@/components/TimingSlider";
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+
 type PerformanceType = "original" | "cover" | "freestyle";
+type AnalysisPhase = "idle" | "upload" | "polling" | "confirming" | "done" | "skipped";
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const GENRES = [
+  "Pop", "R&B", "Soul", "Rap", "Acoustic", "Indie",
+  "Latin Pop", "Arabic Pop", "Singer-Songwriter", "Jazz", "Country", "Gospel",
+];
+const LANGUAGES = [
+  "English", "Arabic", "Spanish", "French", "Portuguese", "Hindi", "Swahili", "Other",
+];
+
+const STAGE_LABELS: Record<string, string> = {
+  preparing: "Preparing audio",
+  isolating_vocals: "Isolating vocals",
+  transcribing: "Listening to your performance",
+  searching_musixmatch: "Searching for the song",
+  matching_lyrics: "Matching lyrics",
+  analyzing_audio: "Analyzing audio",
+  aligning_timing: "Aligning timing",
+  ready: "Analysis complete",
+  failed: "Analysis could not complete",
+};
+
+interface MusixmatchResult {
+  track_id: string;
+  track_name: string;
+  artist_name: string;
+  album_name?: string;
+}
+
+const MOCK_TRACKS: MusixmatchResult[] = [
+  { track_id: "demo_001", track_name: "Neon Mornings", artist_name: "Demo Artist" },
+  { track_id: "demo_002", track_name: "Echo in the Rain", artist_name: "Demo Artist" },
+  { track_id: "demo_003", track_name: "Thousand Lights", artist_name: "Demo Artist" },
+  { track_id: "12345", track_name: "Golden Hour", artist_name: "JVKE", album_name: "this is what falling in love feels like" },
+  { track_id: "67890", track_name: "Fix You", artist_name: "Coldplay", album_name: "X&Y" },
+  { track_id: "33333", track_name: "Someone Like You", artist_name: "Adele", album_name: "21" },
+  { track_id: "44444", track_name: "Shallow", artist_name: "Lady Gaga & Bradley Cooper", album_name: "A Star Is Born" },
+  { track_id: "55555", track_name: "Perfect", artist_name: "Ed Sheeran", album_name: "Divide" },
+];
+
+// ─── Step layout ──────────────────────────────────────────────────────────────
+//
+// Internal steps:
+//   1  Video
+//   2  Performance type
+//   3  AI analysis (cover only) — upload + polling + confirmation
+//   4  Manual song search (non-cover OR after rejection/skip from step 3)
+//   5  Lyric range editor (cover only)
+//   6  Timing fine-tune (cover + section)
+//   7  Add details
+//   8  Review & post
+//
+// Visual dots (5 positions): 1→1, 2→2, 3/4/5/6→3, 7→4, 8→5
+
+function toVisualStep(step: number): number {
+  if (step <= 2) return step;
+  if (step <= 6) return 3;
+  if (step === 7) return 4;
+  return 5;
+}
+
+function fmtMs(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  return `${m}:${(s % 60).toString().padStart(2, "0")}`;
+}
+
+function formatDuration(secs: number): string {
+  const m = Math.floor(secs / 60).toString().padStart(2, "0");
+  const s = (secs % 60).toString().padStart(2, "0");
+  return `${m}:${s}`;
+}
+
+function confidenceLabel(c: number): { label: string; color: string } {
+  if (c >= 0.7) return { label: "High Confidence", color: "#22C55E" };
+  if (c >= 0.4) return { label: "Medium Confidence", color: "#F59E0B" };
+  return { label: "Low Confidence", color: "#EF4444" };
+}
 
 function detectVideoMime(asset: ImagePicker.ImagePickerAsset): { mimeType: string; ext: string } {
   if (asset.mimeType) {
@@ -57,7 +144,6 @@ function detectVideoMime(asset: ImagePicker.ImagePickerAsset): { mimeType: strin
   const rawExt = match?.[1]?.toLowerCase();
   if (rawExt === "mov") return { mimeType: "video/quicktime", ext: ".mov" };
   if (rawExt === "m4v") return { mimeType: "video/x-m4v", ext: ".m4v" };
-  if (rawExt === "mp4") return { mimeType: "video/mp4", ext: ".mp4" };
   return { mimeType: "video/mp4", ext: ".mp4" };
 }
 
@@ -77,55 +163,21 @@ async function stabiliseVideoUri(
   return { uri: dest, mimeType };
 }
 
-const GENRES = [
-  "Pop", "R&B", "Soul", "Rap", "Acoustic", "Indie",
-  "Latin Pop", "Arabic Pop", "Singer-Songwriter", "Jazz", "Country", "Gospel",
-];
-const LANGUAGES = [
-  "English", "Arabic", "Spanish", "French", "Portuguese", "Hindi", "Swahili", "Other",
-];
-
-interface MusixmatchResult {
-  track_id: string;
-  track_name: string;
-  artist_name: string;
-  album_name?: string;
-  primary_genres?: string;
-}
-
-const MOCK_TRACKS: MusixmatchResult[] = [
-  { track_id: "demo_001", track_name: "Neon Mornings", artist_name: "Demo Artist" },
-  { track_id: "demo_002", track_name: "Echo in the Rain", artist_name: "Demo Artist" },
-  { track_id: "demo_003", track_name: "Thousand Lights", artist_name: "Demo Artist" },
-  { track_id: "12345", track_name: "Golden Hour", artist_name: "JVKE", album_name: "this is what falling in love feels like" },
-  { track_id: "67890", track_name: "Fix You", artist_name: "Coldplay", album_name: "X&Y" },
-  { track_id: "33333", track_name: "Someone Like You", artist_name: "Adele", album_name: "21" },
-  { track_id: "44444", track_name: "Shallow", artist_name: "Lady Gaga & Bradley Cooper", album_name: "A Star Is Born" },
-  { track_id: "55555", track_name: "Perfect", artist_name: "Ed Sheeran", album_name: "Divide" },
-];
-
-// Internal step layout (1–7). Steps 4 and 5 only apply when cover + song selected.
-// Visual dots always show 5 positions:
-//   step 1→1, step 2→2, steps 3/4/5→3, step 6→4, step 7→5
-function toVisualStep(step: number): number {
-  if (step <= 2) return step;
-  if (step <= 5) return 3;
-  return step - 2; // 6→4, 7→5
-}
-
-function fmtMs(ms: number): string {
-  const s = Math.floor(ms / 1000);
-  const m = Math.floor(s / 60);
-  return `${m}:${(s % 60).toString().padStart(2, "0")}`;
-}
+// ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function PostScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { getToken } = useAuth();
   const { currentUser, postMusicMinute, musicMinutes } = useApp();
+  const { poll: pollAnalysis, stop: stopPolling } = useAnalysisJob();
 
+  const topPad = Platform.OS === "web" ? 67 : insets.top;
+
+  // ── Core navigation ──────────────────────────────────────────────────────
   const [step, setStep] = useState(1);
+
+  // ── Video ────────────────────────────────────────────────────────────────
   const [videoUri, setVideoUri] = useState<string | null>(null);
   const [videoMimeType, setVideoMimeType] = useState<string>("video/mp4");
   const [cachedVideoUri, setCachedVideoUri] = useState<string | null>(null);
@@ -133,7 +185,20 @@ export default function PostScreen() {
   const [videoDurationSec, setVideoDurationSec] = useState(0);
   const [performanceType, setPerformanceType] = useState<PerformanceType>("original");
 
-  // Song tagging (step 3)
+  // ── Early upload (step 3 for cover) ──────────────────────────────────────
+  const [uploadedVideoUrl, setUploadedVideoUrl] = useState<string | null>(null);
+  const [uploadedObjectKey, setUploadedObjectKey] = useState<string | null>(null);
+  const [earlyUploadProgress, setEarlyUploadProgress] = useState(0);
+
+  // ── Analysis (step 3, cover only) ────────────────────────────────────────
+  const [analysisPhase, setAnalysisPhase] = useState<AnalysisPhase>("idle");
+  const [analysisJobId, setAnalysisJobId] = useState<string | null>(null);
+  const [analysisStage, setAnalysisStage] = useState<string>("preparing");
+  const [analysisProgress, setAnalysisProgress] = useState(0);
+  const [analysisResult, setAnalysisResult] = useState<ApiAnalysisResult | null>(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+
+  // ── Song tagging (step 4 manual) ──────────────────────────────────────────
   const [songQuery, setSongQuery] = useState("");
   const [songResults, setSongResults] = useState<MusixmatchResult[]>([]);
   const [selectedSong, setSelectedSong] = useState<MusixmatchResult | null>(null);
@@ -142,37 +207,32 @@ export default function PostScreen() {
   const [songSearchSource, setSongSearchSource] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
 
-  // Lyric section (step 4)
-  const [sections, setSections] = useState<Segment[]>([]);
-  const [sectionsLoading, setSectionsLoading] = useState(false);
-  const [sectionsError, setSectionsError] = useState<string | null>(null);
-  const [selectedSection, setSelectedSection] = useState<Segment | null>(null);
-  const [noSyncedLyrics, setNoSyncedLyrics] = useState(false);
-  // timingMode reported by the segments endpoint: "richsync"|"subtitle"|"manual"|"demo"|null
-  const [sectionTimingMode, setSectionTimingMode] = useState<TimingMode | null>(null);
-  // When true, track has plain (untimed) lyrics — show manual line picker label
-  const [isManualLyricMode, setIsManualLyricMode] = useState(false);
-
-  // Timing (step 5)
-  const [timingOffsetMs, setTimingOffsetMs] = useState(0);
-  // Section lyric previews: first lyric line text per sectionId
-  const [sectionPreviews, setSectionPreviews] = useState<Record<string, string>>({});
-  // No lyrics mode: user explicitly opted out of lyric overlay
+  // ── Lyric range editor (step 5) ───────────────────────────────────────────
+  const [fullLyrics, setFullLyrics] = useState<LyricLine[] | null>(null);
+  const [fullLyricsLoading, setFullLyricsLoading] = useState(false);
+  const [lyricRangeStartLine, setLyricRangeStartLine] = useState(0);
+  const [lyricRangeEndLine, setLyricRangeEndLine] = useState(0);
   const [noLyricsMode, setNoLyricsMode] = useState(false);
-  // Timing preview state (step 5)
-  const [previewLyricsData, setPreviewLyricsData] = useState<LyricsResponse | null>(null);
+
+  // ── Timing (step 6) ───────────────────────────────────────────────────────
+  const [timingOffsetMs, setTimingOffsetMs] = useState(0);
+  const [previewLyricsData, setPreviewLyricsData] = useState<{ lines: LyricLine[] } | null>(null);
   const [isPreviewingTiming, setIsPreviewingTiming] = useState(false);
   const [previewPositionMs, setPreviewPositionMs] = useState(0);
   const previewIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Details (step 6)
+  // ── Cyanite chips (step 7) ────────────────────────────────────────────────
+  const [cyaniteGenreAccepted, setCyaniteGenreAccepted] = useState(false);
+  const [cyaniteMoodsAccepted, setCyaniteMoodsAccepted] = useState(false);
+
+  // ── Details (step 7) ─────────────────────────────────────────────────────
   const [title, setTitle] = useState("");
   const [caption, setCaption] = useState("");
   const [genre, setGenre] = useState("Pop");
   const [language, setLanguage] = useState("English");
   const [location, setLocation] = useState("");
 
-  // Review + posting (step 7)
+  // ── Review + posting (step 8) ────────────────────────────────────────────
   const [rightsConfirmed, setRightsConfirmed] = useState(false);
   const [isPosting, setIsPosting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -180,9 +240,7 @@ export default function PostScreen() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [posted, setPosted] = useState(false);
 
-  const topPad = Platform.OS === "web" ? 67 : insets.top;
-
-  // Prefill from challenge Join button deep-link or song chip tap
+  // ── Prefill from deep-link ────────────────────────────────────────────────
   const { prefillTrackId, prefillSectionId, prefillSongQuery } = useLocalSearchParams<{
     prefillTrackId?: string;
     prefillSectionId?: string;
@@ -191,102 +249,20 @@ export default function PostScreen() {
   const prefillAppliedRef = useRef(false);
   const prefillQueryAppliedRef = useRef(false);
 
-  // Fetch lyric segments when reaching step 4 with a selected song
-  useEffect(() => {
-    if (step !== 4 || !selectedSong) return;
-    let cancelled = false;
-    setSectionsLoading(true);
-    setSectionsError(null);
-    setNoSyncedLyrics(false);
-    setIsManualLyricMode(false);
-    fetchSegments(selectedSong.track_id).then((result) => {
-      if (cancelled) return;
-      const segs = result?.segments ?? [];
-      setSections(segs);
-      setSectionsLoading(false);
-      setSectionTimingMode(result?.timingMode ?? null);
+  // ─── Effects ─────────────────────────────────────────────────────────────
 
-      const tm = result?.timingMode;
-      const isUnavailable = result?.source === "unavailable" || segs.length === 0;
-      const isManual = tm === "manual" && segs.length > 0;
-
-      if (isUnavailable) {
-        // No usable lyrics at all
-        setNoSyncedLyrics(true);
-        setNoLyricsMode(true);
-        setIsManualLyricMode(false);
-        setSelectedSection(null);
-      } else if (isManual) {
-        // Plain (untimed) lyrics — show lines, do not force noLyricsMode
-        setNoSyncedLyrics(true);
-        setIsManualLyricMode(true);
-        setNoLyricsMode(false);
-        setSelectedSection((prev) => {
-          if (prev) return prev;
-          if (prefillSectionId) {
-            const match = segs.find((s) => s.id === prefillSectionId);
-            if (match) return match;
-          }
-          return segs[0] ?? null;
-        });
-      } else {
-        setNoSyncedLyrics(false);
-        setIsManualLyricMode(false);
-        setSelectedSection((prev) => {
-          if (prev) return prev;
-          if (prefillSectionId) {
-            const match = segs.find((s) => s.id === prefillSectionId);
-            if (match) return match;
-          }
-          return null;
-        });
-      }
-
-      if (!result) setSectionsError("Could not load song sections");
-      // Fetch first-line lyric preview for each section card
-      if (segs.length > 0 && selectedSong) {
-        fetchLyrics(selectedSong.track_id).then((lyricsData) => {
-          if (cancelled || !lyricsData) return;
-          const previews: Record<string, string> = {};
-          segs.forEach((seg) => {
-            let firstLine;
-            if (seg.startMs !== null && seg.endMs !== null) {
-              // Timed segment — find line by timestamp
-              firstLine = lyricsData.lines.find(
-                (l) =>
-                  l.startMs !== null &&
-                  l.startMs >= seg.startMs! &&
-                  (seg.endMs! >= 999999 || l.startMs < seg.endMs!),
-              );
-            } else {
-              // Plain segment — use startLineIndex
-              firstLine = lyricsData.lines[seg.startLineIndex];
-            }
-            if (firstLine) previews[seg.id] = firstLine.text;
-          });
-          setSectionPreviews(previews);
-        });
-      }
-    });
-    return () => { cancelled = true; };
-  }, [step, selectedSong?.track_id]);
-
-  // Debounced song search — fires 400 ms after the user stops typing
+  // Debounced song search
   useEffect(() => {
     const query = songQuery.trim();
     if (!query || selectedSong) return;
-    const timer = setTimeout(() => {
-      handleSongSearch();
-    }, 400);
+    const timer = setTimeout(() => { handleSongSearch(); }, 400);
     return () => clearTimeout(timer);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [songQuery]);
 
-  // Apply prefill params from challenge Join button
+  // Prefill from challenge Join button
   useEffect(() => {
     if (prefillAppliedRef.current || !prefillTrackId) return;
-
-    // Try local catalogue first (covers demo tracks and well-known IDs)
     const localTrack = MOCK_TRACKS.find((t) => t.track_id === prefillTrackId);
     if (localTrack) {
       prefillAppliedRef.current = true;
@@ -294,8 +270,6 @@ export default function PostScreen() {
       setSelectedSong(localTrack);
       return;
     }
-
-    // Fetch from API for real Musixmatch track IDs
     fetch(`${apiBase()}/musixmatch/track/${encodeURIComponent(prefillTrackId)}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data: { track?: Record<string, unknown> } | null) => {
@@ -311,27 +285,65 @@ export default function PostScreen() {
         });
       })
       .catch(() => {});
-    // Upload step (1) remains mandatory — do NOT call setStep here
   }, [prefillTrackId]);
 
-  // Apply prefill query from song chip tap (no track ID available)
+  // Prefill query from song chip
   useEffect(() => {
     if (prefillQueryAppliedRef.current || !prefillSongQuery || prefillTrackId) return;
     prefillQueryAppliedRef.current = true;
     setSongQuery(prefillSongQuery);
   }, [prefillSongQuery, prefillTrackId]);
 
-  // Fetch lyrics for timing preview when entering step 5
+  // Load full lyrics when entering step 5
   useEffect(() => {
     if (step !== 5 || !selectedSong) return;
+    if (fullLyrics) return;
+    let cancelled = false;
+    setFullLyricsLoading(true);
     fetchLyrics(selectedSong.track_id).then((data) => {
-      setPreviewLyricsData(data);
+      if (cancelled) return;
+      setFullLyricsLoading(false);
+      if (data && data.lines.length > 0) {
+        setFullLyrics(data.lines);
+        // Pre-select AI-detected range or sensible default
+        if (
+          analysisResult?.startLineIndex !== undefined &&
+          analysisResult?.endLineIndex !== undefined
+        ) {
+          setLyricRangeStartLine(analysisResult.startLineIndex);
+          setLyricRangeEndLine(analysisResult.endLineIndex);
+        } else {
+          // Default: first third of lyrics
+          const end = Math.min(Math.floor(data.lines.length / 3), data.lines.length - 1);
+          setLyricRangeStartLine(0);
+          setLyricRangeEndLine(end);
+        }
+      } else {
+        setNoLyricsMode(true);
+      }
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, selectedSong?.track_id]);
+
+  // Fetch lyrics for timing preview (step 6)
+  useEffect(() => {
+    if (step !== 6 || !selectedSong || fullLyrics) return;
+    fetchLyrics(selectedSong.track_id).then((data) => {
+      if (data) setPreviewLyricsData({ lines: data.lines });
     });
   }, [step, selectedSong?.track_id]);
 
-  // Preview timing interval — max 5 s or section duration, steps 250 ms
+  // Use already-loaded fullLyrics for timing preview
   useEffect(() => {
-    if (!isPreviewingTiming || !selectedSection) {
+    if (step !== 6 || !fullLyrics || previewLyricsData) return;
+    const rangedLines = fullLyrics.slice(lyricRangeStartLine, lyricRangeEndLine + 1);
+    setPreviewLyricsData({ lines: rangedLines });
+  }, [step, fullLyrics]);
+
+  // Timing preview interval
+  useEffect(() => {
+    if (!isPreviewingTiming) {
       if (previewIntervalRef.current) {
         clearInterval(previewIntervalRef.current);
         previewIntervalRef.current = null;
@@ -339,16 +351,11 @@ export default function PostScreen() {
       return;
     }
     setPreviewPositionMs(0);
-    const secStart = selectedSection.startMs ?? 0;
-    const secEnd   = selectedSection.endMs   ?? secStart + 60000;
-    const maxDuration = Math.min(secEnd - secStart, 5000);
+    const maxDuration = 5000;
     previewIntervalRef.current = setInterval(() => {
       setPreviewPositionMs((p) => {
         const next = p + 250;
-        if (next >= maxDuration) {
-          setIsPreviewingTiming(false);
-          return 0;
-        }
+        if (next >= maxDuration) { setIsPreviewingTiming(false); return 0; }
         return next;
       });
     }, 250);
@@ -358,96 +365,47 @@ export default function PostScreen() {
         previewIntervalRef.current = null;
       }
     };
-  }, [isPreviewingTiming, selectedSection?.startMs, selectedSection?.endMs]);
+  }, [isPreviewingTiming]);
 
-  if (!currentUser) {
-    return (
-      <View style={[styles.container, { backgroundColor: colors.background }]}>
-        <View style={[styles.guestView, { paddingTop: topPad + 40 }]}>
-          <MaterialCommunityIcons name="microphone" size={64} color={colors.primary} />
-          <Text style={[styles.guestTitle, { color: colors.foreground }]}>Your Stage Awaits</Text>
-          <Text style={[styles.guestSubtitle, { color: colors.mutedForeground }]}>
-            Sign up to post your first Music Minute and start your journey.
-          </Text>
-          <TouchableOpacity
-            onPress={() => router.push("/(auth)/sign-up")}
-            activeOpacity={0.85}
-            style={styles.guestBtn}
-          >
-            <LinearGradient
-              colors={["#A855F7", "#EC4899"]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.guestBtnGradient}
-            >
-              <Text style={styles.guestBtnText}>Join StageOne</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  }
+  // ─── Navigation ──────────────────────────────────────────────────────────
 
-  if (posted) {
-    return (
-      <View style={[styles.container, { backgroundColor: colors.background }]}>
-        <View style={styles.successView}>
-          <MaterialCommunityIcons name="microphone" size={80} color={colors.gold} />
-          <Text style={[styles.successTitle, { color: colors.foreground }]}>Music Minute Posted!</Text>
-          <Text style={[styles.successSubtitle, { color: colors.mutedForeground }]}>
-            Your performance is now live in the feed. Time to rise.
-          </Text>
-          <TouchableOpacity
-            onPress={() => {
-              setPosted(false);
-              setStep(1);
-              setVideoUri(null);
-              setTitle("");
-              setCaption("");
-              setSelectedSong(null);
-              setSongQuery("");
-              setSections([]);
-              setSelectedSection(null);
-              setTimingOffsetMs(0);
-              setRightsConfirmed(false);
-              router.push("/");
-            }}
-            activeOpacity={0.85}
-            style={styles.guestBtn}
-          >
-            <LinearGradient
-              colors={["#A855F7", "#EC4899", "#F59E0B"]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.guestBtnGradient}
-            >
-              <Text style={styles.guestBtnText}>View in Feed</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  }
-
-  // ----- Navigation helpers -----
-
-  // Plain-lyrics mode skips step 5 (no timing to adjust)
-  const skipTimingStep = isManualLyricMode || noLyricsMode;
+  const hasLyricRange = !noLyricsMode && fullLyrics !== null && fullLyrics.length > 0;
+  const skipTimingStep = !hasLyricRange;
 
   function goBack(): void {
-    if (step === 7) { setStep(6); return; }
-    if (step === 6) {
-      if (performanceType === "cover" && selectedSong && selectedSection && !skipTimingStep) { setStep(5); return; }
-      if (performanceType === "cover" && selectedSong) { setStep(4); return; }
-      setStep(3); return;
+    if (step === 8) { setStep(7); return; }
+    if (step === 7) {
+      if (performanceType === "cover" && selectedSong && hasLyricRange && !skipTimingStep) {
+        setStep(6); return;
+      }
+      if (performanceType === "cover" && selectedSong) { setStep(5); return; }
+      setStep(4); return;
     }
-    if (step === 5) { setStep(4); return; }
-    if (step === 4) { setStep(3); return; }
-    if (step === 3) { setStep(2); return; }
+    if (step === 6) { setStep(5); return; }
+    if (step === 5) {
+      // If AI ran → back to confirming phase
+      if (analysisPhase === "done") { setAnalysisPhase("confirming"); setStep(3); return; }
+      setStep(4); return;
+    }
+    if (step === 4) {
+      if (performanceType === "cover") { setStep(3); return; }
+      setStep(2); return;
+    }
+    if (step === 3) {
+      stopPolling();
+      // Cancel the job if it was started
+      if (analysisJobId) {
+        getToken().then((t) => {
+          if (t && analysisJobId) cancelAnalysisJob(t, analysisJobId).catch(() => {});
+        });
+      }
+      setAnalysisPhase("idle");
+      setStep(2); return;
+    }
     if (step === 2) { setStep(1); return; }
   }
 
-  // ----- Media helpers -----
+  // ─── Media helpers ───────────────────────────────────────────────────────
 
   const handlePickVideo = async () => {
     if (isPicking) return;
@@ -455,10 +413,7 @@ export default function PostScreen() {
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (perm.status !== "granted") {
-        Alert.alert(
-          "Photo Library Access Required",
-          "StageOne needs access to your photo library to upload a Music Minute.",
-        );
+        Alert.alert("Photo Library Access Required", "StageOne needs access to your photo library to upload a Music Minute.");
         return;
       }
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -478,19 +433,20 @@ export default function PostScreen() {
         Alert.alert("File Too Large", "Please select a video under 100 MB.");
         return;
       }
-      if (cachedVideoUri) {
-        fsDeleteAsync(cachedVideoUri, { idempotent: true }).catch(() => {});
-      }
+      if (cachedVideoUri) fsDeleteAsync(cachedVideoUri, { idempotent: true }).catch(() => {});
       const { uri: stableUri, mimeType } = await stabiliseVideoUri(asset);
       setVideoUri(stableUri);
       setCachedVideoUri(stableUri);
       setVideoMimeType(mimeType);
       setVideoDurationSec(Math.round((asset.duration ?? 0) / 1000));
+      // Reset upload state if video changes
+      setUploadedVideoUrl(null);
+      setUploadedObjectKey(null);
+      setAnalysisPhase("idle");
+      setAnalysisJobId(null);
+      setAnalysisResult(null);
     } catch (err) {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : "The selected video could not be read. Please try another file.";
+      const msg = err instanceof Error ? err.message : "The selected video could not be read.";
       Alert.alert("Video Error", msg);
     } finally {
       setIsPicking(false);
@@ -513,24 +469,124 @@ export default function PostScreen() {
       });
       if (result.canceled || !result.assets[0]) return;
       const asset = result.assets[0];
-      if (cachedVideoUri) {
-        fsDeleteAsync(cachedVideoUri, { idempotent: true }).catch(() => {});
-      }
+      if (cachedVideoUri) fsDeleteAsync(cachedVideoUri, { idempotent: true }).catch(() => {});
       const { uri: stableUri, mimeType } = await stabiliseVideoUri(asset);
       setVideoUri(stableUri);
       setCachedVideoUri(stableUri);
       setVideoMimeType(mimeType);
       setVideoDurationSec(Math.round((asset.duration ?? 0) / 1000));
+      setUploadedVideoUrl(null);
+      setUploadedObjectKey(null);
+      setAnalysisPhase("idle");
     } catch (err) {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : "The recorded video could not be prepared. Please try again.";
+      const msg = err instanceof Error ? err.message : "The recorded video could not be prepared.";
       Alert.alert("Video Error", msg);
     } finally {
       setIsPicking(false);
     }
   };
+
+  // ─── Analysis flow ────────────────────────────────────────────────────────
+
+  const handleStartAnalysis = async () => {
+    if (!videoUri) return;
+    setAnalysisError(null);
+    setAnalysisPhase("upload");
+    setEarlyUploadProgress(0);
+
+    const token = await getToken();
+    if (!token) {
+      setAnalysisError("You must be signed in to analyze your performance.");
+      setAnalysisPhase("idle");
+      return;
+    }
+
+    // Phase A: Upload video
+    let objectKey: string;
+    let videoUrl: string;
+    try {
+      const result = await uploadVideo(videoUri, videoMimeType, token, (pct) => {
+        setEarlyUploadProgress(pct);
+      });
+      videoUrl = result.videoUrl;
+      objectKey = result.objectKey;
+      setUploadedVideoUrl(videoUrl);
+      setUploadedObjectKey(objectKey);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Upload failed";
+      setAnalysisError(msg);
+      setAnalysisPhase("idle");
+      return;
+    }
+
+    // Phase B: Start analysis job
+    setAnalysisPhase("polling");
+    setAnalysisStage("preparing");
+    setAnalysisProgress(0);
+
+    let jobId: string;
+    try {
+      const job = await startAnalysisJob(token, {
+        videoObjectKey: objectKey,
+        performanceType: "cover",
+      });
+      jobId = job.jobId;
+      setAnalysisJobId(jobId);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Could not start analysis";
+      setAnalysisError(msg);
+      setAnalysisPhase("idle");
+      return;
+    }
+
+    // Phase C: Poll until done
+    pollAnalysis(
+      token,
+      jobId,
+      (job) => {
+        setAnalysisStage(job.stage);
+        setAnalysisProgress(job.progressPct);
+      },
+      (job) => {
+        setAnalysisResult(job.result);
+        setAnalysisStage(job.stage);
+        setAnalysisProgress(100);
+        setAnalysisPhase("confirming");
+      },
+      (_err) => {
+        // Non-fatal poll error; keep polling (backoff handles it)
+      },
+    );
+  };
+
+  const handleConfirmSong = (candidate: {
+    trackId: string;
+    trackTitle: string;
+    artistName: string;
+    albumArt?: string;
+  }) => {
+    setSelectedSong({
+      track_id: candidate.trackId,
+      track_name: candidate.trackTitle,
+      artist_name: candidate.artistName,
+    });
+    setFullLyrics(null); // reset so step 5 fetches fresh
+    setAnalysisPhase("done");
+    setStep(5);
+  };
+
+  const handleSkipAnalysis = () => {
+    stopPolling();
+    if (analysisJobId) {
+      getToken().then((t) => {
+        if (t && analysisJobId) cancelAnalysisJob(t, analysisJobId).catch(() => {});
+      });
+    }
+    setAnalysisPhase("skipped");
+    setStep(4); // go to manual song search
+  };
+
+  // ─── Song search ──────────────────────────────────────────────────────────
 
   const handleSongSearch = async () => {
     const query = songQuery.trim();
@@ -548,10 +604,11 @@ export default function PostScreen() {
     } catch {
       setSongSearchError(true);
       setSongResults([]);
-      setHasSearched(false);
     }
     setIsSongSearching(false);
   };
+
+  // ─── Post handler ─────────────────────────────────────────────────────────
 
   const handlePost = async () => {
     if (!title.trim()) {
@@ -570,51 +627,49 @@ export default function PostScreen() {
     setIsPosting(true);
     setUploadError(null);
     setUploadProgress(0);
-    setUploadPhase("uploading");
 
     const token = await getToken();
     if (!token) {
       setUploadError("You must be signed in to post. Please log in and try again.");
-      setUploadPhase("idle");
       setIsPosting(false);
       return;
     }
 
     let cloudVideoUrl: string;
     let cloudObjectKey: string | undefined;
-    try {
-      const result = await uploadVideo(videoUri, videoMimeType, token, (pct) => {
-        setUploadProgress(pct);
-      });
-      cloudVideoUrl = result.videoUrl;
-      cloudObjectKey = result.objectKey;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Upload failed";
-      setUploadError(message);
-      setUploadPhase("idle");
-      setIsPosting(false);
-      return;
+
+    if (uploadedVideoUrl && uploadedObjectKey) {
+      // Already uploaded in the analysis flow
+      cloudVideoUrl = uploadedVideoUrl;
+      cloudObjectKey = uploadedObjectKey;
+    } else {
+      // Normal upload (non-cover or skipped analysis)
+      setUploadPhase("uploading");
+      try {
+        const result = await uploadVideo(videoUri, videoMimeType, token, (pct) => {
+          setUploadProgress(pct);
+        });
+        cloudVideoUrl = result.videoUrl;
+        cloudObjectKey = result.objectKey;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Upload failed";
+        setUploadError(message);
+        setUploadPhase("idle");
+        setIsPosting(false);
+        return;
+      }
     }
 
     setUploadPhase("saving");
 
+    // Build lyric section info
+    const hasManualSection = selectedSong && fullLyrics && !noLyricsMode;
+    const startLine = hasManualSection ? lyricRangeStartLine : undefined;
+    const endLine = hasManualSection ? lyricRangeEndLine : undefined;
+    const startLineData = (fullLyrics && startLine !== undefined) ? fullLyrics[startLine] : null;
+    const endLineData = (fullLyrics && endLine !== undefined) ? fullLyrics[endLine] : null;
+
     const imageIndex = musicMinutes.length % 3;
-    const lyricSection =
-      performanceType === "cover" && selectedSong && selectedSection
-        ? {
-            sectionId: selectedSection.id,
-            sectionLabel: selectedSection.label,
-            trackId: selectedSong.track_id,
-            startMs: selectedSection.startMs ?? 0,
-            endMs: selectedSection.endMs ?? 999999,
-            startLineIndex: selectedSection.startLineIndex,
-            endLineIndex: selectedSection.endLineIndex,
-            lineCount: selectedSection.lineCount,
-            timingMode: sectionTimingMode ?? "manual",
-            timingOffsetMs,
-            language: "en",
-          }
-        : undefined;
 
     try {
       await createPost(
@@ -629,15 +684,25 @@ export default function PostScreen() {
           musixmatchTrackId: selectedSong?.track_id,
           trackTitle: selectedSong?.track_name,
           trackArtist: selectedSong?.artist_name,
-          lyricSectionId: lyricSection?.sectionId,
-          lyricSectionLabel: lyricSection?.sectionLabel,
-          lyricSectionStartMs: lyricSection?.startMs,
-          lyricSectionEndMs: lyricSection?.endMs,
-          lyricSectionStartLine: lyricSection?.startLineIndex,
-          lyricSectionEndLine: lyricSection?.endLineIndex,
-          lyricTimingMode: lyricSection?.timingMode,
-          lyricTimingOffsetMs: lyricSection?.timingOffsetMs,
+          lyricSectionStartLine: startLine,
+          lyricSectionEndLine: endLine,
+          lyricSectionStartMs: startLineData?.startMs ?? undefined,
+          lyricSectionEndMs: endLineData?.endMs ?? undefined,
+          lyricTimingMode: analysisResult?.timingMode ?? (fullLyrics ? "manual" : undefined),
+          lyricTimingOffsetMs: timingOffsetMs !== 0 ? timingOffsetMs : undefined,
+          lyricTimingAnchors: analysisResult?.timingAnchors ?? null,
+          lyricStartWord: analysisResult?.startWordIndex,
+          lyricEndWord: analysisResult?.endWordIndex,
           rightsConfirmed,
+          // AI analysis fields
+          analysisJobId: analysisJobId ?? undefined,
+          songMatchConfidence: analysisResult?.songMatchConfidence,
+          vocalIsolationUsed: analysisResult?.vocalIsolationUsed,
+          transcriptionSource: analysisResult?.transcriptionSource,
+          cyaniteGenre: cyaniteGenreAccepted ? (analysisResult?.cyaniteGenre ?? undefined) : undefined,
+          cyaniteMoods: cyaniteMoodsAccepted ? (analysisResult?.cyaniteMoods ?? undefined) : undefined,
+          cyaniteEnergy: cyaniteMoodsAccepted ? (analysisResult?.cyaniteEnergy ?? undefined) : undefined,
+          audioAnalysisSource: (cyaniteGenreAccepted || cyaniteMoodsAccepted) ? "cyanite" : undefined,
         },
         token,
       );
@@ -649,20 +714,28 @@ export default function PostScreen() {
       return;
     }
 
+    const lyricSection =
+      selectedSong && hasManualSection
+        ? {
+            sectionId: `line-${startLine}-${endLine}`,
+            sectionLabel: "Selected range",
+            trackId: selectedSong.track_id,
+            startMs: startLineData?.startMs ?? 0,
+            endMs: endLineData?.endMs ?? 999999,
+            startLineIndex: startLine ?? 0,
+            endLineIndex: endLine ?? 0,
+            lineCount: (endLine ?? 0) - (startLine ?? 0) + 1,
+            timingMode: (analysisResult?.timingMode ?? "manual") as TimingMode,
+            timingOffsetMs,
+            language: "en",
+          }
+        : undefined;
+
     const mm: Omit<
       MusicMinute,
-      | "id"
-      | "views"
-      | "likesCount"
-      | "commentsCount"
-      | "sharesCount"
-      | "savesCount"
-      | "goldenMicsCount"
-      | "createdAt"
-      | "isRisingVoice"
-      | "isFeatured"
+      "id" | "views" | "likesCount" | "commentsCount" | "sharesCount" | "savesCount" | "goldenMicsCount" | "createdAt" | "isRisingVoice" | "isFeatured"
     > = {
-      userId: currentUser.id,
+      userId: currentUser!.id,
       title,
       caption,
       performanceType,
@@ -685,63 +758,111 @@ export default function PostScreen() {
     setPosted(true);
   };
 
-  const formatDuration = (secs: number) => {
-    const m = Math.floor(secs / 60).toString().padStart(2, "0");
-    const s = (secs % 60).toString().padStart(2, "0");
-    return `${m}:${s}`;
-  };
+  // ─── Derived ─────────────────────────────────────────────────────────────
 
   const visualStep = toVisualStep(step);
 
-  // Active line during timing preview (step 5)
+  const selectedLineCount =
+    fullLyrics && !noLyricsMode
+      ? lyricRangeEndLine - lyricRangeStartLine + 1
+      : 0;
+
+  const estimatedDurationSec = (() => {
+    if (!fullLyrics || fullLyrics.length === 0 || noLyricsMode) return null;
+    const startL = fullLyrics[lyricRangeStartLine];
+    const endL = fullLyrics[lyricRangeEndLine];
+    if (startL?.startMs !== null && endL?.endMs !== null && startL?.startMs !== undefined && endL?.endMs !== undefined) {
+      return Math.round((endL.endMs - startL.startMs) / 1000);
+    }
+    return null;
+  })();
+
   const previewActiveLine: LyricLine | null = (() => {
-    if (!isPreviewingTiming || !previewLyricsData || !selectedSection) return null;
+    if (!isPreviewingTiming || !previewLyricsData) return null;
     const lines = previewLyricsData.lines;
-    const secStart = selectedSection.startMs ?? 0;
-    const secEnd   = selectedSection.endMs   ?? secStart + 60000;
-    if (!previewLyricsData.hasSync && lines.length > 0) {
-      const sectionDuration = secEnd - secStart;
-      if (sectionDuration <= 0) return null;
-      const msPerLine = sectionDuration / lines.length;
-      const idx = Math.min(
-        Math.floor((previewPositionMs + timingOffsetMs) / msPerLine),
-        lines.length - 1,
-      );
+    if (lines.length === 0) return null;
+    if (!lines[0]?.startMs) {
+      const msPerLine = 5000 / lines.length;
+      const idx = Math.min(Math.floor((previewPositionMs + timingOffsetMs) / msPerLine), lines.length - 1);
       return lines[idx] ?? null;
     }
-    const absMs = previewPositionMs + secStart + timingOffsetMs;
-    return (
-      lines.find(
-        (l) => l.startMs !== null && l.endMs !== null && absMs >= l.startMs! && absMs < l.endMs!,
-      ) ?? null
-    );
+    const base = lines[0]?.startMs ?? 0;
+    const absMs = previewPositionMs + base + timingOffsetMs;
+    return lines.find((l) =>
+      l.startMs !== null && l.endMs !== null && absMs >= l.startMs! && absMs < l.endMs!
+    ) ?? null;
   })();
+
+  // ─── Guard: guest ──────────────────────────────────────────────────────────
+
+  if (!currentUser) {
+    return (
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
+        <View style={[styles.guestView, { paddingTop: topPad + 40 }]}>
+          <MaterialCommunityIcons name="microphone" size={64} color={colors.primary} />
+          <Text style={[styles.guestTitle, { color: colors.foreground }]}>Your Stage Awaits</Text>
+          <Text style={[styles.guestSubtitle, { color: colors.mutedForeground }]}>
+            Sign up to post your first Music Minute and start your journey.
+          </Text>
+          <TouchableOpacity onPress={() => router.push("/(auth)/sign-up")} activeOpacity={0.85} style={styles.guestBtn}>
+            <LinearGradient colors={["#A855F7", "#EC4899"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.guestBtnGradient}>
+              <Text style={styles.guestBtnText}>Join StageOne</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
+  // ─── Guard: posted ─────────────────────────────────────────────────────────
+
+  if (posted) {
+    return (
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
+        <View style={styles.successView}>
+          <MaterialCommunityIcons name="microphone" size={80} color={colors.gold} />
+          <Text style={[styles.successTitle, { color: colors.foreground }]}>Music Minute Posted!</Text>
+          <Text style={[styles.successSubtitle, { color: colors.mutedForeground }]}>
+            Your performance is now live in the feed. Time to rise.
+          </Text>
+          <TouchableOpacity
+            onPress={() => {
+              setPosted(false); setStep(1); setVideoUri(null); setTitle(""); setCaption("");
+              setSelectedSong(null); setSongQuery(""); setFullLyrics(null); setNoLyricsMode(false);
+              setTimingOffsetMs(0); setRightsConfirmed(false);
+              setUploadedVideoUrl(null); setUploadedObjectKey(null);
+              setAnalysisPhase("idle"); setAnalysisJobId(null); setAnalysisResult(null);
+              setCyaniteGenreAccepted(false); setCyaniteMoodsAccepted(false);
+              router.push("/");
+            }}
+            activeOpacity={0.85}
+            style={styles.guestBtn}
+          >
+            <LinearGradient colors={["#A855F7", "#EC4899", "#F59E0B"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.guestBtnGradient}>
+              <Text style={styles.guestBtnText}>View in Feed</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
+  // ─── Render ────────────────────────────────────────────────────────────────
 
   const StepIndicator = () => (
     <View style={styles.stepRow}>
       {[1, 2, 3, 4, 5].map((s) => (
-        <View
-          key={s}
-          style={[
-            styles.stepDot,
-            { backgroundColor: s <= visualStep ? colors.primary : colors.border },
-          ]}
-        />
+        <View key={s} style={[styles.stepDot, { backgroundColor: s <= visualStep ? colors.primary : colors.border }]} />
       ))}
     </View>
   );
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <View
-        style={[styles.postHeader, { paddingTop: topPad + 8, borderBottomColor: colors.border }]}
-      >
+      {/* ── Header ── */}
+      <View style={[styles.postHeader, { paddingTop: topPad + 8, borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={step > 1 ? goBack : () => {}} activeOpacity={0.7}>
-          <Ionicons
-            name="chevron-back"
-            size={24}
-            color={step > 1 ? colors.foreground : "transparent"}
-          />
+          <Ionicons name="chevron-back" size={24} color={step > 1 ? colors.foreground : "transparent"} />
         </TouchableOpacity>
         <Text style={[styles.postTitle, { color: colors.foreground }]}>Post a Music Minute</Text>
         <View style={{ width: 24 }} />
@@ -749,88 +870,47 @@ export default function PostScreen() {
 
       <StepIndicator />
 
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-      >
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
         <ScrollView
           style={styles.stepContent}
           contentContainerStyle={{ paddingBottom: 120 }}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          {/* ── Step 1: Video ── */}
+
+          {/* ═══════════════════════════════════════════════════════════════════
+              STEP 1 — Video
+              ═══════════════════════════════════════════════════════════════════ */}
           {step === 1 && (
             <View style={styles.stepView}>
-              <Text style={[styles.stepLabel, { color: colors.foreground }]}>
-                1. Record or Upload Your Video
-              </Text>
+              <Text style={[styles.stepLabel, { color: colors.foreground }]}>1. Record or Upload Your Video</Text>
               <Text style={[styles.stepHint, { color: colors.mutedForeground }]}>
                 60-second limit · Good lighting and clear audio help you stand out.
               </Text>
 
               {videoUri ? (
                 <View style={styles.videoPreviewContainer}>
-                  <Video
-                    source={{ uri: videoUri }}
-                    style={styles.videoPreview}
-                    resizeMode={ResizeMode.COVER}
-                    shouldPlay
-                    isLooping
-                    isMuted={false}
-                  />
-                  <LinearGradient
-                    colors={["transparent", "rgba(5,2,10,0.7)"]}
-                    style={StyleSheet.absoluteFill}
-                    pointerEvents="none"
-                  />
+                  <Video source={{ uri: videoUri }} style={styles.videoPreview} resizeMode={ResizeMode.COVER} shouldPlay isLooping isMuted={false} />
+                  <LinearGradient colors={["transparent", "rgba(5,2,10,0.7)"]} style={StyleSheet.absoluteFill} pointerEvents="none" />
                   <View style={styles.videoMeta}>
                     <Ionicons name="videocam" size={16} color="#fff" />
                     <Text style={styles.videoDuration}>{formatDuration(videoDurationSec)}</Text>
                   </View>
-                  <TouchableOpacity
-                    style={styles.changeVideoBtn}
-                    onPress={handlePickVideo}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={[styles.changeVideoBtnText, { color: colors.primary }]}>
-                      Change video
-                    </Text>
+                  <TouchableOpacity style={styles.changeVideoBtn} onPress={handlePickVideo} activeOpacity={0.8}>
+                    <Text style={[styles.changeVideoBtnText, { color: colors.primary }]}>Change video</Text>
                   </TouchableOpacity>
                 </View>
               ) : (
                 <View style={styles.uploadOptions}>
-                  <TouchableOpacity
-                    style={[
-                      styles.uploadOption,
-                      { backgroundColor: colors.card, borderColor: colors.border },
-                    ]}
-                    activeOpacity={0.8}
-                    onPress={handleRecordVideo}
-                  >
+                  <TouchableOpacity style={[styles.uploadOption, { backgroundColor: colors.card, borderColor: colors.border }]} activeOpacity={0.8} onPress={handleRecordVideo}>
                     <Ionicons name="videocam" size={32} color={colors.primary} />
-                    <Text style={[styles.uploadOptionTitle, { color: colors.foreground }]}>
-                      Record Video
-                    </Text>
-                    <Text style={[styles.uploadOptionSub, { color: colors.mutedForeground }]}>
-                      60 sec
-                    </Text>
+                    <Text style={[styles.uploadOptionTitle, { color: colors.foreground }]}>Record Video</Text>
+                    <Text style={[styles.uploadOptionSub, { color: colors.mutedForeground }]}>60 sec</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[
-                      styles.uploadOption,
-                      { backgroundColor: colors.card, borderColor: colors.border },
-                    ]}
-                    activeOpacity={0.8}
-                    onPress={handlePickVideo}
-                  >
+                  <TouchableOpacity style={[styles.uploadOption, { backgroundColor: colors.card, borderColor: colors.border }]} activeOpacity={0.8} onPress={handlePickVideo}>
                     <Ionicons name="cloud-upload-outline" size={32} color={colors.primary} />
-                    <Text style={[styles.uploadOptionTitle, { color: colors.foreground }]}>
-                      Upload Video
-                    </Text>
-                    <Text style={[styles.uploadOptionSub, { color: colors.mutedForeground }]}>
-                      From library
-                    </Text>
+                    <Text style={[styles.uploadOptionTitle, { color: colors.foreground }]}>Upload Video</Text>
+                    <Text style={[styles.uploadOptionSub, { color: colors.mutedForeground }]}>From library</Text>
                   </TouchableOpacity>
                 </View>
               )}
@@ -841,87 +921,64 @@ export default function PostScreen() {
                 activeOpacity={0.85}
                 disabled={!videoUri}
               >
-                <LinearGradient
-                  colors={["#A855F7", "#EC4899"]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.nextBtnGradient}
-                >
-                  <Text style={styles.nextBtnText}>
-                    {videoUri ? "Continue" : "Select a video first"}
-                  </Text>
+                <LinearGradient colors={["#A855F7", "#EC4899"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.nextBtnGradient}>
+                  <Text style={styles.nextBtnText}>{videoUri ? "Continue" : "Select a video first"}</Text>
                   {videoUri && <Ionicons name="chevron-forward" size={18} color="#fff" />}
                 </LinearGradient>
               </TouchableOpacity>
             </View>
           )}
 
-          {/* ── Step 2: Performance Type ── */}
+          {/* ═══════════════════════════════════════════════════════════════════
+              STEP 2 — Performance Type
+              ═══════════════════════════════════════════════════════════════════ */}
           {step === 2 && (
             <View style={styles.stepView}>
-              <Text style={[styles.stepLabel, { color: colors.foreground }]}>
-                2. What kind of performance is this?
-              </Text>
+              <Text style={[styles.stepLabel, { color: colors.foreground }]}>2. What kind of performance is this?</Text>
               {(["original", "cover", "freestyle"] as PerformanceType[]).map((type) => (
                 <TouchableOpacity
                   key={type}
-                  onPress={() => {
-                    setPerformanceType(type);
-                    Haptics.selectionAsync();
-                  }}
-                  style={[
-                    styles.typeOption,
-                    {
-                      backgroundColor:
-                        performanceType === type ? `${colors.primary}20` : colors.card,
-                      borderColor: performanceType === type ? colors.primary : colors.border,
-                    },
-                  ]}
+                  onPress={() => { setPerformanceType(type); Haptics.selectionAsync(); }}
+                  style={[styles.typeOption, { backgroundColor: performanceType === type ? `${colors.primary}20` : colors.card, borderColor: performanceType === type ? colors.primary : colors.border }]}
                   activeOpacity={0.8}
                 >
-                  <Ionicons
-                    name={
-                      type === "original" ? "musical-notes" : type === "cover" ? "copy" : "mic"
-                    }
-                    size={22}
-                    color={performanceType === type ? colors.primary : colors.mutedForeground}
-                  />
+                  <Ionicons name={type === "original" ? "musical-notes" : type === "cover" ? "copy" : "mic"} size={22} color={performanceType === type ? colors.primary : colors.mutedForeground} />
                   <View style={styles.typeOptionText}>
-                    <Text
-                      style={[
-                        styles.typeTitle,
-                        {
-                          color:
-                            performanceType === type ? colors.primary : colors.foreground,
-                        },
-                      ]}
-                    >
+                    <Text style={[styles.typeTitle, { color: performanceType === type ? colors.primary : colors.foreground }]}>
                       {type.charAt(0).toUpperCase() + type.slice(1)}
                     </Text>
                     <Text style={[styles.typeSub, { color: colors.mutedForeground }]}>
-                      {type === "original"
-                        ? "Your own composition"
-                        : type === "cover"
-                          ? "Someone else's song"
-                          : "Improvised performance"}
+                      {type === "original" ? "Your own composition" : type === "cover" ? "Someone else's song" : "Improvised performance"}
                     </Text>
                   </View>
-                  {performanceType === type && (
-                    <Ionicons name="checkmark-circle" size={22} color={colors.primary} />
-                  )}
+                  {performanceType === type && <Ionicons name="checkmark-circle" size={22} color={colors.primary} />}
                 </TouchableOpacity>
               ))}
+
+              {/* Cover hint about AI */}
+              {performanceType === "cover" && (
+                <View style={[styles.aiHintCard, { backgroundColor: `${colors.primary}10`, borderColor: `${colors.primary}30` }]}>
+                  <MaterialCommunityIcons name="magic-staff" size={16} color={colors.primary} />
+                  <Text style={[styles.aiHintText, { color: colors.mutedForeground }]}>
+                    We'll analyze your recording to detect the song and sync lyrics automatically.
+                  </Text>
+                </View>
+              )}
+
               <TouchableOpacity
-                onPress={() => setStep(3)}
+                onPress={() => {
+                  if (performanceType === "cover") {
+                    setStep(3);
+                    // Start analysis immediately
+                    handleStartAnalysis();
+                  } else {
+                    setStep(4);
+                  }
+                }}
                 style={styles.nextBtn}
                 activeOpacity={0.85}
               >
-                <LinearGradient
-                  colors={["#A855F7", "#EC4899"]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.nextBtnGradient}
-                >
+                <LinearGradient colors={["#A855F7", "#EC4899"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.nextBtnGradient}>
                   <Text style={styles.nextBtnText}>Continue</Text>
                   <Ionicons name="chevron-forward" size={18} color="#fff" />
                 </LinearGradient>
@@ -929,48 +986,257 @@ export default function PostScreen() {
             </View>
           )}
 
-          {/* ── Step 3: Song Tagging (all performance types) ── */}
-          {step === 3 && (
+          {/* ═══════════════════════════════════════════════════════════════════
+              STEP 3 — AI Analysis (cover only)
+              Sub-phases: upload → polling → confirming
+              ═══════════════════════════════════════════════════════════════════ */}
+          {step === 3 && performanceType === "cover" && (
+            <View style={styles.stepView}>
+
+              {/* ── Phase: upload ── */}
+              {(analysisPhase === "upload" || analysisPhase === "idle") && (
+                <>
+                  <Text style={[styles.stepLabel, { color: colors.foreground }]}>Preparing your recording…</Text>
+                  <Text style={[styles.stepHint, { color: colors.mutedForeground }]}>
+                    Uploading your video for AI analysis. This usually takes 10–30 seconds.
+                  </Text>
+
+                  {analysisError ? (
+                    <View style={[styles.errorCard, { backgroundColor: "rgba(239,68,68,0.1)", borderColor: "rgba(239,68,68,0.3)" }]}>
+                      <Ionicons name="alert-circle-outline" size={16} color="#EF4444" />
+                      <Text style={[styles.stepHint, { color: "#EF4444" }]}>{analysisError}</Text>
+                    </View>
+                  ) : (
+                    <View style={[styles.uploadProgressCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                      <Text style={[styles.uploadProgressLabel, { color: colors.mutedForeground }]}>
+                        {earlyUploadProgress === 0 ? "Preparing video…"
+                          : earlyUploadProgress < 95 ? `Uploading… ${earlyUploadProgress}%`
+                          : "Finishing upload…"}
+                      </Text>
+                      <View style={[styles.uploadProgressTrack, { backgroundColor: colors.muted }]}>
+                        <View style={[styles.uploadProgressFill, { width: `${earlyUploadProgress}%`, backgroundColor: colors.primary }]} />
+                      </View>
+                    </View>
+                  )}
+
+                  <View style={styles.skipRow}>
+                    <TouchableOpacity onPress={handleSkipAnalysis} activeOpacity={0.7}>
+                      <Text style={[styles.skipLink, { color: colors.mutedForeground }]}>Skip analysis → search manually</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {analysisError && (
+                    <TouchableOpacity onPress={() => { setAnalysisError(null); handleStartAnalysis(); }} style={styles.nextBtn} activeOpacity={0.85}>
+                      <LinearGradient colors={["#A855F7", "#EC4899"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.nextBtnGradient}>
+                        <Text style={styles.nextBtnText}>Retry</Text>
+                      </LinearGradient>
+                    </TouchableOpacity>
+                  )}
+                </>
+              )}
+
+              {/* ── Phase: polling ── */}
+              {analysisPhase === "polling" && (
+                <>
+                  <Text style={[styles.stepLabel, { color: colors.foreground }]}>Analyzing your performance…</Text>
+                  <Text style={[styles.stepHint, { color: colors.mutedForeground }]}>
+                    Our AI is listening to your recording. This takes about 30–60 seconds.
+                  </Text>
+
+                  {/* Stage card */}
+                  <View style={[styles.stageCard, { backgroundColor: colors.card, borderColor: `${colors.primary}40` }]}>
+                    <ActivityIndicator color={colors.primary} size="small" />
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.stageLabel, { color: colors.foreground }]}>
+                        {STAGE_LABELS[analysisStage] ?? analysisStage}
+                      </Text>
+                      <View style={[styles.stageProgressTrack, { backgroundColor: colors.muted }]}>
+                        <View style={[styles.stageProgressFill, { width: `${analysisProgress}%`, backgroundColor: colors.primary }]} />
+                      </View>
+                    </View>
+                  </View>
+
+                  {/* Stage checklist */}
+                  <View style={[styles.stageChecklist, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                    {[
+                      { key: "preparing", label: "Preparing audio" },
+                      { key: "isolating_vocals", label: "Isolating vocals" },
+                      { key: "transcribing", label: "Listening to performance" },
+                      { key: "searching_musixmatch", label: "Searching for song" },
+                      { key: "matching_lyrics", label: "Matching lyrics" },
+                    ].map(({ key, label }) => {
+                      const stageOrder = ["preparing", "isolating_vocals", "transcribing", "searching_musixmatch", "matching_lyrics", "analyzing_audio", "aligning_timing"];
+                      const currentIdx = stageOrder.indexOf(analysisStage);
+                      const itemIdx = stageOrder.indexOf(key);
+                      const isDone = currentIdx > itemIdx;
+                      const isActive = currentIdx === itemIdx;
+                      // Only show isolating_vocals if it became the active stage
+                      if (key === "isolating_vocals" && !isDone && !isActive) return null;
+                      return (
+                        <View key={key} style={styles.stageCheckItem}>
+                          <Ionicons
+                            name={isDone ? "checkmark-circle" : isActive ? "radio-button-on" : "ellipse-outline"}
+                            size={16}
+                            color={isDone ? "#22C55E" : isActive ? colors.primary : colors.border}
+                          />
+                          <Text style={[styles.stageCheckLabel, { color: isDone ? "#22C55E" : isActive ? colors.foreground : colors.mutedForeground }]}>
+                            {label}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+
+                  <TouchableOpacity onPress={handleSkipAnalysis} activeOpacity={0.7} style={styles.skipRow}>
+                    <Text style={[styles.skipLink, { color: colors.mutedForeground }]}>Skip — search manually instead</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+
+              {/* ── Phase: confirming ── */}
+              {analysisPhase === "confirming" && analysisResult && (
+                <>
+                  <Text style={[styles.stepLabel, { color: colors.foreground }]}>Song Detected</Text>
+
+                  {/* High/Medium confidence: show main match */}
+                  {analysisResult.detectedTrackId && (analysisResult.songMatchConfidence ?? 0) >= 0.4 && (
+                    <>
+                      <View style={[styles.songConfirmCard, { backgroundColor: colors.card, borderColor: `${colors.primary}40` }]}>
+                        {analysisResult.detectedAlbumArt ? (
+                          <Image source={{ uri: analysisResult.detectedAlbumArt }} style={styles.albumArt} />
+                        ) : (
+                          <View style={[styles.albumArtPlaceholder, { backgroundColor: `${colors.primary}20` }]}>
+                            <Ionicons name="musical-notes" size={32} color={colors.primary} />
+                          </View>
+                        )}
+                        <View style={{ flex: 1, gap: 4 }}>
+                          <Text style={[styles.confirmedTrackTitle, { color: colors.foreground }]} numberOfLines={2}>
+                            {analysisResult.detectedTrackTitle}
+                          </Text>
+                          <Text style={[styles.confirmedTrackArtist, { color: colors.mutedForeground }]} numberOfLines={1}>
+                            {analysisResult.detectedTrackArtist}
+                          </Text>
+                          {analysisResult.songMatchConfidence !== undefined && (
+                            <View style={[styles.confidenceBadge, { backgroundColor: `${confidenceLabel(analysisResult.songMatchConfidence).color}20` }]}>
+                              <Text style={[styles.confidenceBadgeText, { color: confidenceLabel(analysisResult.songMatchConfidence).color }]}>
+                                {confidenceLabel(analysisResult.songMatchConfidence).label}
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+                      </View>
+
+                      <View style={[styles.musixmatchBadge, { backgroundColor: "rgba(255,191,0,0.12)", borderColor: "rgba(255,191,0,0.35)" }]}>
+                        <MaterialCommunityIcons name="music-note" size={13} color="#FFBF00" />
+                        <Text style={[styles.musixmatchText, { color: "#CC9A00" }]}>Powered by Musixmatch</Text>
+                      </View>
+
+                      <TouchableOpacity
+                        onPress={() => {
+                          handleConfirmSong({
+                            trackId: analysisResult.detectedTrackId!,
+                            trackTitle: analysisResult.detectedTrackTitle ?? "",
+                            artistName: analysisResult.detectedTrackArtist ?? "",
+                            albumArt: analysisResult.detectedAlbumArt,
+                          });
+                        }}
+                        style={styles.nextBtn}
+                        activeOpacity={0.85}
+                      >
+                        <LinearGradient colors={["#A855F7", "#EC4899"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.nextBtnGradient}>
+                          <Ionicons name="checkmark-circle" size={18} color="#fff" />
+                          <Text style={styles.nextBtnText}>Yes, that's the song</Text>
+                        </LinearGradient>
+                      </TouchableOpacity>
+                    </>
+                  )}
+
+                  {/* Medium confidence: also show top candidates */}
+                  {(analysisResult.songMatchConfidence ?? 0) >= 0.4 &&
+                    (analysisResult.songMatchConfidence ?? 0) < 0.7 &&
+                    (analysisResult.topCandidates ?? []).length > 1 && (
+                    <>
+                      <Text style={[styles.stepHint, { color: colors.mutedForeground, marginTop: 4 }]}>
+                        Or choose from other matches:
+                      </Text>
+                      {(analysisResult.topCandidates ?? []).slice(1, 4).map((c: AnalysisCandidate) => (
+                        <TouchableOpacity
+                          key={c.trackId}
+                          onPress={() => handleConfirmSong(c)}
+                          style={[styles.candidateRow, { backgroundColor: colors.card, borderColor: colors.border }]}
+                          activeOpacity={0.8}
+                        >
+                          <Ionicons name="musical-notes" size={16} color={colors.primary} />
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.candidateTitle, { color: colors.foreground }]} numberOfLines={1}>{c.trackTitle}</Text>
+                            <Text style={[styles.candidateArtist, { color: colors.mutedForeground }]} numberOfLines={1}>{c.artistName}</Text>
+                          </View>
+                        </TouchableOpacity>
+                      ))}
+                    </>
+                  )}
+
+                  {/* Low / no confidence */}
+                  {(!analysisResult.detectedTrackId || (analysisResult.songMatchConfidence ?? 0) < 0.4) && (
+                    <View style={[styles.noMatchCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                      <Ionicons name="search-outline" size={32} color={colors.mutedForeground} />
+                      <Text style={[styles.noMatchTitle, { color: colors.foreground }]}>Couldn't identify the song</Text>
+                      <Text style={[styles.noMatchSub, { color: colors.mutedForeground }]}>
+                        You can search manually or post without song tagging.
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* Always show "Not this song" / manual search option */}
+                  <View style={styles.confirmActions}>
+                    <TouchableOpacity
+                      onPress={handleSkipAnalysis}
+                      style={[styles.secondaryBtn, { borderColor: colors.border }]}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.secondaryBtnText, { color: colors.mutedForeground }]}>
+                        {analysisResult.detectedTrackId ? "Not this song" : "Search manually"}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => { setAnalysisPhase("skipped"); setStep(7); }}
+                      style={[styles.secondaryBtn, { borderColor: colors.border }]}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.secondaryBtnText, { color: colors.mutedForeground }]}>Skip lyrics</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+            </View>
+          )}
+
+          {/* ═══════════════════════════════════════════════════════════════════
+              STEP 4 — Manual Song Search
+              ═══════════════════════════════════════════════════════════════════ */}
+          {step === 4 && (
             <View style={styles.stepView}>
               <Text style={[styles.stepLabel, { color: colors.foreground }]}>
                 {performanceType === "cover" ? "3. Tag the Song" : "3. Tag Inspiration or Backing Track"}
               </Text>
               {performanceType !== "cover" && (
                 <Text style={[styles.stepHint, { color: colors.mutedForeground }]}>
-                  Optional — tag a song that inspired this performance, a backing track, or a sample. This helps with discoverability.
+                  Optional — tag a song that inspired this performance. This helps with discoverability.
                 </Text>
               )}
-              <View
-                style={[
-                  styles.musixmatchBadge,
-                  {
-                    backgroundColor: "rgba(255,191,0,0.12)",
-                    borderColor: "rgba(255,191,0,0.35)",
-                  },
-                ]}
-              >
+
+              <View style={[styles.musixmatchBadge, { backgroundColor: "rgba(255,191,0,0.12)", borderColor: "rgba(255,191,0,0.35)" }]}>
                 <MaterialCommunityIcons name="music-note" size={13} color="#FFBF00" />
-                <Text style={[styles.musixmatchText, { color: "#CC9A00" }]}>
-                  Powered by Musixmatch
-                </Text>
+                <Text style={[styles.musixmatchText, { color: "#CC9A00" }]}>Powered by Musixmatch</Text>
               </View>
-              <View
-                style={[
-                  styles.songSearchBar,
-                  { backgroundColor: colors.muted, borderColor: colors.border },
-                ]}
-              >
+
+              <View style={[styles.songSearchBar, { backgroundColor: colors.muted, borderColor: colors.border }]}>
                 <Ionicons name="search" size={16} color={colors.mutedForeground} />
                 <TextInput
                   value={songQuery}
                   onChangeText={(text) => {
                     setSongQuery(text);
-                    if (!text.trim()) {
-                      setSongResults([]);
-                      setSongSearchError(false);
-                      setHasSearched(false);
-                      setSongSearchSource(null);
-                    }
+                    if (!text.trim()) { setSongResults([]); setSongSearchError(false); setHasSearched(false); setSongSearchSource(null); }
                   }}
                   placeholder="Search song title or artist"
                   placeholderTextColor={colors.mutedForeground}
@@ -978,42 +1244,28 @@ export default function PostScreen() {
                   returnKeyType="search"
                   onSubmitEditing={handleSongSearch}
                 />
-                <TouchableOpacity
-                  onPress={handleSongSearch}
-                  activeOpacity={0.7}
-                  disabled={isSongSearching}
-                >
+                <TouchableOpacity onPress={handleSongSearch} activeOpacity={0.7} disabled={isSongSearching}>
                   {isSongSearching ? (
                     <ActivityIndicator size="small" color={colors.primary} />
                   ) : (
-                    <Text style={[styles.searchBtn, { color: isSongSearching ? colors.mutedForeground : colors.primary }]}>Search</Text>
+                    <Text style={[styles.searchBtn, { color: colors.primary }]}>Search</Text>
                   )}
                 </TouchableOpacity>
               </View>
 
-              {/* Error state */}
               {songSearchError && !selectedSong && (
                 <View style={[styles.searchStateBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
                   <Ionicons name="alert-circle-outline" size={28} color="#EF4444" />
-                  <Text style={[styles.searchStateTitle, { color: colors.foreground }]}>
-                    Song search is temporarily unavailable.
-                  </Text>
-                  <Text style={[styles.searchStateSub, { color: colors.mutedForeground }]}>
-                    You can retry or continue without tagging a song.
-                  </Text>
+                  <Text style={[styles.searchStateTitle, { color: colors.foreground }]}>Song search is temporarily unavailable.</Text>
+                  <Text style={[styles.searchStateSub, { color: colors.mutedForeground }]}>You can retry or continue without tagging a song.</Text>
                   <View style={styles.searchStateActions}>
-                    <TouchableOpacity
-                      onPress={handleSongSearch}
-                      style={[styles.searchStateBtn, { borderColor: colors.primary }]}
-                      activeOpacity={0.8}
-                    >
+                    <TouchableOpacity onPress={handleSongSearch} style={[styles.searchStateBtn, { borderColor: colors.primary }]} activeOpacity={0.8}>
                       <Text style={[styles.searchStateBtnText, { color: colors.primary }]}>Retry</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                       onPress={() => {
                         setSongSearchError(false);
-                        if (performanceType === "cover") setStep(4);
-                        else setStep(6);
+                        if (performanceType === "cover") setStep(5); else setStep(7);
                       }}
                       style={[styles.searchStateBtn, { borderColor: colors.border }]}
                       activeOpacity={0.8}
@@ -1025,98 +1277,45 @@ export default function PostScreen() {
               )}
 
               {selectedSong && (
-                <View
-                  style={[
-                    styles.selectedSong,
-                    {
-                      backgroundColor: `${colors.primary}15`,
-                      borderColor: `${colors.primary}40`,
-                    },
-                  ]}
-                >
+                <View style={[styles.selectedSong, { backgroundColor: `${colors.primary}15`, borderColor: `${colors.primary}40` }]}>
                   <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
                   <View style={styles.selectedSongInfo}>
-                    <Text style={[styles.selectedSongTitle, { color: colors.foreground }]}>
-                      {selectedSong.track_name}
-                    </Text>
-                    <Text style={[styles.selectedSongArtist, { color: colors.mutedForeground }]}>
-                      {selectedSong.artist_name}
-                    </Text>
+                    <Text style={[styles.selectedSongTitle, { color: colors.foreground }]}>{selectedSong.track_name}</Text>
+                    <Text style={[styles.selectedSongArtist, { color: colors.mutedForeground }]}>{selectedSong.artist_name}</Text>
                   </View>
-                  <TouchableOpacity
-                    onPress={() => {
-                      setSelectedSong(null);
-                      setSelectedSection(null);
-                      setSections([]);
-                      setNoSyncedLyrics(false);
-                      setNoLyricsMode(false);
-                      setIsManualLyricMode(false);
-                      setSectionTimingMode(null);
-                    }}
-                    activeOpacity={0.7}
-                  >
+                  <TouchableOpacity onPress={() => { setSelectedSong(null); setFullLyrics(null); setNoLyricsMode(false); }} activeOpacity={0.7}>
                     <Ionicons name="close" size={18} color={colors.mutedForeground} />
                   </TouchableOpacity>
                 </View>
               )}
 
-              {/* Results list */}
               {songResults.length > 0 && !selectedSong && !songSearchError && (
                 <View style={{ position: "relative" }}>
-                  {/* Source badge */}
                   <View style={styles.sourceBadgeRow}>
-                    <View style={[
-                      styles.sourceBadge,
-                      {
-                        backgroundColor: songSearchSource === "musixmatch" ? "rgba(255,191,0,0.12)" : "rgba(168,85,247,0.12)",
-                        borderColor: songSearchSource === "musixmatch" ? "rgba(255,191,0,0.35)" : "rgba(168,85,247,0.35)",
-                      },
-                    ]}>
-                      <MaterialCommunityIcons
-                        name={songSearchSource === "musixmatch" ? "music-note" : "database"}
-                        size={11}
-                        color={songSearchSource === "musixmatch" ? "#CC9A00" : "#A855F7"}
-                      />
+                    <View style={[styles.sourceBadge, {
+                      backgroundColor: songSearchSource === "musixmatch" ? "rgba(255,191,0,0.12)" : "rgba(168,85,247,0.12)",
+                      borderColor: songSearchSource === "musixmatch" ? "rgba(255,191,0,0.35)" : "rgba(168,85,247,0.35)",
+                    }]}>
+                      <MaterialCommunityIcons name={songSearchSource === "musixmatch" ? "music-note" : "database"} size={11} color={songSearchSource === "musixmatch" ? "#CC9A00" : "#A855F7"} />
                       <Text style={[styles.sourceBadgeText, { color: songSearchSource === "musixmatch" ? "#CC9A00" : "#A855F7" }]}>
                         {songSearchSource === "musixmatch" ? "Musixmatch" : "Demo"}
                       </Text>
                     </View>
                   </View>
-                  <View
-                    style={[
-                      styles.songResultsList,
-                      { borderColor: colors.border, opacity: isSongSearching ? 0.45 : 1 },
-                    ]}
-                  >
+                  <View style={[styles.songResultsList, { borderColor: colors.border, opacity: isSongSearching ? 0.45 : 1 }]}>
                     {songResults.map((track) => (
                       <TouchableOpacity
                         key={track.track_id}
-                        onPress={() => {
-                          setSelectedSong(track);
-                          setSongResults([]);
-                          setSelectedSection(null);
-                          setSections([]);
-                          setIsManualLyricMode(false);
-                          setSectionTimingMode(null);
-                        }}
+                        onPress={() => { setSelectedSong(track); setSongResults([]); setFullLyrics(null); setNoLyricsMode(false); }}
                         style={[styles.songResultRow, { borderBottomColor: colors.border }]}
                         activeOpacity={0.8}
                         disabled={isSongSearching}
                       >
                         <Ionicons name="musical-notes" size={16} color={colors.primary} />
                         <View style={styles.songResultInfo}>
-                          <Text
-                            style={[styles.songResultTitle, { color: colors.foreground }]}
-                            numberOfLines={1}
-                          >
-                            {track.track_name}
-                          </Text>
-                          <Text
-                            style={[styles.songResultArtist, { color: colors.mutedForeground }]}
-                            numberOfLines={1}
-                          >
-                            {track.artist_name}
-                            {track.album_name ? ` · ${track.album_name}` : ""}
+                          <Text style={[styles.songResultTitle, { color: colors.foreground }]} numberOfLines={1}>{track.track_name}</Text>
+                          <Text style={[styles.songResultArtist, { color: colors.mutedForeground }]} numberOfLines={1}>
+                            {track.artist_name}{track.album_name ? ` · ${track.album_name}` : ""}
                           </Text>
                         </View>
                         <Ionicons name="add-circle-outline" size={20} color={colors.primary} />
@@ -1124,48 +1323,30 @@ export default function PostScreen() {
                     ))}
                   </View>
                   {isSongSearching && (
-                    <View style={styles.songResultsLoadingOverlay}>
-                      <ActivityIndicator size="small" color={colors.primary} />
-                    </View>
+                    <View style={styles.songResultsLoadingOverlay}><ActivityIndicator size="small" color={colors.primary} /></View>
                   )}
                 </View>
               )}
 
-              {/* Empty results state */}
               {hasSearched && songResults.length === 0 && !selectedSong && !songSearchError && !isSongSearching && (
                 <View style={[styles.searchStateBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
                   <Ionicons name="search-outline" size={28} color={colors.mutedForeground} />
-                  <Text style={[styles.searchStateTitle, { color: colors.foreground }]}>
-                    No matching tracks found.
-                  </Text>
-                  <Text style={[styles.searchStateSub, { color: colors.mutedForeground }]}>
-                    Try a song title or artist name.
-                  </Text>
+                  <Text style={[styles.searchStateTitle, { color: colors.foreground }]}>No matching tracks found.</Text>
+                  <Text style={[styles.searchStateSub, { color: colors.mutedForeground }]}>Try a song title or artist name.</Text>
                 </View>
               )}
+
               <TouchableOpacity
                 onPress={() => {
-                  if (performanceType === "cover" && selectedSong) {
-                    setStep(4);
-                  } else {
-                    setStep(6);
-                  }
+                  if (performanceType === "cover" && selectedSong) { setStep(5); }
+                  else { setStep(7); }
                 }}
-                style={[styles.nextBtn, { marginTop: 16 }]}
+                style={[styles.nextBtn, { marginTop: 8 }]}
                 activeOpacity={0.85}
               >
-                <LinearGradient
-                  colors={["#A855F7", "#EC4899"]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.nextBtnGradient}
-                >
+                <LinearGradient colors={["#A855F7", "#EC4899"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.nextBtnGradient}>
                   <Text style={styles.nextBtnText}>
-                    {performanceType === "cover" && selectedSong
-                      ? "Choose Lyric Section"
-                      : selectedSong
-                        ? "Continue"
-                        : "Skip"}
+                    {performanceType === "cover" && selectedSong ? "Choose Lyrics" : selectedSong ? "Continue" : "Skip"}
                   </Text>
                   <Ionicons name="chevron-forward" size={18} color="#fff" />
                 </LinearGradient>
@@ -1173,206 +1354,147 @@ export default function PostScreen() {
             </View>
           )}
 
-          {/* ── Step 4: Choose Lyric Section (cover + song only) ── */}
-          {step === 4 && performanceType === "cover" && selectedSong && (
+          {/* ═══════════════════════════════════════════════════════════════════
+              STEP 5 — Lyric Range Editor (cover + song only)
+              ═══════════════════════════════════════════════════════════════════ */}
+          {step === 5 && performanceType === "cover" && selectedSong && (
             <View style={styles.stepView}>
-              <Text style={[styles.stepLabel, { color: colors.foreground }]}>
-                3.5 — Choose a Lyric Section
-              </Text>
+              <Text style={[styles.stepLabel, { color: colors.foreground }]}>3.5 — Choose Your Lyric Range</Text>
               <Text style={[styles.stepHint, { color: colors.mutedForeground }]}>
-                Pick the part of the song you performed. Viewers will see synced lyrics as your video plays.
+                {analysisResult?.startLineIndex !== undefined
+                  ? "We detected the part you performed. Tap lines to adjust the range."
+                  : "Select the part of the song you sang. Tap a line to set the start or end of your range."}
               </Text>
 
-              <View
-                style={[
-                  styles.songRefCard,
-                  { backgroundColor: `${colors.primary}10`, borderColor: `${colors.primary}30` },
-                ]}
-              >
+              {/* Song reference pill */}
+              <View style={[styles.songRefCard, { backgroundColor: `${colors.primary}10`, borderColor: `${colors.primary}30` }]}>
                 <Ionicons name="musical-notes" size={16} color={colors.primary} />
-                <Text style={[styles.songRefTitle, { color: colors.foreground }]} numberOfLines={1}>
-                  {selectedSong.track_name}
-                </Text>
-                <Text style={[styles.songRefArtist, { color: colors.mutedForeground }]}>
-                  {selectedSong.artist_name}
-                </Text>
+                <Text style={[styles.songRefTitle, { color: colors.foreground }]} numberOfLines={1}>{selectedSong.track_name}</Text>
+                <Text style={[styles.songRefArtist, { color: colors.mutedForeground }]}>{selectedSong.artist_name}</Text>
               </View>
 
-              {sectionsLoading && (
+              {fullLyricsLoading && (
                 <View style={styles.centeredRow}>
                   <ActivityIndicator color={colors.primary} size="small" />
-                  <Text style={[styles.stepHint, { color: colors.mutedForeground }]}>
-                    Loading sections…
-                  </Text>
+                  <Text style={[styles.stepHint, { color: colors.mutedForeground }]}>Loading lyrics…</Text>
                 </View>
               )}
 
-              {sectionsError && !sectionsLoading && (
-                <View
-                  style={[
-                    styles.errorCard,
-                    { backgroundColor: "rgba(239,68,68,0.1)", borderColor: "rgba(239,68,68,0.3)" },
-                  ]}
-                >
-                  <Ionicons name="alert-circle-outline" size={16} color="#EF4444" />
-                  <Text style={[styles.stepHint, { color: "#EF4444" }]}>
-                    {sectionsError} — using Full Track.
-                  </Text>
-                </View>
-              )}
-
-              {/* Lyric status notice — different message for plain vs unavailable */}
-              {noSyncedLyrics && !sectionsLoading && (
-                <View
-                  style={[
-                    styles.noSyncCard,
-                    {
-                      backgroundColor: isManualLyricMode
-                        ? "rgba(99,102,241,0.08)"
-                        : "rgba(255,191,0,0.08)",
-                      borderColor: isManualLyricMode
-                        ? "rgba(99,102,241,0.30)"
-                        : "rgba(255,191,0,0.30)",
-                    },
-                  ]}
-                >
-                  <MaterialCommunityIcons
-                    name={isManualLyricMode ? "text" : "music-note-off"}
-                    size={18}
-                    color={isManualLyricMode ? "#6366F1" : "#CC9A00"}
-                  />
+              {!fullLyricsLoading && !fullLyrics && (
+                <View style={[styles.noSyncCard, { backgroundColor: "rgba(255,191,0,0.08)", borderColor: "rgba(255,191,0,0.30)" }]}>
+                  <MaterialCommunityIcons name="music-note-off" size={18} color="#CC9A00" />
                   <Text style={[styles.noSyncText, { color: colors.mutedForeground }]}>
-                    {isManualLyricMode
-                      ? "Timing unavailable — lyrics will display without automatic synchronization. Select a section below."
-                      : "Lyrics are unavailable for this track — you can still post without a lyric overlay."}
+                    Lyrics are unavailable for this track — you can still post without a lyric overlay.
                   </Text>
                 </View>
               )}
 
-              {/* "No lyrics needed" skip option — always visible */}
-              {!sectionsLoading && (
-                <TouchableOpacity
-                  onPress={() => {
-                    setNoLyricsMode(true);
-                    setSelectedSection(null);
-                  }}
-                  style={[
-                    styles.sectionCard,
-                    {
-                      backgroundColor: noLyricsMode
-                        ? `${colors.muted}60`
-                        : colors.card,
-                      borderColor: noLyricsMode ? colors.mutedForeground : colors.border,
-                    },
-                  ]}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons
-                    name="close-circle-outline"
-                    size={20}
-                    color={noLyricsMode ? colors.mutedForeground : colors.foreground}
-                  />
-                  <View style={{ flex: 1, marginLeft: 8 }}>
-                    <Text
-                      style={[
-                        styles.sectionLabel,
-                        { color: noLyricsMode ? colors.mutedForeground : colors.foreground },
-                      ]}
+              {/* Range stats bar */}
+              {fullLyrics && !noLyricsMode && (
+                <View style={[styles.rangeStatsBar, { backgroundColor: `${colors.primary}12`, borderColor: `${colors.primary}30` }]}>
+                  <MaterialCommunityIcons name="format-list-text" size={14} color={colors.primary} />
+                  <Text style={[styles.rangeStatText, { color: colors.primary }]}>
+                    {selectedLineCount} line{selectedLineCount !== 1 ? "s" : ""} selected
+                    {estimatedDurationSec !== null ? ` · ~${estimatedDurationSec}s` : ""}
+                  </Text>
+                  {analysisResult?.startLineIndex !== undefined && (
+                    <TouchableOpacity
+                      onPress={() => {
+                        setLyricRangeStartLine(analysisResult.startLineIndex!);
+                        setLyricRangeEndLine(analysisResult.endLineIndex!);
+                      }}
+                      activeOpacity={0.7}
                     >
-                      No lyrics needed
-                    </Text>
-                    <Text style={[styles.sectionMeta, { color: colors.mutedForeground }]}>
-                      Post without lyric overlay
-                    </Text>
-                  </View>
-                  {noLyricsMode && (
-                    <Ionicons name="checkmark-circle" size={20} color={colors.mutedForeground} />
+                      <Text style={[styles.rangeResetBtn, { color: colors.primary }]}>Use AI range</Text>
+                    </TouchableOpacity>
                   )}
-                </TouchableOpacity>
+                </View>
               )}
 
-              {/* Section cards from Musixmatch */}
-              {!sectionsLoading &&
-                sections.map((seg) => (
-                  <TouchableOpacity
-                    key={seg.id}
-                    onPress={() => {
-                      setSelectedSection(seg);
-                      setNoLyricsMode(false);
-                    }}
-                    style={[
-                      styles.sectionCard,
-                      {
-                        backgroundColor:
-                          selectedSection?.id === seg.id
-                            ? `${colors.primary}18`
-                            : colors.card,
-                        borderColor:
-                          selectedSection?.id === seg.id
-                            ? colors.primary
-                            : colors.border,
-                      },
-                    ]}
-                    activeOpacity={0.8}
-                  >
-                    <View style={{ flex: 1 }}>
-                      <Text
+              {/* Scrollable lyric list */}
+              {fullLyrics && fullLyrics.length > 0 && !noLyricsMode && (
+                <View style={[styles.lyricRangeList, { borderColor: colors.border, backgroundColor: colors.card }]}>
+                  <Text style={[styles.lyricRangeListHint, { color: colors.mutedForeground }]}>
+                    Tap to expand · tap selected edge to contract
+                  </Text>
+                  {fullLyrics.map((line, idx) => {
+                    const isSelected = idx >= lyricRangeStartLine && idx <= lyricRangeEndLine;
+                    const isStartEdge = idx === lyricRangeStartLine;
+                    const isEndEdge = idx === lyricRangeEndLine;
+
+                    return (
+                      <TouchableOpacity
+                        key={idx}
+                        onPress={() => {
+                          if (idx < lyricRangeStartLine) {
+                            setLyricRangeStartLine(idx);
+                          } else if (idx > lyricRangeEndLine) {
+                            setLyricRangeEndLine(idx);
+                          } else if (isStartEdge && lyricRangeStartLine < lyricRangeEndLine) {
+                            setLyricRangeStartLine(lyricRangeStartLine + 1);
+                          } else if (isEndEdge && lyricRangeEndLine > lyricRangeStartLine) {
+                            setLyricRangeEndLine(lyricRangeEndLine - 1);
+                          }
+                        }}
                         style={[
-                          styles.sectionLabel,
-                          {
-                            color:
-                              selectedSection?.id === seg.id
-                                ? colors.primary
-                                : colors.foreground,
-                          },
+                          styles.lyricRangeRow,
+                          { borderTopColor: colors.border },
+                          isSelected && { backgroundColor: `${colors.primary}14` },
+                          isStartEdge && { borderTopLeftRadius: 6, borderTopRightRadius: 6 },
+                          isEndEdge && { borderBottomLeftRadius: 6, borderBottomRightRadius: 6 },
                         ]}
+                        activeOpacity={0.7}
                       >
-                        {seg.label}
-                      </Text>
-                      <Text style={[styles.sectionMeta, { color: colors.mutedForeground }]}>
-                        {seg.startMs !== null && seg.endMs !== null
-                          ? `${fmtMs(seg.startMs)} – ${seg.endMs >= 999999 ? "end" : fmtMs(seg.endMs)}`
-                          : `Lines ${seg.startLineIndex + 1}–${seg.endLineIndex + 1}`}
-                        {seg.lineCount > 0 ? ` · ${seg.lineCount} lines` : ""}
-                      </Text>
-                      {sectionPreviews[seg.id] ? (
+                        {isStartEdge && (
+                          <View style={[styles.rangeHandle, { backgroundColor: colors.primary }]}>
+                            <Ionicons name="arrow-up" size={10} color="#fff" />
+                          </View>
+                        )}
+                        {isEndEdge && !isStartEdge && (
+                          <View style={[styles.rangeHandle, styles.rangeHandleBottom, { backgroundColor: colors.primary }]}>
+                            <Ionicons name="arrow-down" size={10} color="#fff" />
+                          </View>
+                        )}
                         <Text
-                          style={[styles.sectionPreview, { color: colors.mutedForeground }]}
-                          numberOfLines={1}
+                          style={[
+                            styles.lyricRangeLineText,
+                            { color: isSelected ? colors.foreground : colors.mutedForeground },
+                            isSelected && { fontWeight: "600" },
+                          ]}
                         >
-                          "{sectionPreviews[seg.id]}"
+                          {line.text || "♪"}
                         </Text>
-                      ) : null}
-                    </View>
-                    {selectedSection?.id === seg.id && (
-                      <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
-                    )}
-                  </TouchableOpacity>
-                ))}
+                        {line.startMs !== null && (
+                          <Text style={[styles.lyricRangeLineTime, { color: colors.mutedForeground }]}>
+                            {fmtMs(line.startMs!)}
+                          </Text>
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
+
+              {/* Actions */}
+              <TouchableOpacity
+                onPress={() => { setNoLyricsMode(true); setStep(7); }}
+                style={[styles.secondaryBtn, { borderColor: colors.border, alignSelf: "center" }]}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.secondaryBtnText, { color: colors.mutedForeground }]}>Continue without lyrics</Text>
+              </TouchableOpacity>
 
               <TouchableOpacity
                 onPress={() => {
-                  if (noLyricsMode || skipTimingStep) {
-                    setStep(6);
-                  } else {
-                    setStep(5);
-                  }
+                  if (skipTimingStep) { setStep(7); } else { setStep(6); }
                 }}
-                style={[
-                  styles.nextBtn,
-                  !selectedSection && !noLyricsMode && { opacity: 0.5 },
-                ]}
-                disabled={!selectedSection && !noLyricsMode}
+                style={[styles.nextBtn, (!fullLyrics && !noLyricsMode) && { opacity: 0.5 }]}
+                disabled={!fullLyrics && !noLyricsMode}
                 activeOpacity={0.85}
               >
-                <LinearGradient
-                  colors={["#A855F7", "#EC4899"]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.nextBtnGradient}
-                >
+                <LinearGradient colors={["#A855F7", "#EC4899"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.nextBtnGradient}>
                   <Text style={styles.nextBtnText}>
-                    {noLyricsMode ? "Continue without Lyrics" : "Fine-Tune Timing"}
+                    {fullLyrics && !noLyricsMode ? "Fine-Tune Timing" : "Continue without Lyrics"}
                   </Text>
                   <Ionicons name="chevron-forward" size={18} color="#fff" />
                 </LinearGradient>
@@ -1380,41 +1502,59 @@ export default function PostScreen() {
             </View>
           )}
 
-          {/* ── Step 5: Timing Adjustment (cover + song + section) ── */}
-          {step === 5 && performanceType === "cover" && selectedSong && selectedSection && (
+          {/* ═══════════════════════════════════════════════════════════════════
+              STEP 6 — Timing Fine-Tune
+              ═══════════════════════════════════════════════════════════════════ */}
+          {step === 6 && performanceType === "cover" && selectedSong && !noLyricsMode && (
             <View style={styles.stepView}>
-              <Text style={[styles.stepLabel, { color: colors.foreground }]}>
-                3.6 — Fine-Tune Timing
-              </Text>
+              <Text style={[styles.stepLabel, { color: colors.foreground }]}>3.6 — Fine-Tune Timing</Text>
               <Text style={[styles.stepHint, { color: colors.mutedForeground }]}>
-                If the lyrics appear slightly early or late compared to your singing, adjust the offset below. Leave at 0 if it feels right.
+                If the lyrics appear slightly early or late, adjust the offset. Leave at 0 if it feels right.
               </Text>
 
-              <View
-                style={[
-                  styles.timingCard,
-                  { backgroundColor: colors.card, borderColor: colors.border },
-                ]}
-              >
+              {/* Video preview (available when early upload ran) */}
+              {uploadedVideoUrl && (
+                <View style={styles.videoPreviewContainer}>
+                  <Video
+                    source={{ uri: uploadedVideoUrl }}
+                    style={styles.videoPreview}
+                    resizeMode={ResizeMode.COVER}
+                    shouldPlay
+                    isLooping
+                    isMuted={false}
+                  />
+                  <LinearGradient colors={["transparent", "rgba(5,2,10,0.85)"]} style={StyleSheet.absoluteFill} pointerEvents="none" />
+                  {/* Lyric overlay on video */}
+                  {previewLyricsData && fullLyrics && (
+                    <View style={styles.videoLyricOverlay}>
+                      {fullLyrics
+                        .slice(lyricRangeStartLine, lyricRangeEndLine + 1)
+                        .slice(0, 3)
+                        .map((line, i) => (
+                          <Text
+                            key={i}
+                            style={i === 0 ? styles.videoLyricActive : styles.videoLyricDim}
+                            numberOfLines={1}
+                          >
+                            {line.text}
+                          </Text>
+                        ))}
+                    </View>
+                  )}
+                </View>
+              )}
+
+              {/* Timing card */}
+              <View style={[styles.timingCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 <View style={styles.timingSection}>
                   <Ionicons name="musical-note" size={16} color={colors.primary} />
                   <Text style={[styles.timingSectionLabel, { color: colors.foreground }]}>
-                    {selectedSection.label}
+                    Lines {lyricRangeStartLine + 1}–{lyricRangeEndLine + 1} · {selectedLineCount} lines
                   </Text>
                 </View>
-                <Text style={[styles.timingSectionMeta, { color: colors.mutedForeground }]}>
-                  {selectedSection.startMs !== null && selectedSection.endMs !== null
-                    ? `${fmtMs(selectedSection.startMs)} – ${selectedSection.endMs >= 999999 ? "end" : fmtMs(selectedSection.endMs)}`
-                    : `Lines ${selectedSection.startLineIndex + 1}–${selectedSection.endLineIndex + 1}`}
-                  {selectedSection.lineCount > 0
-                    ? ` · ${selectedSection.lineCount} lines`
-                    : ""}
-                </Text>
               </View>
 
-              <Text style={[styles.sliderLabel, { color: colors.mutedForeground }]}>
-                Shift lyrics earlier / later
-              </Text>
+              <Text style={[styles.sliderLabel, { color: colors.mutedForeground }]}>Shift lyrics earlier / later</Text>
 
               <TimingSlider
                 value={timingOffsetMs}
@@ -1434,50 +1574,29 @@ export default function PostScreen() {
                   </TouchableOpacity>
                 )}
               </View>
-
               <Text style={[styles.offsetHint, { color: colors.mutedForeground }]}>
                 Negative shifts lyrics earlier · Positive shifts later
               </Text>
 
-              {/* Preview timing button */}
+              {/* Preview button */}
               <TouchableOpacity
                 onPress={() => setIsPreviewingTiming((v) => !v)}
-                style={[
-                  styles.previewBtn,
-                  { backgroundColor: `${colors.primary}18`, borderColor: `${colors.primary}40` },
-                ]}
+                style={[styles.previewBtn, { backgroundColor: `${colors.primary}18`, borderColor: `${colors.primary}40` }]}
                 activeOpacity={0.85}
               >
-                <Ionicons
-                  name={isPreviewingTiming ? "stop-circle-outline" : "play-circle-outline"}
-                  size={18}
-                  color={colors.primary}
-                />
+                <Ionicons name={isPreviewingTiming ? "stop-circle-outline" : "play-circle-outline"} size={18} color={colors.primary} />
                 <Text style={[styles.offsetBtnText, { color: colors.primary }]}>
                   {isPreviewingTiming ? "Stop Preview" : "Preview Timing (5 s)"}
                 </Text>
               </TouchableOpacity>
 
-              {/* Live lyric line during preview */}
               {isPreviewingTiming && (
-                <View
-                  style={[
-                    styles.previewLineBox,
-                    {
-                      borderColor: `${colors.primary}30`,
-                      backgroundColor: `${colors.primary}08`,
-                    },
-                  ]}
-                >
+                <View style={[styles.previewLineBox, { borderColor: `${colors.primary}30`, backgroundColor: `${colors.primary}08` }]}>
                   {previewLyricsData ? (
                     previewActiveLine ? (
-                      <Text style={[styles.previewActiveLine, { color: colors.foreground }]}>
-                        {previewActiveLine.text}
-                      </Text>
+                      <Text style={[styles.previewActiveLine, { color: colors.foreground }]}>{previewActiveLine.text}</Text>
                     ) : (
-                      <Text style={[styles.offsetHint, { color: colors.mutedForeground }]}>
-                        ♪ waiting for lyric line…
-                      </Text>
+                      <Text style={[styles.offsetHint, { color: colors.mutedForeground }]}>♪ waiting for lyric line…</Text>
                     )
                   ) : (
                     <ActivityIndicator size="small" color={colors.primary} />
@@ -1485,56 +1604,8 @@ export default function PostScreen() {
                 </View>
               )}
 
-              {/* Static lyric line list — shows fetched lines for the chosen section */}
-              {previewLyricsData && previewLyricsData.lines.length > 0 && selectedSection && (
-                <View
-                  style={[
-                    styles.lyricLineList,
-                    { borderColor: colors.border, backgroundColor: colors.card },
-                  ]}
-                >
-                  <Text style={[styles.lyricLineListTitle, { color: colors.mutedForeground }]}>
-                    Section lyrics
-                  </Text>
-                  {previewLyricsData.lines
-                    .filter(
-                      (l) =>
-                        selectedSection.startMs === null ||
-                        l.startMs === null ||
-                        (l.startMs >= selectedSection.startMs! &&
-                          (selectedSection.endMs === null ||
-                            selectedSection.endMs >= 999_999 ||
-                            l.startMs < selectedSection.endMs!)),
-                    )
-                    .map((l, idx) => (
-                      <View
-                        key={idx}
-                        style={[styles.lyricLineRow, { borderTopColor: colors.border }]}
-                      >
-                        <Text style={[styles.lyricLineText, { color: colors.foreground }]}>
-                          {l.text}
-                        </Text>
-                        {l.startMs !== null && (
-                          <Text style={[styles.lyricLineTime, { color: colors.mutedForeground }]}>
-                            {fmtMs(l.startMs)}
-                          </Text>
-                        )}
-                      </View>
-                    ))}
-                </View>
-              )}
-
-              <TouchableOpacity
-                onPress={() => setStep(6)}
-                style={styles.nextBtn}
-                activeOpacity={0.85}
-              >
-                <LinearGradient
-                  colors={["#A855F7", "#EC4899"]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.nextBtnGradient}
-                >
+              <TouchableOpacity onPress={() => setStep(7)} style={styles.nextBtn} activeOpacity={0.85}>
+                <LinearGradient colors={["#A855F7", "#EC4899"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.nextBtnGradient}>
                   <Text style={styles.nextBtnText}>Add Details</Text>
                   <Ionicons name="chevron-forward" size={18} color="#fff" />
                 </LinearGradient>
@@ -1542,8 +1613,10 @@ export default function PostScreen() {
             </View>
           )}
 
-          {/* ── Step 6: Details ── */}
-          {step === 6 && (
+          {/* ═══════════════════════════════════════════════════════════════════
+              STEP 7 — Add Details
+              ═══════════════════════════════════════════════════════════════════ */}
+          {step === 7 && (
             <View style={styles.stepView}>
               <Text style={[styles.stepLabel, { color: colors.foreground }]}>4. Add Details</Text>
               <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>Title *</Text>
@@ -1552,14 +1625,7 @@ export default function PostScreen() {
                 onChangeText={setTitle}
                 placeholder="Give your performance a title"
                 placeholderTextColor={colors.mutedForeground}
-                style={[
-                  styles.fieldInput,
-                  {
-                    backgroundColor: colors.muted,
-                    borderColor: colors.border,
-                    color: colors.foreground,
-                  },
-                ]}
+                style={[styles.fieldInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
                 maxLength={100}
               />
               <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>Caption</Text>
@@ -1568,99 +1634,108 @@ export default function PostScreen() {
                 onChangeText={setCaption}
                 placeholder="Tell your story... #hashtags"
                 placeholderTextColor={colors.mutedForeground}
-                style={[
-                  styles.fieldInput,
-                  styles.captionInput,
-                  {
-                    backgroundColor: colors.muted,
-                    borderColor: colors.border,
-                    color: colors.foreground,
-                  },
-                ]}
+                style={[styles.fieldInput, styles.captionInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
                 multiline
                 maxLength={280}
               />
+
               <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>Genre</Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.tagsList}
-              >
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tagsList}>
                 {GENRES.map((g) => (
                   <TouchableOpacity
                     key={g}
                     onPress={() => setGenre(g)}
-                    style={[
-                      styles.tagChip,
-                      {
-                        backgroundColor: genre === g ? colors.primary : colors.muted,
-                        borderColor: genre === g ? colors.primary : colors.border,
-                      },
-                    ]}
+                    style={[styles.tagChip, { backgroundColor: genre === g ? colors.primary : colors.muted, borderColor: genre === g ? colors.primary : colors.border }]}
                     activeOpacity={0.8}
                   >
-                    <Text
-                      style={[
-                        styles.tagChipText,
-                        { color: genre === g ? "#fff" : colors.mutedForeground },
-                      ]}
-                    >
-                      {g}
-                    </Text>
+                    <Text style={[styles.tagChipText, { color: genre === g ? "#fff" : colors.mutedForeground }]}>{g}</Text>
                   </TouchableOpacity>
                 ))}
               </ScrollView>
+
+              {/* ── Cyanite suggestion chips ── */}
+              {analysisResult && (analysisResult.cyaniteGenre || (analysisResult.cyaniteMoods && analysisResult.cyaniteMoods.length > 0)) && (
+                <View style={[styles.cyaniteSection, { backgroundColor: `${colors.primary}08`, borderColor: `${colors.primary}25` }]}>
+                  <View style={styles.cyaniteHeader}>
+                    <MaterialCommunityIcons name="magic-staff" size={13} color={colors.primary} />
+                    <Text style={[styles.cyaniteHeaderText, { color: colors.primary }]}>Suggested by audio analysis</Text>
+                  </View>
+                  <View style={styles.cyaniteChips}>
+                    {analysisResult.cyaniteGenre && (
+                      <TouchableOpacity
+                        onPress={() => {
+                          setGenre(analysisResult.cyaniteGenre!);
+                          setCyaniteGenreAccepted(true);
+                          Haptics.selectionAsync();
+                        }}
+                        style={[
+                          styles.cyaniteChip,
+                          {
+                            backgroundColor: cyaniteGenreAccepted ? colors.primary : `${colors.primary}18`,
+                            borderColor: colors.primary,
+                          },
+                        ]}
+                        activeOpacity={0.8}
+                      >
+                        <MaterialCommunityIcons name="music" size={12} color={cyaniteGenreAccepted ? "#fff" : colors.primary} />
+                        <Text style={[styles.cyaniteChipText, { color: cyaniteGenreAccepted ? "#fff" : colors.primary }]}>
+                          {analysisResult.cyaniteGenre}
+                        </Text>
+                        {cyaniteGenreAccepted && <Ionicons name="checkmark" size={12} color="#fff" />}
+                      </TouchableOpacity>
+                    )}
+                    {analysisResult.cyaniteMoods?.slice(0, 3).map((mood) => (
+                      <TouchableOpacity
+                        key={mood}
+                        onPress={() => {
+                          setCyaniteMoodsAccepted(true);
+                          Haptics.selectionAsync();
+                        }}
+                        style={[
+                          styles.cyaniteChip,
+                          {
+                            backgroundColor: cyaniteMoodsAccepted ? `${colors.primary}50` : `${colors.primary}12`,
+                            borderColor: `${colors.primary}60`,
+                          },
+                        ]}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={[styles.cyaniteChipText, { color: colors.primary }]}>{mood}</Text>
+                      </TouchableOpacity>
+                    ))}
+                    {analysisResult.cyaniteEnergy && (
+                      <View style={[styles.cyaniteChip, { backgroundColor: "rgba(99,102,241,0.1)", borderColor: "rgba(99,102,241,0.35)" }]}>
+                        <Text style={[styles.cyaniteChipText, { color: "#6366F1" }]}>{analysisResult.cyaniteEnergy}</Text>
+                      </View>
+                    )}
+                  </View>
+                </View>
+              )}
+
               <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>Language</Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.tagsList}
-              >
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tagsList}>
                 {LANGUAGES.map((l) => (
                   <TouchableOpacity
                     key={l}
                     onPress={() => setLanguage(l)}
-                    style={[
-                      styles.tagChip,
-                      {
-                        backgroundColor: language === l ? colors.primary : colors.muted,
-                        borderColor: language === l ? colors.primary : colors.border,
-                      },
-                    ]}
+                    style={[styles.tagChip, { backgroundColor: language === l ? colors.primary : colors.muted, borderColor: language === l ? colors.primary : colors.border }]}
                     activeOpacity={0.8}
                   >
-                    <Text
-                      style={[
-                        styles.tagChipText,
-                        { color: language === l ? "#fff" : colors.mutedForeground },
-                      ]}
-                    >
-                      {l}
-                    </Text>
+                    <Text style={[styles.tagChipText, { color: language === l ? "#fff" : colors.mutedForeground }]}>{l}</Text>
                   </TouchableOpacity>
                 ))}
               </ScrollView>
+
               <TextInput
                 value={location}
                 onChangeText={setLocation}
                 placeholder="City, Country (optional)"
                 placeholderTextColor={colors.mutedForeground}
-                style={[
-                  styles.fieldInput,
-                  {
-                    backgroundColor: colors.muted,
-                    borderColor: colors.border,
-                    color: colors.foreground,
-                  },
-                ]}
+                style={[styles.fieldInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
               />
-              <TouchableOpacity onPress={() => setStep(7)} style={styles.nextBtn} activeOpacity={0.85}>
-                <LinearGradient
-                  colors={["#A855F7", "#EC4899"]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.nextBtnGradient}
-                >
+
+              <TouchableOpacity onPress={() => setStep(8)} style={styles.nextBtn} activeOpacity={0.85}>
+                <LinearGradient colors={["#A855F7", "#EC4899"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.nextBtnGradient}>
                   <Text style={styles.nextBtnText}>Review</Text>
                   <Ionicons name="chevron-forward" size={18} color="#fff" />
                 </LinearGradient>
@@ -1668,66 +1743,40 @@ export default function PostScreen() {
             </View>
           )}
 
-          {/* ── Step 7: Review ── */}
-          {step === 7 && (
+          {/* ═══════════════════════════════════════════════════════════════════
+              STEP 8 — Review & Post
+              ═══════════════════════════════════════════════════════════════════ */}
+          {step === 8 && (
             <View style={styles.stepView}>
               <Text style={[styles.stepLabel, { color: colors.foreground }]}>5. Review and Post</Text>
-              <View
-                style={[
-                  styles.reviewCard,
-                  { backgroundColor: colors.card, borderColor: colors.border },
-                ]}
-              >
+              <View style={[styles.reviewCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 <ReviewRow label="Title" value={title || "—"} colors={colors} />
                 <ReviewRow label="Type" value={performanceType} colors={colors} />
                 <ReviewRow label="Genre" value={genre} colors={colors} />
                 <ReviewRow label="Language" value={language} colors={colors} />
-                <ReviewRow
-                  label="Video"
-                  value={videoUri ? `${formatDuration(videoDurationSec)} recorded` : "No video"}
-                  colors={colors}
-                />
-                {selectedSong && (
-                  <ReviewRow
-                    label="Song"
-                    value={`${selectedSong.track_name} — ${selectedSong.artist_name}`}
-                    colors={colors}
-                  />
+                <ReviewRow label="Video" value={videoUri ? `${formatDuration(videoDurationSec)} recorded` : "No video"} colors={colors} />
+                {selectedSong && <ReviewRow label="Song" value={`${selectedSong.track_name} — ${selectedSong.artist_name}`} colors={colors} />}
+                {fullLyrics && !noLyricsMode && (
+                  <ReviewRow label="Lyrics" value={`Lines ${lyricRangeStartLine + 1}–${lyricRangeEndLine + 1} (${selectedLineCount} lines)`} colors={colors} />
                 )}
-                {selectedSection && (
-                  <ReviewRow label="Section" value={selectedSection.label} colors={colors} />
+                {timingOffsetMs !== 0 && (
+                  <ReviewRow label="Timing offset" value={`${timingOffsetMs > 0 ? "+" : ""}${timingOffsetMs} ms`} colors={colors} />
                 )}
-                {selectedSection && timingOffsetMs !== 0 && (
-                  <ReviewRow
-                    label="Timing offset"
-                    value={`${timingOffsetMs > 0 ? "+" : ""}${timingOffsetMs} ms`}
-                    colors={colors}
-                  />
-                )}
+                {analysisJobId && <ReviewRow label="Analysis" value="AI-assisted ✓" colors={colors} />}
                 {location && <ReviewRow label="Location" value={location} colors={colors} />}
               </View>
-              <TouchableOpacity
-                onPress={() => setRightsConfirmed(!rightsConfirmed)}
-                style={styles.rightsRow}
-                activeOpacity={0.8}
-              >
-                <View
-                  style={[
-                    styles.checkbox,
-                    {
-                      borderColor: rightsConfirmed ? colors.primary : colors.border,
-                      backgroundColor: rightsConfirmed ? colors.primary : "transparent",
-                    },
-                  ]}
-                >
+
+              <TouchableOpacity onPress={() => setRightsConfirmed(!rightsConfirmed)} style={styles.rightsRow} activeOpacity={0.8}>
+                <View style={[styles.checkbox, { borderColor: rightsConfirmed ? colors.primary : colors.border, backgroundColor: rightsConfirmed ? colors.primary : "transparent" }]}>
                   {rightsConfirmed && <Ionicons name="checkmark" size={14} color="#fff" />}
                 </View>
                 <Text style={[styles.rightsText, { color: colors.mutedForeground }]}>
                   I confirm this is my performance and I have the right to upload it.
                 </Text>
               </TouchableOpacity>
+
               {uploadError && (
-                <View style={[styles.uploadErrorCard, { backgroundColor: `${"#EF4444"}18`, borderColor: "#EF4444" }]}>
+                <View style={[styles.uploadErrorCard, { backgroundColor: "#EF444418", borderColor: "#EF4444" }]}>
                   <Ionicons name="alert-circle" size={18} color="#EF4444" />
                   <Text style={[styles.uploadErrorText, { color: "#EF4444" }]}>{uploadError}</Text>
                 </View>
@@ -1736,24 +1785,13 @@ export default function PostScreen() {
               {isPosting && (
                 <View style={[styles.uploadProgressCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                   <Text style={[styles.uploadProgressLabel, { color: colors.mutedForeground }]}>
-                    {uploadPhase === "saving"
-                      ? "Saving your Music Minute…"
-                      : uploadProgress === 0
-                        ? "Preparing video…"
-                        : uploadProgress < 95
-                          ? `Uploading… ${uploadProgress}%`
-                          : "Finishing upload…"}
+                    {uploadPhase === "saving" ? "Saving your Music Minute…"
+                      : uploadProgress === 0 ? "Preparing video…"
+                      : uploadProgress < 95 ? `Uploading… ${uploadProgress}%`
+                      : "Finishing upload…"}
                   </Text>
                   <View style={[styles.uploadProgressTrack, { backgroundColor: colors.muted }]}>
-                    <View
-                      style={[
-                        styles.uploadProgressFill,
-                        {
-                          width: uploadPhase === "saving" ? "100%" : `${uploadProgress}%`,
-                          backgroundColor: colors.primary,
-                        },
-                      ]}
-                    />
+                    <View style={[styles.uploadProgressFill, { width: uploadPhase === "saving" ? "100%" : `${uploadProgress}%`, backgroundColor: colors.primary }]} />
                   </View>
                 </View>
               )}
@@ -1764,364 +1802,189 @@ export default function PostScreen() {
                 style={[styles.nextBtn, (!rightsConfirmed || isPosting) && { opacity: 0.5 }]}
                 activeOpacity={0.85}
               >
-                <LinearGradient
-                  colors={["#A855F7", "#EC4899", "#F59E0B"]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.nextBtnGradient}
-                >
+                <LinearGradient colors={["#A855F7", "#EC4899", "#F59E0B"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.nextBtnGradient}>
                   <MaterialCommunityIcons name="microphone" size={20} color="#fff" />
                   <Text style={styles.nextBtnText}>
                     {isPosting
-                      ? uploadPhase === "uploading"
-                        ? "Uploading…"
-                        : "Saving…"
-                      : uploadError
-                        ? "Retry"
-                        : "Post Music Minute"}
+                      ? uploadPhase === "uploading" ? "Uploading…" : "Saving…"
+                      : uploadError ? "Retry" : "Post Music Minute"}
                   </Text>
                 </LinearGradient>
               </TouchableOpacity>
             </View>
           )}
+
         </ScrollView>
       </KeyboardAvoidingView>
     </View>
   );
 }
 
-function ReviewRow({
-  label,
-  value,
-  colors,
-}: {
-  label: string;
-  value: string;
-  colors: ReturnType<typeof useColors>;
-}) {
+// ─── ReviewRow ────────────────────────────────────────────────────────────────
+
+function ReviewRow({ label, value, colors }: { label: string; value: string; colors: ReturnType<typeof useColors> }) {
   return (
     <View style={[styles.reviewRow, { borderBottomColor: colors.border }]}>
       <Text style={[styles.reviewLabel, { color: colors.mutedForeground }]}>{label}</Text>
-      <Text style={[styles.reviewValue, { color: colors.foreground }]} numberOfLines={2}>
-        {value}
-      </Text>
+      <Text style={[styles.reviewValue, { color: colors.foreground }]} numberOfLines={2}>{value}</Text>
     </View>
   );
 }
 
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
   container: { flex: 1 },
   postHeader: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
+    flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between",
+    paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 1,
   },
   postTitle: { fontSize: 17, fontWeight: "700" },
-  stepRow: {
-    flexDirection: "row",
-    justifyContent: "center",
-    gap: 6,
-    paddingVertical: 14,
-  },
+  stepRow: { flexDirection: "row", justifyContent: "center", gap: 6, paddingVertical: 14 },
   stepDot: { width: 6, height: 6, borderRadius: 3 },
   stepContent: { flex: 1 },
   stepView: { paddingHorizontal: 20, paddingTop: 8, gap: 14 },
   stepLabel: { fontSize: 18, fontWeight: "700", marginBottom: 4 },
   stepHint: { fontSize: 13, lineHeight: 18, marginTop: -8 },
+  // Video
   uploadOptions: { flexDirection: "row", gap: 12 },
-  uploadOption: {
-    flex: 1,
-    alignItems: "center",
-    gap: 10,
-    padding: 24,
-    borderRadius: 16,
-    borderWidth: 1,
-  },
+  uploadOption: { flex: 1, alignItems: "center", gap: 10, padding: 24, borderRadius: 16, borderWidth: 1 },
   uploadOptionTitle: { fontSize: 14, fontWeight: "700", textAlign: "center" },
   uploadOptionSub: { fontSize: 12, textAlign: "center" },
-  videoPreviewContainer: {
-    width: "100%",
-    height: 240,
-    borderRadius: 16,
-    overflow: "hidden",
-    backgroundColor: "#000",
-    position: "relative",
-  },
+  videoPreviewContainer: { width: "100%", height: 240, borderRadius: 16, overflow: "hidden", backgroundColor: "#000", position: "relative" },
   videoPreview: { width: "100%", height: "100%" },
-  videoMeta: {
-    position: "absolute",
-    bottom: 12,
-    left: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
+  videoMeta: { position: "absolute", bottom: 12, left: 12, flexDirection: "row", alignItems: "center", gap: 6 },
   videoDuration: { color: "#fff", fontSize: 13, fontWeight: "700" },
-  changeVideoBtn: {
-    position: "absolute",
-    bottom: 12,
-    right: 12,
-    backgroundColor: "rgba(5,2,10,0.7)",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-  },
+  changeVideoBtn: { position: "absolute", bottom: 12, right: 12, backgroundColor: "rgba(5,2,10,0.7)", paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
   changeVideoBtnText: { fontSize: 13, fontWeight: "600" },
-  typeOption: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 14,
-    padding: 16,
-    borderRadius: 14,
-    borderWidth: 1,
-  },
+  videoLyricOverlay: { position: "absolute", bottom: 20, left: 16, right: 16, alignItems: "center", gap: 4 },
+  videoLyricActive: { color: "#fff", fontSize: 16, fontWeight: "700", textAlign: "center", textShadowColor: "rgba(0,0,0,0.8)", textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
+  videoLyricDim: { color: "rgba(255,255,255,0.55)", fontSize: 13, textAlign: "center" },
+  // Type selection
+  typeOption: { flexDirection: "row", alignItems: "center", gap: 14, padding: 16, borderRadius: 14, borderWidth: 1 },
   typeOptionText: { flex: 1 },
   typeTitle: { fontSize: 15, fontWeight: "700" },
   typeSub: { fontSize: 12, marginTop: 2 },
-  musixmatchBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    alignSelf: "flex-start",
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 20,
-    borderWidth: 1,
-  },
+  aiHintCard: { flexDirection: "row", alignItems: "center", gap: 8, padding: 12, borderRadius: 12, borderWidth: 1 },
+  aiHintText: { flex: 1, fontSize: 12, lineHeight: 17 },
+  // Analysis
+  stageCard: { flexDirection: "row", alignItems: "center", gap: 12, padding: 16, borderRadius: 14, borderWidth: 1 },
+  stageLabel: { fontSize: 14, fontWeight: "700", marginBottom: 6 },
+  stageProgressTrack: { height: 4, borderRadius: 2, overflow: "hidden" },
+  stageProgressFill: { height: 4, borderRadius: 2 },
+  stageChecklist: { borderRadius: 12, borderWidth: 1, padding: 12, gap: 10 },
+  stageCheckItem: { flexDirection: "row", alignItems: "center", gap: 8 },
+  stageCheckLabel: { fontSize: 13 },
+  skipRow: { alignItems: "center", paddingVertical: 4 },
+  skipLink: { fontSize: 13 },
+  // Song confirmation
+  songConfirmCard: { flexDirection: "row", gap: 14, padding: 16, borderRadius: 16, borderWidth: 1 },
+  albumArt: { width: 80, height: 80, borderRadius: 10 },
+  albumArtPlaceholder: { width: 80, height: 80, borderRadius: 10, alignItems: "center", justifyContent: "center" },
+  confirmedTrackTitle: { fontSize: 16, fontWeight: "700", lineHeight: 22 },
+  confirmedTrackArtist: { fontSize: 13 },
+  confidenceBadge: { alignSelf: "flex-start", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20 },
+  confidenceBadgeText: { fontSize: 11, fontWeight: "700" },
+  candidateRow: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderRadius: 12, borderWidth: 1 },
+  candidateTitle: { fontSize: 13, fontWeight: "700" },
+  candidateArtist: { fontSize: 12, marginTop: 1 },
+  noMatchCard: { alignItems: "center", padding: 24, borderRadius: 14, borderWidth: 1, gap: 8 },
+  noMatchTitle: { fontSize: 16, fontWeight: "700" },
+  noMatchSub: { fontSize: 13, textAlign: "center", lineHeight: 18 },
+  confirmActions: { flexDirection: "row", gap: 10 },
+  secondaryBtn: { flex: 1, alignItems: "center", paddingVertical: 12, paddingHorizontal: 14, borderRadius: 12, borderWidth: 1 },
+  secondaryBtnText: { fontSize: 13, fontWeight: "600" },
+  // Song search
+  musixmatchBadge: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, borderWidth: 1 },
   musixmatchText: { fontSize: 12, fontWeight: "600" },
-  songSearchBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
+  songSearchBar: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 12, borderWidth: 1 },
   songSearchInput: { flex: 1, fontSize: 14, paddingVertical: 0 },
   searchBtn: { fontSize: 14, fontWeight: "700" },
-  selectedSong: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    padding: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
+  selectedSong: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderRadius: 12, borderWidth: 1 },
   selectedSongInfo: { flex: 1 },
   selectedSongTitle: { fontSize: 14, fontWeight: "700" },
   selectedSongArtist: { fontSize: 12, marginTop: 2 },
   songResultsList: { borderRadius: 12, borderWidth: 1, overflow: "hidden" },
-  songResultsLoadingOverlay: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  songResultRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    padding: 12,
-    borderBottomWidth: 1,
-  },
+  songResultsLoadingOverlay: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "center", alignItems: "center" },
+  songResultRow: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderBottomWidth: 1 },
   songResultInfo: { flex: 1 },
   songResultTitle: { fontSize: 14, fontWeight: "600" },
   songResultArtist: { fontSize: 12, marginTop: 2 },
   sourceBadgeRow: { flexDirection: "row", marginBottom: 6 },
-  sourceBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 20,
-    borderWidth: 1,
-  },
+  sourceBadge: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 20, borderWidth: 1 },
   sourceBadgeText: { fontSize: 11, fontWeight: "600" },
-  searchStateBox: {
-    alignItems: "center",
-    padding: 20,
-    borderRadius: 14,
-    borderWidth: 1,
-    gap: 8,
-  },
+  searchStateBox: { alignItems: "center", padding: 20, borderRadius: 14, borderWidth: 1, gap: 8 },
   searchStateTitle: { fontSize: 14, fontWeight: "700", textAlign: "center" },
   searchStateSub: { fontSize: 12, textAlign: "center", lineHeight: 17 },
   searchStateActions: { flexDirection: "row", gap: 10, marginTop: 4 },
-  searchStateBtn: {
-    paddingHorizontal: 20,
-    paddingVertical: 9,
-    borderRadius: 10,
-    borderWidth: 1,
-  },
+  searchStateBtn: { paddingHorizontal: 20, paddingVertical: 9, borderRadius: 10, borderWidth: 1 },
   searchStateBtnText: { fontSize: 13, fontWeight: "700" },
-  // Section selection (step 4)
-  songRefCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    padding: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
+  // Lyric range editor
+  songRefCard: { flexDirection: "row", alignItems: "center", gap: 8, padding: 12, borderRadius: 12, borderWidth: 1 },
   songRefTitle: { fontSize: 14, fontWeight: "700", flex: 1 },
   songRefArtist: { fontSize: 12 },
-  centeredRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    justifyContent: "center",
-    paddingVertical: 12,
-  },
-  errorCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    padding: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
-  noSyncCard: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 10,
-    padding: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
+  centeredRow: { flexDirection: "row", alignItems: "center", gap: 8, justifyContent: "center", paddingVertical: 12 },
+  noSyncCard: { flexDirection: "row", alignItems: "flex-start", gap: 10, padding: 12, borderRadius: 12, borderWidth: 1 },
   noSyncText: { flex: 1, fontSize: 13, lineHeight: 18 },
-  sectionCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 14,
-    borderRadius: 14,
-    borderWidth: 1,
-  },
-  sectionLabel: { fontSize: 15, fontWeight: "700" },
-  sectionMeta: { fontSize: 12, marginTop: 3 },
-  sectionPreview: { fontSize: 11, marginTop: 4, fontStyle: "italic" },
-  // Timing (step 5)
-  previewBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
-  previewLineBox: {
-    minHeight: 52,
-    borderRadius: 12,
-    borderWidth: 1,
-    padding: 14,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  previewActiveLine: {
-    fontSize: 16,
-    fontWeight: "700",
-    textAlign: "center",
-    lineHeight: 24,
-  },
-  timingCard: {
-    padding: 16,
-    borderRadius: 14,
-    borderWidth: 1,
-    gap: 4,
-  },
+  rangeStatsBar: { flexDirection: "row", alignItems: "center", gap: 8, padding: 10, borderRadius: 10, borderWidth: 1 },
+  rangeStatText: { flex: 1, fontSize: 13, fontWeight: "600" },
+  rangeResetBtn: { fontSize: 12, fontWeight: "700" },
+  lyricRangeList: { borderRadius: 12, borderWidth: 1, overflow: "hidden" },
+  lyricRangeListHint: { fontSize: 11, fontWeight: "600", paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4, textTransform: "uppercase", letterSpacing: 0.4 },
+  lyricRangeRow: { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 10, borderTopWidth: 1, position: "relative" },
+  lyricRangeLineText: { flex: 1, fontSize: 14, lineHeight: 20 },
+  lyricRangeLineTime: { fontSize: 11, marginLeft: 8 },
+  rangeHandle: { position: "absolute", left: 0, top: 0, width: 20, height: "100%", alignItems: "center", justifyContent: "center", borderTopLeftRadius: 4 },
+  rangeHandleBottom: { top: undefined, bottom: 0, borderTopLeftRadius: 0, borderBottomLeftRadius: 4 },
+  // Timing
+  timingCard: { padding: 16, borderRadius: 14, borderWidth: 1, gap: 4 },
   timingSection: { flexDirection: "row", alignItems: "center", gap: 8 },
   timingSectionLabel: { fontSize: 15, fontWeight: "700" },
-  timingSectionMeta: { fontSize: 12 },
-  offsetRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  offsetBtn: {
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
-  offsetBtnText: { fontSize: 13, fontWeight: "700" },
-  offsetDisplay: {
-    flex: 1,
-    alignItems: "center",
-    gap: 4,
-  },
+  previewBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12, borderWidth: 1 },
+  previewLineBox: { minHeight: 52, borderRadius: 12, borderWidth: 1, padding: 14, alignItems: "center", justifyContent: "center" },
+  previewActiveLine: { fontSize: 16, fontWeight: "700", textAlign: "center", lineHeight: 24 },
+  sliderLabel: { fontSize: 13, fontWeight: "600", textAlign: "center" },
+  offsetDisplay: { flex: 1, alignItems: "center", gap: 4 },
   offsetValue: { fontSize: 20, fontWeight: "800" },
   offsetReset: { fontSize: 12, fontWeight: "600" },
   offsetHint: { fontSize: 12, textAlign: "center" },
-  // Details (step 6)
+  offsetBtnText: { fontSize: 13, fontWeight: "700" },
+  // Cyanite chips
+  cyaniteSection: { padding: 12, borderRadius: 14, borderWidth: 1, gap: 8 },
+  cyaniteHeader: { flexDirection: "row", alignItems: "center", gap: 6 },
+  cyaniteHeaderText: { fontSize: 12, fontWeight: "700" },
+  cyaniteChips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  cyaniteChip: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20, borderWidth: 1 },
+  cyaniteChipText: { fontSize: 12, fontWeight: "600" },
+  // Details
   fieldLabel: { fontSize: 12, fontWeight: "600", marginBottom: -4 },
-  fieldInput: {
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    borderRadius: 12,
-    borderWidth: 1,
-    fontSize: 15,
-  },
+  fieldInput: { paddingHorizontal: 14, paddingVertical: 13, borderRadius: 12, borderWidth: 1, fontSize: 15 },
   captionInput: { minHeight: 80, textAlignVertical: "top" },
   tagsList: { gap: 8, paddingVertical: 4 },
-  tagChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 1,
-  },
+  tagChip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1 },
   tagChipText: { fontSize: 13, fontWeight: "600" },
-  // Review (step 7)
-  reviewCard: {
-    borderRadius: 14,
-    borderWidth: 1,
-    overflow: "hidden",
-  },
-  reviewRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-  },
+  // Error card
+  errorCard: { flexDirection: "row", alignItems: "center", gap: 8, padding: 12, borderRadius: 12, borderWidth: 1 },
+  // Review
+  reviewCard: { borderRadius: 14, borderWidth: 1, overflow: "hidden" },
+  reviewRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 14, paddingVertical: 12, borderBottomWidth: 1 },
   reviewLabel: { fontSize: 13 },
   reviewValue: { fontSize: 13, fontWeight: "600", maxWidth: "60%", textAlign: "right" },
-  rightsRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 12,
-  },
-  checkbox: {
-    width: 22,
-    height: 22,
-    borderRadius: 6,
-    borderWidth: 2,
-    justifyContent: "center",
-    alignItems: "center",
-    flexShrink: 0,
-    marginTop: 1,
-  },
+  rightsRow: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
+  checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 2, justifyContent: "center", alignItems: "center", flexShrink: 0, marginTop: 1 },
   rightsText: { fontSize: 13, lineHeight: 19, flex: 1 },
+  // Upload progress
+  uploadProgressCard: { padding: 14, borderRadius: 12, borderWidth: 1, gap: 8 },
+  uploadProgressLabel: { fontSize: 13, fontWeight: "600" },
+  uploadProgressTrack: { height: 6, borderRadius: 3, overflow: "hidden" },
+  uploadProgressFill: { height: 6, borderRadius: 3 },
+  uploadErrorCard: { flexDirection: "row", alignItems: "center", gap: 8, padding: 12, borderRadius: 12, borderWidth: 1 },
+  uploadErrorText: { fontSize: 13, flex: 1 },
   // Shared
   nextBtn: { borderRadius: 16, overflow: "hidden" },
-  nextBtnGradient: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    paddingVertical: 16,
-  },
+  nextBtnGradient: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 16 },
   nextBtnText: { color: "#fff", fontSize: 16, fontWeight: "700" },
-  // Guest / success views
+  // Guest / success
   guestView: { flex: 1, alignItems: "center", gap: 16, paddingHorizontal: 32 },
   guestTitle: { fontSize: 24, fontWeight: "800", textAlign: "center" },
   guestSubtitle: { fontSize: 14, textAlign: "center", lineHeight: 21 },
@@ -2131,56 +1994,4 @@ const styles = StyleSheet.create({
   successView: { flex: 1, alignItems: "center", justifyContent: "center", gap: 16, paddingHorizontal: 32 },
   successTitle: { fontSize: 26, fontWeight: "800", textAlign: "center" },
   successSubtitle: { fontSize: 14, textAlign: "center", lineHeight: 21 },
-  // Step 5 — timing slider
-  sliderLabel: { fontSize: 13, fontWeight: "600", textAlign: "center" },
-  lyricLineList: {
-    borderRadius: 12,
-    borderWidth: 1,
-    overflow: "hidden",
-    marginTop: 4,
-  },
-  lyricLineListTitle: {
-    fontSize: 11,
-    fontWeight: "600",
-    paddingHorizontal: 12,
-    paddingTop: 10,
-    paddingBottom: 6,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  lyricLineRow: {
-    flexDirection: "row" as const,
-    justifyContent: "space-between" as const,
-    alignItems: "center" as const,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderTopWidth: 1,
-  },
-  lyricLineText: { fontSize: 13, flex: 1, lineHeight: 18 },
-  lyricLineTime: { fontSize: 11, marginLeft: 8 },
-  uploadProgressCard: {
-    padding: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    gap: 8,
-  },
-  uploadProgressLabel: { fontSize: 13, fontWeight: "600" },
-  uploadProgressTrack: {
-    height: 6,
-    borderRadius: 3,
-    overflow: "hidden",
-  },
-  uploadProgressFill: {
-    height: 6,
-    borderRadius: 3,
-  },
-  uploadErrorCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    padding: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
-  uploadErrorText: { fontSize: 13, flex: 1 },
 });

@@ -311,6 +311,7 @@ export async function createPost(
     rightsConfirmed?: boolean;
     // AI analysis fields
     analysisJobId?: string;
+    detectedTrackId?: string;
     songMatchConfidence?: number;
     vocalIsolationUsed?: boolean;
     transcriptionSource?: string;

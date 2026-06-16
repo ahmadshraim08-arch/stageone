@@ -52,7 +52,7 @@ import { TimingSlider } from "@/components/TimingSlider";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type PerformanceType = "original" | "cover" | "freestyle";
-type AnalysisPhase = "idle" | "upload" | "polling" | "confirming" | "done" | "skipped";
+type AnalysisPhase = "idle" | "upload" | "polling" | "confirming" | "done" | "skipped" | "failed";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -197,6 +197,12 @@ export default function PostScreen() {
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [analysisResult, setAnalysisResult] = useState<ApiAnalysisResult | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  // Tracks which stages have ever been reported — used for conditional checklist display
+  const [seenStages, setSeenStages] = useState<Set<string>>(new Set());
+
+  // ── Step 6 video playback sync ────────────────────────────────────────────
+  const videoRef = useRef<InstanceType<typeof Video> | null>(null);
+  const [videoPositionMs, setVideoPositionMs] = useState(0);
 
   // ── Song tagging (step 4 manual) ──────────────────────────────────────────
   const [songQuery, setSongQuery] = useState("");
@@ -546,15 +552,28 @@ export default function PostScreen() {
       (job) => {
         setAnalysisStage(job.stage);
         setAnalysisProgress(job.progressPct);
+        setSeenStages((prev) => new Set([...prev, job.stage]));
       },
       (job) => {
+        setSeenStages((prev) => new Set([...prev, job.stage]));
         setAnalysisResult(job.result);
         setAnalysisStage(job.stage);
         setAnalysisProgress(100);
-        setAnalysisPhase("confirming");
+        if (job.status === "ready") {
+          setAnalysisPhase("confirming");
+        } else {
+          // failed or canceled
+          setAnalysisError(
+            job.result?.fatalError ??
+              (job.status === "canceled"
+                ? "Analysis was canceled."
+                : "Analysis could not complete. You can search for the song manually."),
+          );
+          setAnalysisPhase("failed");
+        }
       },
       (_err) => {
-        // Non-fatal poll error; keep polling (backoff handles it)
+        // Non-fatal poll error; keep retrying (backoff handles frequency)
       },
     );
   };
@@ -696,6 +715,7 @@ export default function PostScreen() {
           rightsConfirmed,
           // AI analysis fields
           analysisJobId: analysisJobId ?? undefined,
+          detectedTrackId: analysisResult?.detectedTrackId,
           songMatchConfidence: analysisResult?.songMatchConfidence,
           vocalIsolationUsed: analysisResult?.vocalIsolationUsed,
           transcriptionSource: analysisResult?.transcriptionSource,
@@ -1065,13 +1085,11 @@ export default function PostScreen() {
                       { key: "searching_musixmatch", label: "Searching for song" },
                       { key: "matching_lyrics", label: "Matching lyrics" },
                     ].map(({ key, label }) => {
-                      const stageOrder = ["preparing", "isolating_vocals", "transcribing", "searching_musixmatch", "matching_lyrics", "analyzing_audio", "aligning_timing"];
-                      const currentIdx = stageOrder.indexOf(analysisStage);
-                      const itemIdx = stageOrder.indexOf(key);
-                      const isDone = currentIdx > itemIdx;
-                      const isActive = currentIdx === itemIdx;
-                      // Only show isolating_vocals if it became the active stage
-                      if (key === "isolating_vocals" && !isDone && !isActive) return null;
+                      // Authoritative: a stage is "done" only if we actually saw it run
+                      const isDone = seenStages.has(key) && analysisStage !== key;
+                      const isActive = analysisStage === key;
+                      // Only show isolating_vocals if LALAL.AI actually ran it
+                      if (key === "isolating_vocals" && !seenStages.has("isolating_vocals")) return null;
                       return (
                         <View key={key} style={styles.stageCheckItem}>
                           <Ionicons
@@ -1089,6 +1107,45 @@ export default function PostScreen() {
 
                   <TouchableOpacity onPress={handleSkipAnalysis} activeOpacity={0.7} style={styles.skipRow}>
                     <Text style={[styles.skipLink, { color: colors.mutedForeground }]}>Skip — search manually instead</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+
+              {/* ── Phase: failed ── */}
+              {analysisPhase === "failed" && (
+                <>
+                  <Text style={[styles.stepLabel, { color: colors.foreground }]}>Analysis didn't complete</Text>
+                  <View style={[styles.errorCard, { backgroundColor: "rgba(239,68,68,0.1)", borderColor: "rgba(239,68,68,0.3)" }]}>
+                    <Ionicons name="alert-circle-outline" size={18} color="#EF4444" />
+                    <Text style={[styles.stepHint, { color: "#EF4444" }]}>{analysisError}</Text>
+                  </View>
+                  <View style={styles.confirmActions}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setAnalysisError(null);
+                        setAnalysisPhase("idle");
+                        setSeenStages(new Set());
+                        handleStartAnalysis();
+                      }}
+                      style={[styles.secondaryBtn, { borderColor: colors.primary }]}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.secondaryBtnText, { color: colors.primary }]}>Retry analysis</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={handleSkipAnalysis}
+                      style={[styles.secondaryBtn, { borderColor: colors.border }]}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.secondaryBtnText, { color: colors.mutedForeground }]}>Search manually</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => { setAnalysisPhase("skipped"); setStep(7); }}
+                    activeOpacity={0.7}
+                    style={styles.skipRow}
+                  >
+                    <Text style={[styles.skipLink, { color: colors.mutedForeground }]}>Skip lyrics entirely</Text>
                   </TouchableOpacity>
                 </>
               )}
@@ -1516,31 +1573,52 @@ export default function PostScreen() {
               {uploadedVideoUrl && (
                 <View style={styles.videoPreviewContainer}>
                   <Video
+                    ref={videoRef}
                     source={{ uri: uploadedVideoUrl }}
                     style={styles.videoPreview}
                     resizeMode={ResizeMode.COVER}
                     shouldPlay
                     isLooping
                     isMuted={false}
+                    onPlaybackStatusUpdate={(status) => {
+                      if (status.isLoaded) setVideoPositionMs(status.positionMillis);
+                    }}
                   />
                   <LinearGradient colors={["transparent", "rgba(5,2,10,0.85)"]} style={StyleSheet.absoluteFill} pointerEvents="none" />
-                  {/* Lyric overlay on video */}
-                  {previewLyricsData && fullLyrics && (
-                    <View style={styles.videoLyricOverlay}>
-                      {fullLyrics
-                        .slice(lyricRangeStartLine, lyricRangeEndLine + 1)
-                        .slice(0, 3)
-                        .map((line, i) => (
+                  {/* Synced lyric overlay — active line + next 2 lines */}
+                  {fullLyrics && (() => {
+                    const rangeLines = fullLyrics.slice(lyricRangeStartLine, lyricRangeEndLine + 1);
+                    if (rangeLines.length === 0) return null;
+                    const sectionStartMs = fullLyrics[lyricRangeStartLine]?.startMs ?? null;
+                    let activeIdx: number;
+                    if (sectionStartMs === null || !rangeLines[0]?.startMs) {
+                      const totalMs = (videoDurationSec * 1000) || rangeLines.length * 3000;
+                      activeIdx = Math.min(
+                        Math.floor(videoPositionMs / (totalMs / rangeLines.length)),
+                        rangeLines.length - 1,
+                      );
+                    } else {
+                      const absMs = videoPositionMs + sectionStartMs + timingOffsetMs;
+                      activeIdx = rangeLines.findIndex(
+                        (l) => l.startMs !== null && l.endMs !== null && absMs >= (l.startMs ?? 0) && absMs < (l.endMs ?? Infinity),
+                      );
+                      if (activeIdx < 0) activeIdx = 0;
+                    }
+                    const displayLines = rangeLines.slice(activeIdx, activeIdx + 3);
+                    return (
+                      <View style={styles.videoLyricOverlay}>
+                        {displayLines.map((line, i) => (
                           <Text
-                            key={i}
+                            key={`${activeIdx}-${i}`}
                             style={i === 0 ? styles.videoLyricActive : styles.videoLyricDim}
                             numberOfLines={1}
                           >
                             {line.text}
                           </Text>
                         ))}
-                    </View>
-                  )}
+                      </View>
+                    );
+                  })()}
                 </View>
               )}
 

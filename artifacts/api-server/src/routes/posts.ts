@@ -364,6 +364,7 @@ router.post("/posts", requireAuth, async (req, res): Promise<void> => {
     rightsConfirmed?: boolean;
     // AI analysis fields
     analysisJobId?: string;
+    detectedTrackId?: string;
     songMatchConfidence?: number;
     vocalIsolationUsed?: boolean;
     transcriptionSource?: string;
@@ -407,6 +408,7 @@ router.post("/posts", requireAuth, async (req, res): Promise<void> => {
       rightsConfirmed: body.rightsConfirmed ?? false,
       // AI analysis fields
       analysisJobId: body.analysisJobId ?? null,
+      musixmatchTrackId: body.musixmatchTrackId ?? body.detectedTrackId ?? null,
       songMatchConfidence: body.songMatchConfidence ?? null,
       vocalIsolationUsed: body.vocalIsolationUsed ?? null,
       transcriptionSource: body.transcriptionSource ?? null,

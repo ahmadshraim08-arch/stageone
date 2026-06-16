@@ -391,7 +391,7 @@ router.post("/posts", requireAuth, async (req, res): Promise<void> => {
       performanceType: body.performanceType,
       genre: body.genre ?? null,
       language: body.language ?? null,
-      musixmatchTrackId: body.musixmatchTrackId ?? null,
+      musixmatchTrackId: body.musixmatchTrackId ?? body.detectedTrackId ?? null,
       trackTitle: body.trackTitle ?? null,
       trackArtist: body.trackArtist ?? null,
       lyricSectionId: body.lyricSectionId ?? null,
@@ -408,7 +408,6 @@ router.post("/posts", requireAuth, async (req, res): Promise<void> => {
       rightsConfirmed: body.rightsConfirmed ?? false,
       // AI analysis fields
       analysisJobId: body.analysisJobId ?? null,
-      musixmatchTrackId: body.musixmatchTrackId ?? body.detectedTrackId ?? null,
       songMatchConfidence: body.songMatchConfidence ?? null,
       vocalIsolationUsed: body.vocalIsolationUsed ?? null,
       transcriptionSource: body.transcriptionSource ?? null,

@@ -257,6 +257,14 @@ export default function PostScreen() {
 
   // ─── Effects ─────────────────────────────────────────────────────────────
 
+  // Stop polling when the component unmounts (e.g. user navigates away mid-analysis)
+  useEffect(() => {
+    return () => {
+      stopPolling();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Debounced song search
   useEffect(() => {
     const query = songQuery.trim();
@@ -1585,7 +1593,7 @@ export default function PostScreen() {
                     }}
                   />
                   <LinearGradient colors={["transparent", "rgba(5,2,10,0.85)"]} style={StyleSheet.absoluteFill} pointerEvents="none" />
-                  {/* Synced lyric overlay — active line + next 2 lines */}
+                  {/* Synced lyric overlay — active line (word-level if RichSync) + next 2 lines */}
                   {fullLyrics && (() => {
                     const rangeLines = fullLyrics.slice(lyricRangeStartLine, lyricRangeEndLine + 1);
                     if (rangeLines.length === 0) return null;
@@ -1605,17 +1613,45 @@ export default function PostScreen() {
                       if (activeIdx < 0) activeIdx = 0;
                     }
                     const displayLines = rangeLines.slice(activeIdx, activeIdx + 3);
+                    // RichSync word-level: find the last anchor whose videoMs ≤ current position
+                    const anchors = analysisResult?.timingAnchors;
+                    const hasWordAnchors = anchors?.some((a) => a.word);
+                    const activeAnchorWord = hasWordAnchors
+                      ? anchors
+                          ?.filter((a) => a.word && a.videoMs <= videoPositionMs)
+                          ?.at(-1)
+                          ?.word?.toLowerCase()
+                      : undefined;
                     return (
                       <View style={styles.videoLyricOverlay}>
-                        {displayLines.map((line, i) => (
-                          <Text
-                            key={`${activeIdx}-${i}`}
-                            style={i === 0 ? styles.videoLyricActive : styles.videoLyricDim}
-                            numberOfLines={1}
-                          >
-                            {line.text}
-                          </Text>
-                        ))}
+                        {displayLines.map((line, i) => {
+                          if (i !== 0 || !activeAnchorWord) {
+                            return (
+                              <Text
+                                key={`${activeIdx}-${i}`}
+                                style={i === 0 ? styles.videoLyricActive : styles.videoLyricDim}
+                                numberOfLines={1}
+                              >
+                                {line.text}
+                              </Text>
+                            );
+                          }
+                          // Active line with per-word highlight
+                          const tokens = line.text.split(/(\s+)/);
+                          const normalize = (s: string) => s.toLowerCase().replace(/[^\w]/g, "");
+                          return (
+                            <Text key={`${activeIdx}-${i}`} style={styles.videoLyricActive} numberOfLines={1}>
+                              {tokens.map((token, ti) => {
+                                const isActive = normalize(token) !== "" && normalize(token) === normalize(activeAnchorWord);
+                                return (
+                                  <Text key={ti} style={isActive ? styles.videoLyricWord : undefined}>
+                                    {token}
+                                  </Text>
+                                );
+                              })}
+                            </Text>
+                          );
+                        })}
                       </View>
                     );
                   })()}
@@ -1938,6 +1974,7 @@ const styles = StyleSheet.create({
   videoLyricOverlay: { position: "absolute", bottom: 20, left: 16, right: 16, alignItems: "center", gap: 4 },
   videoLyricActive: { color: "#fff", fontSize: 16, fontWeight: "700", textAlign: "center", textShadowColor: "rgba(0,0,0,0.8)", textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
   videoLyricDim: { color: "rgba(255,255,255,0.55)", fontSize: 13, textAlign: "center" },
+  videoLyricWord: { color: "#FCD34D", textShadowColor: "rgba(0,0,0,0.9)", textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
   // Type selection
   typeOption: { flexDirection: "row", alignItems: "center", gap: 14, padding: 16, borderRadius: 14, borderWidth: 1 },
   typeOptionText: { flex: 1 },

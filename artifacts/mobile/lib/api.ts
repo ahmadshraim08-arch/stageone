@@ -332,6 +332,7 @@ export interface AnalysisCandidate {
 export interface AnalysisTimingAnchor {
   videoMs: number;
   lyricMs: number;
+  word?: string;
   confidence?: number;
 }
 

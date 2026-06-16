@@ -1,0 +1,663 @@
+# StageOne — Core Playback, Profile, Search, Sharing, and Discover UI Fixes
+
+Do not add new major features until these issues are fixed.
+
+Inspect the current codebase first and identify the actual cause of each problem. Do not patch around the symptoms with hardcoded data. The fixes must work with newly created accounts and newly uploaded Music Minutes.
+
+## Current Problems
+
+1. A Music Minute continues playing audio after the user swipes away from it.
+2. Tapping the video does not pause or resume playback.
+3. Newly uploaded Music Minutes appear in the feed but do not appear under “My Music Minutes” on the current user’s profile.
+4. The Musixmatch song search in the posting flow does not return results or show an error.
+5. Users cannot add/follow friends and send a Music Minute directly to them.
+6. Genre filter text in Discover is clipped or truncated unless selected.
+7. The feed header overlaps the phone status bar and other labels.
+
+Fix all seven issues.
+
+---
+
+# 1. Fix Music Minute Video Playback
+
+## Problem
+
+When the user swipes vertically to another Music Minute or leaves the Home tab, the previous video continues playing audio.
+
+There is also no pause/resume interaction when the user taps the video.
+
+This creates overlapping audio and makes the feed feel broken.
+
+## Required behavior
+
+Only one video may play at a time.
+
+The currently visible Music Minute should play automatically.
+
+All other Music Minutes must be paused.
+
+A video must also pause when:
+
+* The user swipes to another Music Minute
+* The Home tab loses focus
+* The user opens Discover, Post, Live, or Profile
+* The app goes into the background
+* The user opens another screen
+* The video card is less than approximately 70% visible
+
+## Tap behavior
+
+Tapping the main video area should toggle:
+
+* Playing → paused
+* Paused → playing
+
+When paused, briefly display a large centered play icon.
+
+When resumed, briefly display a centered pause icon.
+
+The side buttons, profile icon, captions, comments, and Golden Mic button must remain tappable and must not trigger pause.
+
+## Implementation guidance
+
+Use one shared active post/video ID at the feed level.
+
+For a React Native FlatList, use:
+
+* `onViewableItemsChanged`
+* `viewabilityConfig`
+* A stable callback with `useRef`
+* Current route/tab focus
+* React Native `AppState`
+
+Each `MusicMinuteCard` should receive something equivalent to:
+
+```ts
+isActive: boolean
+```
+
+Playback should be derived from:
+
+```ts
+shouldPlay =
+  isActive &&
+  isScreenFocused &&
+  appState === "active" &&
+  !isManuallyPaused
+```
+
+Do not allow every card to manage autoplay independently.
+
+If the project already uses `expo-video`, continue using it.
+
+If the project currently uses `expo-av`, do not perform a risky migration unless necessary for this fix. Stabilize the current implementation first.
+
+## Acceptance criteria
+
+* Swipe from video A to video B: video A pauses immediately.
+* Only video B audio is audible.
+* Tap video B: playback pauses.
+* Tap again: playback resumes.
+* Switch to Profile: feed audio stops.
+* Minimize/background the app: audio stops.
+* Return to Home: only the visible video resumes.
+* Rapid scrolling never produces overlapping audio.
+
+---
+
+# 2. Fix “My Music Minutes” on Profile
+
+## Problem
+
+A logged-in user can upload a Music Minute, but the Profile screen shows an empty “My Music Minutes” section.
+
+The profile currently appears to be reading from seed data or a different data source than the feed/post flow.
+
+## Required behavior
+
+After a successful upload:
+
+* The new Music Minute is added to the global post state or backend database.
+* It appears in the Home feed.
+* It appears immediately under the logged-in user’s “My Music Minutes.”
+* The profile post count updates.
+* The post remains visible after navigating away and returning.
+* If persistence is implemented, it must remain after restarting the app.
+
+## Required investigation
+
+Inspect:
+
+* How the post screen creates a Music Minute
+* Where the feed reads Music Minutes
+* Where the profile reads Music Minutes
+* Whether the uploaded post uses the correct current user ID
+* Whether the profile filters by username instead of user ID
+* Whether seeded posts and created posts live in separate arrays
+* Whether AppContext is updated after posting
+* Whether the backend response is actually saved
+
+There must be one source of truth for Music Minutes.
+
+## Recommended architecture
+
+Use a shared data layer:
+
+```ts
+musicMinutes: MusicMinute[]
+addMusicMinute(post: MusicMinute): void
+```
+
+The profile should derive posts using:
+
+```ts
+musicMinutes.filter(
+  post => post.userId === currentUser.id
+)
+```
+
+Do not filter using display name or handle unless that is the canonical unique ID.
+
+If using a backend:
+
+1. POST the new Music Minute.
+2. Await successful response.
+3. Insert the returned post into AppContext/cache.
+4. Invalidate/refetch:
+
+   * Home feed
+   * Current user profile
+   * Post count
+5. Show a success confirmation.
+
+## Empty state
+
+If the user really has no posts, show:
+
+**Your stage is waiting. Post your first Music Minute.**
+
+Include a CTA:
+
+**Post a Music Minute**
+
+Do not show only blank loading lines.
+
+## Acceptance criteria
+
+* New account uploads a post.
+* The post appears in Home.
+* Profile post count changes from 0 to 1.
+* The post thumbnail appears under “My Music Minutes.”
+* Tapping the thumbnail opens the Music Minute.
+* Uploading a second post changes the count to 2.
+* Another user’s posts never appear in this section.
+
+---
+
+# 3. Diagnose and Fix Musixmatch Song Search
+
+## Problem
+
+On Step 3, “Tag the Song,” entering a search such as “Vance Joy” produces no visible results and no error message.
+
+The user currently cannot determine whether:
+
+* The search is loading
+* The API key is missing
+* The backend route failed
+* The mobile app used the wrong base URL
+* Musixmatch returned no results
+* Mock fallback was used
+* The request was never sent
+
+## Required behavior
+
+When the user enters a track, artist, or lyric phrase and taps Search:
+
+1. Show a loading indicator.
+2. Call the server-side Musixmatch proxy.
+3. Return and render ranked results.
+4. Allow the user to select a track.
+5. Show track title, artist, album, and available metadata.
+6. Clearly show an empty state or error state when needed.
+
+## Required investigation
+
+Inspect:
+
+* Mobile API base URL
+* Replit deployment URL
+* Local development address
+* Route registration
+* Environment variable name
+* Whether the mobile app can reach the API server
+* Search query URL encoding
+* Musixmatch response parsing
+* API key availability
+* HTTP response status
+* Mobile network permissions
+* CORS if the app is also running in web mode
+
+Test the endpoint independently before changing the UI.
+
+Example intended route:
+
+```http
+GET /api/musixmatch/search?q=Vance%20Joy
+```
+
+## API response contract
+
+Use a stable normalized response such as:
+
+```ts
+type TrackSearchResponse = {
+  source: "musixmatch" | "demo";
+  results: Array<{
+    trackId: string;
+    trackName: string;
+    artistName: string;
+    albumName?: string;
+    language?: string;
+    artworkUrl?: string;
+    hasLyrics?: boolean;
+    hasSyncedLyrics?: boolean;
+  }>;
+};
+```
+
+The mobile app must not depend directly on Musixmatch’s raw nested response.
+
+## UI states
+
+### Initial
+
+**Search by song title, artist, or lyrics**
+
+### Loading
+
+**Searching Musixmatch…**
+
+### No results
+
+**No matching tracks found. Try a song title or artist name.**
+
+### API failure
+
+**Song search is temporarily unavailable. You can retry or continue without tagging a song.**
+
+Buttons:
+
+* Retry
+* Skip
+
+### Results
+
+Display selectable cards with:
+
+* Song title
+* Artist
+* Album
+* Lyrics availability
+* Select action
+
+Do not hide a failed request behind the Skip button.
+
+## Debug visibility
+
+During development, log:
+
+* Requested URL without exposing the API key
+* HTTP status
+* Normalized result count
+* Whether source is Musixmatch or demo
+* Error message
+
+Never log the Musixmatch API key.
+
+## Acceptance criteria
+
+* Searching “Vance Joy” returns appropriate results.
+* Searching a song title returns results.
+* Selecting a track advances to lyric section selection.
+* Missing API key produces a clear fallback or error.
+* Search button cannot create duplicate simultaneous requests.
+* Spaces and special characters are URL encoded.
+* The user can retry.
+* The mobile app never exposes the API key.
+
+---
+
+# 4. Add Friends/Following and Direct Sharing
+
+## Problem
+
+The current share button does not give users a way to send a Music Minute to another StageOne user.
+
+StageOne should have a social sharing experience inside the app.
+
+## MVP definition
+
+Use a following-based model rather than a complex friend-request system.
+
+A user can:
+
+* Follow another user
+* View followers and following
+* Search StageOne users
+* Send a Music Minute to followed users
+* Copy a share link
+* Use the native external share sheet
+
+A “friend” can be displayed when two users follow each other, but mutual friendship is not required for the MVP.
+
+## Share button behavior
+
+When the user taps Share, open a bottom sheet with:
+
+### Send on StageOne
+
+* Search users
+* Recent people
+* Following
+* Select one or multiple users
+* Add an optional message
+* Send button
+
+### External options
+
+* Copy link
+* Native share
+* More options
+
+## Suggested data models
+
+```ts
+type Follow = {
+  followerId: string;
+  followingId: string;
+  createdAt: string;
+};
+```
+
+```ts
+type DirectShare = {
+  id: string;
+  senderId: string;
+  recipientId: string;
+  musicMinuteId: string;
+  message?: string;
+  createdAt: string;
+  seenAt?: string;
+};
+```
+
+For a lightweight hackathon version, direct shares can appear in Notifications or a simple Inbox.
+
+## Profile additions
+
+Add:
+
+* Followers count
+* Following count
+* Follow/Following button on other profiles
+* Optional “Friends” label for mutual follows
+
+Do not show a Follow button on the current user’s own profile.
+
+## Acceptance criteria
+
+* User A can follow User B.
+* User B appears in User A’s following list.
+* User A taps Share on a Music Minute.
+* User A sends it to User B.
+* User B sees the shared Music Minute in Inbox/Notifications.
+* Native sharing and copy link also work.
+* Share sheet closes cleanly.
+* Sending does not interrupt or restart multiple videos unexpectedly.
+
+---
+
+# 5. Fix Discover Genre Chips
+
+## Problem
+
+Genre names are clipped or partially hidden in the Discover screen.
+
+Examples such as Pop, R&B, Soul, Rap, Acoustic, and Indie should always be readable whether selected or not.
+
+## Required behavior
+
+Genre chips should:
+
+* Size themselves based on text
+* Have consistent horizontal padding
+* Remain fully readable
+* Scroll horizontally when they do not fit
+* Never crop text
+* Use a clear selected state
+* Support accessibility font scaling reasonably
+
+## Implementation guidance
+
+Do not use fixed narrow widths.
+
+Use:
+
+```ts
+paddingHorizontal: 18
+minHeight: 44
+alignItems: "center"
+justifyContent: "center"
+```
+
+Use a horizontal FlatList or ScrollView:
+
+```tsx
+horizontal
+showsHorizontalScrollIndicator={false}
+contentContainerStyle={{ paddingHorizontal: 16, gap: 10 }}
+```
+
+Ensure:
+
+```ts
+flexShrink: 0
+```
+
+Avoid:
+
+* Fixed chip width
+* `overflow: "hidden"` on text containers
+* Negative margins
+* Text colour that matches the background
+* Too-small line height
+
+Selected chip:
+
+* Purple/pink fill
+* White text
+
+Unselected chip:
+
+* Dark purple fill
+* Purple border
+* Light gray readable text
+
+## Acceptance criteria
+
+* Pop, R&B, Soul, Rap, Acoustic, Indie, Latin, Arabic Pop, and Rock are fully readable.
+* Text is readable before selecting.
+* Chips scroll horizontally.
+* No chip overlaps the next chip.
+* Works on small iPhone screens.
+* Works with increased font size.
+
+---
+
+# 6. Fix Feed Header Overlap
+
+## Problem
+
+The Home feed screenshot shows overlapping labels near the status bar:
+
+* StageOne
+* Reels
+* For You
+* Following
+
+The header collides with the device status area and video captions.
+
+## Required behavior
+
+Use safe-area spacing.
+
+Recommended top layout:
+
+* Optional small StageOne logo on left
+* Centered tabs: For You / Following
+* Search or mute button on right
+
+Do not include both “StageOne Reels” and another feed title if they compete for space.
+
+The header must:
+
+* Respect `SafeAreaView`
+* Have one clear visual hierarchy
+* Be readable over light and dark videos
+* Use a dark gradient overlay behind text
+* Not overlap the Dynamic Island/status bar
+
+## Acceptance criteria
+
+* No header text overlaps.
+* For You and Following are clearly tappable.
+* Header remains readable over bright video.
+* Status icons remain unobstructed.
+* Layout works on devices with and without Dynamic Island.
+
+---
+
+# 7. Loading, Error, and Empty States
+
+Add proper states everywhere affected by these fixes.
+
+## Feed
+
+* Loading spinner or skeleton
+* Empty feed message
+* Video load failure state
+* Retry button
+
+## Profile
+
+* Loading posts
+* No posts
+* Failed to load posts
+* Retry
+
+## Musixmatch search
+
+* Initial
+* Loading
+* Results
+* No results
+* Error
+* Demo fallback
+
+## Sharing
+
+* Loading people
+* No followed users
+* Send progress
+* Sent confirmation
+* Send failure
+
+Do not leave large blank areas without explaining what is happening.
+
+---
+
+# 8. Testing Requirements
+
+After implementation, run typecheck and test these flows manually.
+
+## Playback test
+
+1. Open Home.
+2. Play first video.
+3. Swipe to second video.
+4. Confirm first stops.
+5. Tap second to pause.
+6. Tap again to play.
+7. Open Profile.
+8. Confirm audio stops.
+
+## Post/profile test
+
+1. Create a new account.
+2. Upload a Music Minute.
+3. Confirm it appears in Home.
+4. Open Profile.
+5. Confirm it appears under My Music Minutes.
+6. Restart app if persistence exists.
+7. Confirm it remains.
+
+## Musixmatch test
+
+1. Open post flow.
+2. Select Cover.
+3. Search “Vance Joy.”
+4. Confirm loading state.
+5. Confirm results.
+6. Select a track.
+7. Continue to section picker.
+8. Test missing-key fallback separately.
+
+## Share test
+
+1. Follow another seeded account.
+2. Open a Music Minute.
+3. Tap Share.
+4. Send it to that account.
+5. Confirm recipient sees it.
+
+## Genre test
+
+1. Open Discover.
+2. Inspect every genre before selecting.
+3. Scroll horizontally.
+4. Select multiple genres one at a time.
+5. Confirm every label remains readable.
+
+## Header test
+
+1. Open Home on a device with Dynamic Island.
+2. Confirm no text overlaps.
+3. Test a bright video.
+4. Confirm header remains readable.
+
+---
+
+# 9. Final Deliverables
+
+After fixing the issues, report:
+
+1. Root cause of each bug.
+2. Files changed.
+3. Data model or API changes.
+4. Typecheck result.
+5. Manual test result for each acceptance test.
+6. Any remaining limitations.
+
+Do not report an issue as fixed unless the full user flow has been tested.
+
+Priority order:
+
+1. Video playback/audio
+2. Uploaded posts appearing on profile
+3. Musixmatch song search
+4. Genre chip readability
+5. Feed header overlap
+6. Follow/direct sharing
+
+The app must feel stable before new LyricStage features are added.

@@ -4,6 +4,7 @@ import { Image } from "expo-image";
 import { router } from "expo-router";
 import React from "react";
 import {
+  ActivityIndicator,
   Platform,
   ScrollView,
   StyleSheet,
@@ -26,9 +27,17 @@ const SINGER_IMAGES = [
 export default function ProfileScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { currentUser, musicMinutes, likedIds, savedIds, followingIds, logout } = useApp();
+  const { currentUser, musicMinutes, likedIds, savedIds, followingIds, logout, isLoaded } = useApp();
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
+
+  if (!isLoaded) {
+    return (
+      <View style={[styles.container, styles.loadingView, { backgroundColor: colors.background, paddingTop: topPad }]}>
+        <ActivityIndicator size="large" color="#A855F7" />
+      </View>
+    );
+  }
 
   if (!currentUser) {
     return (
@@ -172,10 +181,10 @@ export default function ProfileScreen() {
 
       {myMMs.length === 0 && (
         <View style={styles.emptyMMs}>
-          <MaterialCommunityIcons name="microphone-off" size={40} color={colors.mutedForeground} />
-          <Text style={[styles.emptyMMsTitle, { color: colors.foreground }]}>Your stage is waiting.</Text>
+          <MaterialCommunityIcons name="microphone-outline" size={48} color={colors.mutedForeground} />
+          <Text style={[styles.emptyMMsTitle, { color: colors.foreground }]}>Your stage is waiting…</Text>
           <Text style={[styles.emptyMMsSub, { color: colors.mutedForeground }]}>
-            Post your first Music Minute.
+            Post your first Music Minute and let the world hear your voice.
           </Text>
           <TouchableOpacity
             onPress={() => router.push("/(tabs)/post")}
@@ -317,6 +326,11 @@ const styles = StyleSheet.create({
   mmTileTitle: { color: "#fff", fontSize: 11, fontWeight: "600" },
   mmTileStats: { flexDirection: "row", alignItems: "center", gap: 3, marginTop: 2 },
   mmTileStatText: { color: "rgba(255,255,255,0.7)", fontSize: 10 },
+  loadingView: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   emptyMMs: { alignItems: "center", paddingVertical: 48, gap: 10, paddingHorizontal: 32 },
   emptyMMsTitle: { fontSize: 17, fontWeight: "700" },
   emptyMMsSub: { fontSize: 13, textAlign: "center", lineHeight: 18 },

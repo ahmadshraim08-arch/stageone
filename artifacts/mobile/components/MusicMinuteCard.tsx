@@ -142,6 +142,7 @@ export function MusicMinuteCard({ item, isActive, onCommentPress, onGoldenMicPre
   const [videoPositionMs, setVideoPositionMs] = useState(0);
   // Probe whether synced lyrics actually exist for this track (null = still probing)
   const [lyricsAvailable, setLyricsAvailable] = useState<boolean | null>(null);
+  const [videoError, setVideoError] = useState(false);
 
   const section = item.lyricSection ?? null;
 
@@ -337,7 +338,7 @@ export function MusicMinuteCard({ item, isActive, onCommentPress, onGoldenMicPre
 
   return (
     <View style={[styles.container, { height: cardHeight }]}>
-      {item.videoUri ? (
+      {item.videoUri && !videoError ? (
         <Video
           ref={videoRef}
           source={{ uri: item.videoUri }}
@@ -346,7 +347,27 @@ export function MusicMinuteCard({ item, isActive, onCommentPress, onGoldenMicPre
           shouldPlay={shouldPlay}
           isLooping
           isMuted={isMuted}
+          onError={() => setVideoError(true)}
         />
+      ) : item.videoUri && videoError ? (
+        <View style={styles.videoErrorContainer}>
+          <Image
+            source={SINGER_IMAGES[item.imageIndex % 3]}
+            style={StyleSheet.absoluteFill}
+            contentFit="cover"
+          />
+          <View style={styles.videoErrorOverlay}>
+            <Ionicons name="alert-circle-outline" size={40} color="rgba(255,255,255,0.7)" />
+            <Text style={styles.videoErrorText}>Video failed to load</Text>
+            <TouchableOpacity
+              style={styles.videoRetryBtn}
+              onPress={() => setVideoError(false)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.videoRetryText}>Retry</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       ) : (
         <Image
           source={SINGER_IMAGES[item.imageIndex % 3]}
@@ -686,6 +707,34 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     justifyContent: "center",
     alignItems: "center",
+  },
+  videoErrorContainer: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "#05020A",
+  },
+  videoErrorOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: "rgba(5,2,10,0.7)",
+  },
+  videoErrorText: {
+    color: "rgba(255,255,255,0.7)",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  videoRetryBtn: {
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+    borderRadius: 20,
+    backgroundColor: "rgba(168,85,247,0.85)",
+    marginTop: 4,
+  },
+  videoRetryText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "700",
   },
   risingBadge: {
     position: "absolute",

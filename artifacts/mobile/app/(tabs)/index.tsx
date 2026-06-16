@@ -1,8 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
+import { LinearGradient } from "expo-linear-gradient";
 import { router, useFocusEffect } from "expo-router";
 import React, { useCallback, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   AppState,
   AppStateStatus,
   FlatList,
@@ -31,7 +33,7 @@ export default function HomeScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { height: screenHeight } = useWindowDimensions();
-  const { musicMinutes, followingIds, currentUser } = useApp();
+  const { musicMinutes, followingIds, currentUser, isLoaded } = useApp();
 
   const [activeTab, setActiveTab] = useState<FeedTab>("forYou");
   const [commentsMmId, setCommentsMmId] = useState<string | null>(null);
@@ -91,6 +93,11 @@ export default function HomeScreen() {
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
 
+      <LinearGradient
+        colors={["rgba(5,2,10,0.85)", "rgba(5,2,10,0.4)", "transparent"]}
+        style={[styles.headerGradient, { height: topPad + 80 }]}
+        pointerEvents="none"
+      />
       <View style={[styles.topBar, { paddingTop: topPad + 8 }]}>
         <Text style={styles.logo}>StageOne</Text>
         <View style={styles.tabsRow}>
@@ -112,7 +119,11 @@ export default function HomeScreen() {
         </TouchableOpacity>
       </View>
 
-      {feedData.length === 0 ? (
+      {!isLoaded ? (
+        <View style={styles.loadingFeed}>
+          <ActivityIndicator size="large" color="#A855F7" />
+        </View>
+      ) : feedData.length === 0 ? (
         <View style={styles.emptyFeed}>
           <Ionicons name="people-outline" size={48} color={colors.mutedForeground} />
           <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
@@ -190,6 +201,13 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  headerGradient: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 9,
+  },
   topBar: {
     position: "absolute",
     top: 0,
@@ -236,6 +254,12 @@ const styles = StyleSheet.create({
   },
   searchBtn: {
     padding: 2,
+  },
+  loadingFeed: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 60,
   },
   emptyFeed: {
     flex: 1,

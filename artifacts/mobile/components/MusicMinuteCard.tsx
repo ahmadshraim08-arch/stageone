@@ -24,9 +24,12 @@ import { ShareSheet } from "@/components/ShareSheet";
 import {
   fetchLyrics,
   fetchTranslation,
+  fetchRichsync,
   probeAvailableTranslations,
   type LyricsResponse,
   type LyricLine,
+  type RichsyncResponse,
+  type RichsyncLine,
 } from "@/lib/musixmatch";
 
 const SINGER_IMAGES = [
@@ -145,6 +148,7 @@ export function MusicMinuteCard({ item, isActive, onCommentPress, onGoldenMicPre
   // Probe whether synced lyrics actually exist for this track (null = still probing)
   const [lyricsAvailable, setLyricsAvailable] = useState<boolean | null>(null);
   const [videoError, setVideoError] = useState(false);
+  const [richsync, setRichsync] = useState<RichsyncResponse | null>(null);
 
   const section = item.lyricSection ?? null;
 
@@ -196,7 +200,7 @@ export function MusicMinuteCard({ item, isActive, onCommentPress, onGoldenMicPre
     return () => { cancelled = true; };
   }, [section?.trackId]);
 
-  // Fetch lyrics + probe translations when overlay opens
+  // Fetch lyrics + richsync + probe translations when overlay opens
   useEffect(() => {
     if (!lyricVisible || !section) return;
     let cancelled = false;
@@ -204,6 +208,7 @@ export function MusicMinuteCard({ item, isActive, onCommentPress, onGoldenMicPre
     setLyricsLoading(true);
     setLyricError(null);
     setLyrics(null);
+    setRichsync(null);
     setAvailableLangs([]);
 
     fetchLyrics(section.trackId).then((result) => {
@@ -214,6 +219,10 @@ export function MusicMinuteCard({ item, isActive, onCommentPress, onGoldenMicPre
         setLyricError("Lyrics not available");
       }
       setLyricsLoading(false);
+    });
+
+    fetchRichsync(section.trackId).then((result) => {
+      if (!cancelled) setRichsync(result);
     });
 
     probeAvailableTranslations(section.trackId, ["es", "ar"]).then((langs) => {
@@ -270,6 +279,13 @@ export function MusicMinuteCard({ item, isActive, onCommentPress, onGoldenMicPre
       : translationUnavailable
         ? null
         : translatedLines;
+
+  // Compute active richsync line (word-level, EN only)
+  const activeRichLine: RichsyncLine | null = (() => {
+    if (!richsync?.hasRichsync || activeLang !== "en" || !section) return null;
+    const absMs = videoPositionMs + section.startMs + section.timingOffsetMs;
+    return richsync.lines.find((l) => absMs >= l.startMs && absMs < l.endMs) ?? null;
+  })();
 
   const activeLine: LyricLine | null = (() => {
     if (!section) return null;
@@ -454,6 +470,21 @@ export function MusicMinuteCard({ item, isActive, onCommentPress, onGoldenMicPre
               <Text style={styles.lyricUnavailable}>{lyricError}</Text>
             ) : activeLang !== "en" && translationUnavailable ? (
               <Text style={styles.lyricUnavailable}>Translation not available</Text>
+            ) : activeRichLine ? (
+              <View style={styles.lyricWordRow}>
+                {activeRichLine.words.map((word, i) => {
+                  const absMs = videoPositionMs + section.startMs + section.timingOffsetMs;
+                  const isWordActive = absMs >= word.startMs && absMs < word.endMs;
+                  return (
+                    <Text
+                      key={i}
+                      style={[styles.lyricWord, isWordActive ? styles.lyricWordActive : styles.lyricWordDim]}
+                    >
+                      {word.text}
+                    </Text>
+                  );
+                })}
+              </View>
             ) : activeLine ? (
               <Text style={styles.lyricActiveLine}>{activeLine.text}</Text>
             ) : lyrics ? (
@@ -869,6 +900,27 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 13,
     fontWeight: "700",
+  },
+  lyricWordRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "center",
+    alignItems: "baseline",
+    gap: 3,
+  },
+  lyricWord: {
+    fontSize: 20,
+    fontWeight: "700",
+    textAlign: "center",
+    textShadowColor: "rgba(0,0,0,0.8)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
+  },
+  lyricWordActive: {
+    color: "#FFFFFF",
+  },
+  lyricWordDim: {
+    color: "rgba(255,255,255,0.32)",
   },
   rightActions: {
     position: "absolute",

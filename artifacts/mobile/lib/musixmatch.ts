@@ -48,11 +48,34 @@ export interface TranslationResponse {
 }
 
 export interface MoodResponse {
-  source: "derived";
+  source: "musixmatch" | "derived";
   trackId: string;
   moodTags: string[];
   primaryMood: string;
   accentColor: string;
+  meaning?: string;
+  rating?: string;
+}
+
+export interface RichsyncWord {
+  text: string;
+  startMs: number;
+  endMs: number;
+}
+
+export interface RichsyncLine {
+  text: string;
+  startMs: number;
+  endMs: number;
+  words: RichsyncWord[];
+}
+
+export interface RichsyncResponse {
+  source: LyricSource;
+  trackId: string;
+  durationMs: number | null;
+  hasRichsync: boolean;
+  lines: RichsyncLine[];
 }
 
 export interface TrackResult {
@@ -80,6 +103,7 @@ const lyricsCache = new Map<string, LyricsResponse>();
 const segmentsCache = new Map<string, SegmentsResponse>();
 const translationCache = new Map<string, TranslationResponse | null>();
 const moodCache = new Map<string, MoodResponse>();
+const richsyncCache = new Map<string, RichsyncResponse>();
 const searchCache = new Map<string, { tracks: TrackResult[]; source: string }>();
 
 const SEARCH_CACHE_MAX = 50;
@@ -158,6 +182,24 @@ export async function fetchMood(trackId: string): Promise<MoodResponse | null> {
 }
 
 /**
+ * Fetch word-level richsync data for a track.
+ * When hasRichsync=true, each line contains per-word start/end timing.
+ * When hasRichsync=false, each line has a single word entry (line-level only).
+ * Falls back to null on fetch error.
+ */
+export async function fetchRichsync(trackId: string): Promise<RichsyncResponse | null> {
+  const key = trackId;
+  if (richsyncCache.has(key)) return richsyncCache.get(key)!;
+  try {
+    const data = await apiFetch<RichsyncResponse>(`/richsync/${encodeURIComponent(trackId)}`);
+    richsyncCache.set(key, data);
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Probe a set of candidate languages for a given track and return only those
  * where lines !== null. Used by the lyric overlay to populate language pills
  * dynamically without hardcoding.
@@ -209,5 +251,6 @@ export function clearCache(): void {
   segmentsCache.clear();
   translationCache.clear();
   moodCache.clear();
+  richsyncCache.clear();
   searchCache.clear();
 }

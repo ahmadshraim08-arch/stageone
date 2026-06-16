@@ -46,11 +46,34 @@ export interface TranslationResponse {
 }
 
 export interface MoodResponse {
-  source: "derived";
+  source: "musixmatch" | "derived";
   trackId: string;
   moodTags: string[];
   primaryMood: string;
   accentColor: string;
+  meaning?: string;
+  rating?: string;
+}
+
+export interface RichsyncWord {
+  text: string;
+  startMs: number;
+  endMs: number;
+}
+
+export interface RichsyncLine {
+  text: string;
+  startMs: number;
+  endMs: number;
+  words: RichsyncWord[];
+}
+
+export interface RichsyncResponse {
+  source: LyricSource;
+  trackId: string;
+  durationMs: number | null;
+  hasRichsync: boolean;
+  lines: RichsyncLine[];
 }
 
 // ---------------------------------------------------------------------------
@@ -406,15 +429,68 @@ const DEFAULT_MOOD: MoodEntry = {
   accentColor: "#A855F7",
 };
 
+const MOOD_ACCENT_COLORS: Record<string, string> = {
+  Love: "#EC4899",
+  Heartbreak: "#6366F1",
+  Joy: "#F59E0B",
+  Empowerment: "#A855F7",
+  Angst: "#EF4444",
+  Reflection: "#14B8A6",
+  Inspiration: "#10B981",
+  Nostalgia: "#8B5CF6",
+  Despair: "#3B82F6",
+  Celebration: "#F97316",
+  Anger: "#EF4444",
+  Peace: "#10B981",
+  Solitude: "#6366F1",
+  Adventure: "#F59E0B",
+  "Social Commentary": "#A855F7",
+  Hope: "#10B981",
+  Spirituality: "#8B5CF6",
+  Freedom: "#14B8A6",
+  Party: "#EC4899",
+  Nature: "#10B981",
+};
+
 function isKnownTrack(trackId: string): boolean {
   return CATALOGUE.some((t) => t.track_id === trackId);
 }
 
 function moodForGenre(genre: string): MoodEntry {
   if (GENRE_TO_MOOD[genre]) return GENRE_TO_MOOD[genre];
-  // Partial match
   const key = Object.keys(GENRE_TO_MOOD).find((k) => genre.toLowerCase().includes(k.toLowerCase()));
   return key ? GENRE_TO_MOOD[key] : DEFAULT_MOOD;
+}
+
+function parseRichsyncBody(raw: string): RichsyncLine[] {
+  try {
+    const parsed = JSON.parse(raw) as Array<{
+      ts: number;
+      te: number;
+      l: Array<{ c: string; o: number }>;
+    }>;
+    return parsed
+      .filter((entry) => entry.l.some((w) => w.c.trim() !== "" && w.c !== "♫"))
+      .map((entry) => {
+        const lineStartMs = Math.round(entry.ts * 1000);
+        const lineEndMs = Math.round(entry.te * 1000);
+        const words: RichsyncWord[] = entry.l
+          .filter((w) => w.c.trim() !== "" && w.c !== "♫")
+          .map((w, i, arr) => {
+            const wordStartMs = Math.round((entry.ts + w.o) * 1000);
+            const nextOffset = arr[i + 1]?.o;
+            const wordEndMs =
+              nextOffset !== undefined
+                ? Math.round((entry.ts + nextOffset) * 1000)
+                : lineEndMs;
+            return { text: w.c, startMs: wordStartMs, endMs: wordEndMs };
+          });
+        const text = entry.l.map((w) => w.c).join("").trim();
+        return { text, startMs: lineStartMs, endMs: lineEndMs, words };
+      });
+  } catch {
+    return [];
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -429,7 +505,7 @@ router.get("/musixmatch/search", async (req, res) => {
   if (apiKey) {
     try {
       const result = await mxFetch(
-        `track.search?q_track_artist=${encodeURIComponent(q)}&page_size=15&page=1&s_track_rating=desc`,
+        `track.search?q_track_artist=${encodeURIComponent(q)}&page_size=15&page=1&s_track_rating=desc&f_has_lyrics=1`,
         apiKey,
       );
       if (result.status === 200) {
@@ -482,6 +558,102 @@ router.get("/musixmatch/track/:trackId", async (req, res) => {
   const entry = CATALOGUE.find((t) => t.track_id === trackId);
   if (entry) return res.json({ track: entry, source: "demo" });
   return res.status(404).json({ error: "track_not_found" });
+});
+
+// ---------------------------------------------------------------------------
+// Route: GET /musixmatch/richsync/:trackId
+// Returns word-level timing when available (hasRichsync=true), otherwise
+// line-level data wrapped in the same shape (hasRichsync=false).
+// ---------------------------------------------------------------------------
+
+router.get("/musixmatch/richsync/:trackId", async (req, res) => {
+  const { trackId } = req.params;
+  const apiKey = process.env.MUSIXMATCH_API_KEY;
+
+  if (apiKey) {
+    // Try real word-level richsync first
+    try {
+      const result = await mxFetch(`track.richsync.get?track_id=${trackId}`, apiKey);
+      if (result.status === 200) {
+        const richsyncObj = result.body.richsync as Record<string, unknown> | undefined;
+        const richsyncBody = richsyncObj?.richsync_body as string | undefined;
+        const durationMs = richsyncObj?.richsync_length
+          ? Math.round((richsyncObj.richsync_length as number) * 1000)
+          : null;
+
+        if (richsyncBody) {
+          const lines = parseRichsyncBody(richsyncBody);
+          if (lines.length > 0) {
+            const response: RichsyncResponse = {
+              source: "musixmatch",
+              trackId,
+              durationMs,
+              hasRichsync: true,
+              lines,
+            };
+            return res.json(response);
+          }
+        }
+      }
+      // 404 = no richsync for this track; 403 = not on plan → fall through
+    } catch (err) {
+      req.log.warn({ err }, "Musixmatch richsync.get error, falling back to subtitle");
+    }
+
+    // Richsync unavailable — fall back to subtitle lines as single-word lines
+    try {
+      const lyricResult = await getLyrics(trackId, apiKey);
+      if (lyricResult.hasSync && lyricResult.lines.length > 0) {
+        const lines: RichsyncLine[] = lyricResult.lines
+          .filter((l): l is { text: string; startMs: number; endMs: number } =>
+            l.startMs !== null && l.endMs !== null,
+          )
+          .map((l) => ({
+            text: l.text,
+            startMs: l.startMs,
+            endMs: l.endMs,
+            words: [{ text: l.text, startMs: l.startMs, endMs: l.endMs }],
+          }));
+        const response: RichsyncResponse = {
+          source: "musixmatch",
+          trackId,
+          durationMs: lyricResult.durationMs,
+          hasRichsync: false,
+          lines,
+        };
+        return res.json(response);
+      }
+    } catch (err) {
+      req.log.warn({ err }, "Musixmatch richsync subtitle fallback error");
+    }
+  }
+
+  // Demo fallback — only for known tracks
+  if (!isKnownTrack(trackId)) {
+    return res.status(404).json({ error: "track_not_found" });
+  }
+  const demo = DEMO_TRACKS[trackId];
+  if (!demo) return res.status(404).json({ error: "track_not_found" });
+
+  const lines: RichsyncLine[] = demo.lines
+    .filter((l): l is { text: string; startMs: number; endMs: number } =>
+      l.startMs !== null && l.endMs !== null,
+    )
+    .map((l) => ({
+      text: l.text,
+      startMs: l.startMs,
+      endMs: l.endMs,
+      words: [{ text: l.text, startMs: l.startMs, endMs: l.endMs }],
+    }));
+
+  const response: RichsyncResponse = {
+    source: "demo",
+    trackId,
+    durationMs: demo.durationMs,
+    hasRichsync: false,
+    lines,
+  };
+  return res.json(response);
 });
 
 // ---------------------------------------------------------------------------
@@ -657,34 +829,87 @@ router.get("/musixmatch/mood/:trackId", async (req, res) => {
   const { trackId } = req.params;
   const apiKey = process.env.MUSIXMATCH_API_KEY;
 
-  let genre = DEMO_TRACKS[trackId]?.genre;
-  let resolvedViaMusixmatch = false;
-
-  // Try to get genre from Musixmatch track.get
   if (apiKey) {
+    // Step 1 — Try real mood/theme data from Musixmatch Analysis API
+    try {
+      const analysisResult = await mxFetch(
+        `track.lyrics.analysis.get?track_id=${trackId}`,
+        apiKey,
+      );
+      if (analysisResult.status === 200) {
+        const body = analysisResult.body;
+        const analysisObj = (
+          (body.lyrics_analysis ?? body.analysis) as Record<string, unknown> | undefined
+        );
+        if (analysisObj) {
+          const rawMoods = analysisObj.moods as
+            | Array<string | { mood: string } | Record<string, unknown>>
+            | undefined;
+          const moodStrings = rawMoods
+            ? rawMoods
+                .map((m) =>
+                  typeof m === "string"
+                    ? m
+                    : typeof m === "object" && "mood" in m
+                      ? String(m.mood ?? "")
+                      : "",
+                )
+                .filter(Boolean)
+            : [];
+          if (moodStrings.length > 0) {
+            const primaryMood = moodStrings[0];
+            const accentColor = MOOD_ACCENT_COLORS[primaryMood] ?? DEFAULT_MOOD.accentColor;
+            const meaning = analysisObj.meaning as string | undefined;
+            const rating = analysisObj.rating as string | undefined;
+            const response: MoodResponse = {
+              source: "musixmatch",
+              trackId,
+              moodTags: moodStrings,
+              primaryMood,
+              accentColor,
+              ...(meaning ? { meaning } : {}),
+              ...(rating ? { rating } : {}),
+            };
+            return res.json(response);
+          }
+        }
+      }
+      // 403 = Analysis API not on this plan — fall through to genre-based
+    } catch (err) {
+      req.log.warn({ err }, "Musixmatch track.lyrics.analysis.get error, falling back");
+    }
+
+    // Step 2 — Fall back: derive mood from genre via track.get
     try {
       const result = await mxFetch(`track.get?track_id=${trackId}`, apiKey);
       if (result.status === 200) {
         const track = result.body.track as Record<string, unknown> | undefined;
-        const genreList = (track?.primary_genres as Record<string, unknown>)?.music_genre_list as
+        const genreList = (track?.primary_genres as Record<string, unknown>)
+          ?.music_genre_list as
           | Array<{ music_genre: { music_genre_name: string } }>
           | undefined;
-        if (genreList && genreList.length > 0) {
-          genre = genreList[0].music_genre.music_genre_name;
-        }
-        resolvedViaMusixmatch = true;
+        const genre = genreList?.[0]?.music_genre?.music_genre_name ?? "";
+        const mood = moodForGenre(genre);
+        const response: MoodResponse = {
+          source: "derived",
+          trackId,
+          moodTags: mood.tags,
+          primaryMood: mood.primaryMood,
+          accentColor: mood.accentColor,
+        };
+        return res.json(response);
       }
-    } catch {
-      // ignore — fall through to demo
+    } catch (err) {
+      req.log.warn({ err }, "Musixmatch track.get error in mood route");
     }
   }
 
-  // In demo mode, only serve known tracks
-  if (!resolvedViaMusixmatch && !isKnownTrack(trackId)) {
+  // Demo / no-API-key fallback — only serve known tracks
+  if (!isKnownTrack(trackId)) {
     return res.status(404).json({ error: "track_not_found" });
   }
-
-  const mood = moodForGenre(genre ?? "");
+  const genre = DEMO_TRACKS[trackId]?.genre ?? "";
+  const mood = moodForGenre(genre);
   const response: MoodResponse = {
     source: "derived",
     trackId,
@@ -698,14 +923,16 @@ router.get("/musixmatch/mood/:trackId", async (req, res) => {
 export default router;
 
 // ---------------------------------------------------------------------------
-// Exported TypeScript contract — copy/import in mobile lib/musixmatch.ts
+// Exported TypeScript contract — mirrored in mobile lib/musixmatch.ts
 // ---------------------------------------------------------------------------
 //
-// export type { LyricSource, LyricLine, LyricsResponse, Segment, SegmentsResponse,
-//               TranslationResponse, MoodResponse } from "@workspace/api-server/src/routes/musixmatch";
-//
-// LyricsResponse   → GET /api/musixmatch/lyrics/:trackId
-// SegmentsResponse → GET /api/musixmatch/segments/:trackId
+// LyricsResponse      → GET /api/musixmatch/lyrics/:trackId
+// SegmentsResponse    → GET /api/musixmatch/segments/:trackId
 // TranslationResponse → GET /api/musixmatch/translate/:trackId/:lang
-// MoodResponse     → GET /api/musixmatch/mood/:trackId
+// MoodResponse        → GET /api/musixmatch/mood/:trackId
+//                        source:"musixmatch" when track.lyrics.analysis.get succeeds
+//                        source:"derived"    when falling back to genre-based local mapping
+// RichsyncResponse    → GET /api/musixmatch/richsync/:trackId
+//                        hasRichsync:true  — word-level timing from track.richsync.get
+//                        hasRichsync:false — line-level subtitle data in same shape
 // ---------------------------------------------------------------------------

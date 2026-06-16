@@ -344,8 +344,7 @@ export default function PostScreen() {
     if (step === 6) {
       if (performanceType === "cover" && selectedSong && selectedSection) { setStep(5); return; }
       if (performanceType === "cover" && selectedSong) { setStep(4); return; }
-      if (performanceType === "cover") { setStep(3); return; }
-      setStep(2); return;
+      setStep(3); return;
     }
     if (step === 5) { setStep(4); return; }
     if (step === 4) { setStep(3); return; }
@@ -708,7 +707,7 @@ export default function PostScreen() {
                 </TouchableOpacity>
               ))}
               <TouchableOpacity
-                onPress={() => setStep(performanceType === "cover" ? 3 : 6)}
+                onPress={() => setStep(3)}
                 style={styles.nextBtn}
                 activeOpacity={0.85}
               >
@@ -725,10 +724,17 @@ export default function PostScreen() {
             </View>
           )}
 
-          {/* ── Step 3: Song Tagging (cover only) ── */}
-          {step === 3 && performanceType === "cover" && (
+          {/* ── Step 3: Song Tagging (all performance types) ── */}
+          {step === 3 && (
             <View style={styles.stepView}>
-              <Text style={[styles.stepLabel, { color: colors.foreground }]}>3. Tag the Song</Text>
+              <Text style={[styles.stepLabel, { color: colors.foreground }]}>
+                {performanceType === "cover" ? "3. Tag the Song" : "3. Tag Inspiration or Backing Track"}
+              </Text>
+              {performanceType !== "cover" && (
+                <Text style={[styles.stepHint, { color: colors.mutedForeground }]}>
+                  Optional — tag a song that inspired this performance, a backing track, or a sample. This helps with discoverability.
+                </Text>
+              )}
               <View
                 style={[
                   styles.musixmatchBadge,
@@ -848,7 +854,13 @@ export default function PostScreen() {
                 </View>
               )}
               <TouchableOpacity
-                onPress={() => setStep(selectedSong ? 4 : 6)}
+                onPress={() => {
+                  if (performanceType === "cover" && selectedSong) {
+                    setStep(4);
+                  } else {
+                    setStep(6);
+                  }
+                }}
                 style={[styles.nextBtn, { marginTop: 16 }]}
                 activeOpacity={0.85}
               >
@@ -859,7 +871,11 @@ export default function PostScreen() {
                   style={styles.nextBtnGradient}
                 >
                   <Text style={styles.nextBtnText}>
-                    {selectedSong ? "Choose Lyric Section" : "Skip"}
+                    {performanceType === "cover" && selectedSong
+                      ? "Choose Lyric Section"
+                      : selectedSong
+                        ? "Continue"
+                        : "Skip"}
                   </Text>
                   <Ionicons name="chevron-forward" size={18} color="#fff" />
                 </LinearGradient>

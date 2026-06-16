@@ -20,6 +20,7 @@ export const postsTable = pgTable("posts", {
   trackArtist: text("track_artist"),
   lyricSectionId: text("lyric_section_id"),
   rightsConfirmed: boolean("rights_confirmed").notNull().default(false),
+  goldenMicCount: integer("golden_mic_count").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
 });

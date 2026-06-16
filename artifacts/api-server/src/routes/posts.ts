@@ -1,22 +1,33 @@
 import { Router, type IRouter } from "express";
-import { db, postsTable, usersTable } from "@workspace/db";
-import { eq, desc, isNull, and, lt } from "drizzle-orm";
+import { db, postsTable, usersTable, likesTable, followsTable, goldenMicTransactionsTable } from "@workspace/db";
+import { eq, desc, isNull, and, lt, inArray, sql, gte } from "drizzle-orm";
 import { requireAuth } from "../middleware/auth";
 
 const router: IRouter = Router();
 
-router.get("/posts", async (req, res): Promise<void> => {
+router.get("/posts", requireAuth, async (req, res): Promise<void> => {
   const limitRaw = req.query.limit as string | undefined;
   const cursorRaw = req.query.cursor as string | undefined;
   const userIdRaw = req.query.userId as string | undefined;
+  const feed = req.query.feed as string | undefined;
 
   const limit = Math.min(parseInt(limitRaw ?? "20", 10) || 20, 100);
   const cursor = cursorRaw ? parseInt(cursorRaw, 10) : undefined;
   const filterUserId = userIdRaw ? parseInt(userIdRaw, 10) : undefined;
+  const viewerId = req.userId;
 
   const conditions = [isNull(postsTable.deletedAt)];
   if (filterUserId && !isNaN(filterUserId)) conditions.push(eq(postsTable.userId, filterUserId));
   if (cursor && !isNaN(cursor)) conditions.push(lt(postsTable.id, cursor));
+
+  if (feed === "following") {
+    conditions.push(
+      inArray(
+        postsTable.userId,
+        db.select({ id: followsTable.followingId }).from(followsTable).where(eq(followsTable.followerId, viewerId)),
+      ),
+    );
+  }
 
   const rows = await db
     .select({
@@ -34,6 +45,7 @@ router.get("/posts", async (req, res): Promise<void> => {
       trackArtist: postsTable.trackArtist,
       lyricSectionId: postsTable.lyricSectionId,
       rightsConfirmed: postsTable.rightsConfirmed,
+      goldenMicCount: postsTable.goldenMicCount,
       createdAt: postsTable.createdAt,
       creator: {
         id: usersTable.id,
@@ -41,6 +53,12 @@ router.get("/posts", async (req, res): Promise<void> => {
         displayName: usersTable.displayName,
         avatarUrl: usersTable.avatarUrl,
       },
+      likesCount: sql<number>`(SELECT COUNT(*) FROM likes WHERE likes.post_id = ${postsTable.id})`,
+      commentsCount: sql<number>`(SELECT COUNT(*) FROM comments WHERE comments.post_id = ${postsTable.id} AND comments.deleted_at IS NULL)`,
+      savesCount: sql<number>`(SELECT COUNT(*) FROM saves WHERE saves.post_id = ${postsTable.id})`,
+      viewerHasLiked: sql<boolean>`EXISTS(SELECT 1 FROM likes WHERE likes.post_id = ${postsTable.id} AND likes.user_id = ${viewerId})`,
+      viewerHasSaved: sql<boolean>`EXISTS(SELECT 1 FROM saves WHERE saves.post_id = ${postsTable.id} AND saves.user_id = ${viewerId})`,
+      viewerIsFollowing: sql<boolean>`EXISTS(SELECT 1 FROM follows WHERE follows.follower_id = ${viewerId} AND follows.following_id = ${postsTable.userId})`,
     })
     .from(postsTable)
     .innerJoin(usersTable, eq(postsTable.userId, usersTable.id))
@@ -129,6 +147,133 @@ router.delete("/posts/:id", requireAuth, async (req, res): Promise<void> => {
     .where(eq(postsTable.id, postId));
 
   res.sendStatus(204);
+});
+
+router.post("/posts/:id/like", requireAuth, async (req, res): Promise<void> => {
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const postId = parseInt(raw, 10);
+
+  if (isNaN(postId)) {
+    res.status(400).json({ error: "Invalid post id" });
+    return;
+  }
+
+  const [post] = await db
+    .select({ id: postsTable.id })
+    .from(postsTable)
+    .where(and(eq(postsTable.id, postId), isNull(postsTable.deletedAt)))
+    .limit(1);
+
+  if (!post) {
+    res.status(404).json({ error: "Post not found" });
+    return;
+  }
+
+  await db
+    .insert(likesTable)
+    .values({ userId: req.userId, postId })
+    .onConflictDoNothing();
+
+  const [{ likesCount }] = await db
+    .select({ likesCount: sql<number>`COUNT(*)` })
+    .from(likesTable)
+    .where(eq(likesTable.postId, postId));
+
+  res.status(200).json({ liked: true, likesCount });
+});
+
+router.delete("/posts/:id/like", requireAuth, async (req, res): Promise<void> => {
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const postId = parseInt(raw, 10);
+
+  if (isNaN(postId)) {
+    res.status(400).json({ error: "Invalid post id" });
+    return;
+  }
+
+  await db
+    .delete(likesTable)
+    .where(and(eq(likesTable.userId, req.userId), eq(likesTable.postId, postId)));
+
+  const [{ likesCount }] = await db
+    .select({ likesCount: sql<number>`COUNT(*)` })
+    .from(likesTable)
+    .where(eq(likesTable.postId, postId));
+
+  res.status(200).json({ liked: false, likesCount });
+});
+
+router.post("/posts/:id/golden-mic", requireAuth, async (req, res): Promise<void> => {
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const postId = parseInt(raw, 10);
+
+  if (isNaN(postId)) {
+    res.status(400).json({ error: "Invalid post id" });
+    return;
+  }
+
+  const amountRaw = (req.body as { amount?: number }).amount;
+  const amount = typeof amountRaw === "number" ? Math.floor(amountRaw) : 1;
+
+  if (amount < 1) {
+    res.status(400).json({ error: "Amount must be at least 1" });
+    return;
+  }
+
+  type TxResult =
+    | { error: string; status: number }
+    | { goldenMicCount: number; senderBalance: number };
+
+  const result: TxResult = await db.transaction(async (tx) => {
+    const [post] = await tx
+      .select({ id: postsTable.id, userId: postsTable.userId })
+      .from(postsTable)
+      .where(and(eq(postsTable.id, postId), isNull(postsTable.deletedAt)))
+      .limit(1);
+
+    if (!post) return { error: "Post not found", status: 404 };
+    if (post.userId === req.userId) return { error: "Cannot send Golden Mics to your own post", status: 400 };
+
+    const deducted = await tx
+      .update(usersTable)
+      .set({ goldenMicBalance: sql`golden_mic_balance - ${amount}` })
+      .where(and(eq(usersTable.id, req.userId), gte(usersTable.goldenMicBalance, amount)))
+      .returning({ goldenMicBalance: usersTable.goldenMicBalance });
+
+    if (deducted.length === 0) {
+      return { error: "Insufficient Golden Mic balance", status: 402 };
+    }
+
+    await tx
+      .update(usersTable)
+      .set({ goldenMicBalance: sql`golden_mic_balance + ${amount}` })
+      .where(eq(usersTable.id, post.userId));
+
+    const [updatedPost] = await tx
+      .update(postsTable)
+      .set({ goldenMicCount: sql`golden_mic_count + ${amount}` })
+      .where(eq(postsTable.id, postId))
+      .returning({ goldenMicCount: postsTable.goldenMicCount });
+
+    await tx.insert(goldenMicTransactionsTable).values({
+      fromUserId: req.userId,
+      toUserId: post.userId,
+      postId,
+      amount,
+    });
+
+    return {
+      goldenMicCount: updatedPost.goldenMicCount,
+      senderBalance: deducted[0].goldenMicBalance,
+    };
+  });
+
+  if ("error" in result) {
+    res.status(result.status).json({ error: result.error });
+    return;
+  }
+
+  res.status(200).json(result);
 });
 
 export default router;

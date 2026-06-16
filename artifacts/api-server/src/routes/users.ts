@@ -1,11 +1,11 @@
 import { Router, type IRouter } from "express";
 import { db, usersTable, postsTable, followsTable } from "@workspace/db";
-import { eq, count, isNull } from "drizzle-orm";
+import { eq, count, isNull, and } from "drizzle-orm";
 import { requireAuth } from "../middleware/auth";
 
 const router: IRouter = Router();
 
-router.get("/users/:username", async (req, res): Promise<void> => {
+router.get("/users/:username", requireAuth, async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.username)
     ? req.params.username[0]
     : req.params.username;
@@ -21,10 +21,12 @@ router.get("/users/:username", async (req, res): Promise<void> => {
     return;
   }
 
+  const viewerId = req.userId;
+
   const [postCount] = await db
     .select({ value: count() })
     .from(postsTable)
-    .where(eq(postsTable.userId, user.id));
+    .where(and(eq(postsTable.userId, user.id), isNull(postsTable.deletedAt)));
 
   const [followerCount] = await db
     .select({ value: count() })
@@ -36,12 +38,23 @@ router.get("/users/:username", async (req, res): Promise<void> => {
     .from(followsTable)
     .where(eq(followsTable.followerId, user.id));
 
+  let viewerIsFollowing = false;
+  if (viewerId !== user.id) {
+    const [followRow] = await db
+      .select({ id: followsTable.id })
+      .from(followsTable)
+      .where(and(eq(followsTable.followerId, viewerId), eq(followsTable.followingId, user.id)))
+      .limit(1);
+    viewerIsFollowing = !!followRow;
+  }
+
   res.json({
     ...user,
     postCount: postCount?.value ?? 0,
     followerCount: followerCount?.value ?? 0,
     followingCount: followingCount?.value ?? 0,
     goldenMicsReceived: user.goldenMicBalance,
+    viewerIsFollowing,
   });
 });
 
@@ -87,7 +100,7 @@ router.patch("/users/me", requireAuth, async (req, res): Promise<void> => {
   const [postCount] = await db
     .select({ value: count() })
     .from(postsTable)
-    .where(eq(postsTable.userId, updated.id));
+    .where(and(eq(postsTable.userId, updated.id), isNull(postsTable.deletedAt)));
 
   const [followerCount] = await db
     .select({ value: count() })
@@ -105,6 +118,7 @@ router.patch("/users/me", requireAuth, async (req, res): Promise<void> => {
     followerCount: followerCount?.value ?? 0,
     followingCount: followingCount?.value ?? 0,
     goldenMicsReceived: updated.goldenMicBalance,
+    viewerIsFollowing: false,
   });
 });
 

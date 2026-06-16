@@ -316,6 +316,13 @@ router.post("/posts", requireAuth, async (req, res): Promise<void> => {
     trackTitle?: string;
     trackArtist?: string;
     lyricSectionId?: string;
+    lyricSectionLabel?: string;
+    lyricSectionStartMs?: number;
+    lyricSectionEndMs?: number;
+    lyricSectionStartLine?: number;
+    lyricSectionEndLine?: number;
+    lyricTimingMode?: string;
+    lyricTimingOffsetMs?: number;
     rightsConfirmed?: boolean;
   };
 
@@ -339,6 +346,13 @@ router.post("/posts", requireAuth, async (req, res): Promise<void> => {
       trackTitle: body.trackTitle ?? null,
       trackArtist: body.trackArtist ?? null,
       lyricSectionId: body.lyricSectionId ?? null,
+      lyricSectionLabel: body.lyricSectionLabel ?? null,
+      lyricSectionStartMs: body.lyricSectionStartMs ?? null,
+      lyricSectionEndMs: body.lyricSectionEndMs ?? null,
+      lyricSectionStartLine: body.lyricSectionStartLine ?? null,
+      lyricSectionEndLine: body.lyricSectionEndLine ?? null,
+      lyricTimingMode: body.lyricTimingMode ?? null,
+      lyricTimingOffsetMs: body.lyricTimingOffsetMs ?? null,
       rightsConfirmed: body.rightsConfirmed ?? false,
     })
     .returning();

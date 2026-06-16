@@ -3,6 +3,44 @@ import { pool } from "@workspace/db";
 
 const router: IRouter = Router();
 
+const REPLIT_SIDECAR_ENDPOINT = "http://127.0.0.1:1106";
+
+/** Quick smoke-test: can we call the sidecar to get a signed URL? */
+async function checkStorageHealth(): Promise<{ ok: boolean; code: string }> {
+  const privateDir = process.env.PRIVATE_OBJECT_DIR;
+  if (!privateDir) {
+    return { ok: false, code: "STORAGE_NOT_CONFIGURED" };
+  }
+  const stripped = privateDir.startsWith("/") ? privateDir.slice(1) : privateDir;
+  const firstSlash = stripped.indexOf("/");
+  const bucketName = firstSlash === -1 ? stripped : stripped.slice(0, firstSlash);
+  const privatePath = firstSlash === -1 ? "" : stripped.slice(firstSlash + 1);
+  const objectName = `${privatePath}/health-test-probe.mp4`;
+  try {
+    const resp = await fetch(
+      `${REPLIT_SIDECAR_ENDPOINT}/object-storage/signed-object-url`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bucket_name: bucketName,
+          object_name: objectName,
+          method: "PUT",
+          expires_at: new Date(Date.now() + 60_000).toISOString(),
+        }),
+        signal: AbortSignal.timeout(5_000),
+      },
+    );
+    if (!resp.ok) return { ok: false, code: `STORAGE_SIGNING_FAILED:${resp.status}` };
+    const body = (await resp.json()) as { signed_url?: string };
+    if (!body.signed_url) return { ok: false, code: "STORAGE_SIGNING_FAILED:NO_URL" };
+    return { ok: true, code: "ok" };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, code: `STORAGE_SIDECAR_UNAVAILABLE:${msg.slice(0, 80)}` };
+  }
+}
+
 router.get("/healthz", async (req, res): Promise<void> => {
   let dbOk = false;
   try {
@@ -15,11 +53,14 @@ router.get("/healthz", async (req, res): Promise<void> => {
   }
 
   const musixmatchConfigured = Boolean(process.env.MUSIXMATCH_API_KEY);
+  const storage = await checkStorageHealth();
 
-  res.status(dbOk ? 200 : 503).json({
+  const ok = dbOk && storage.ok;
+  res.status(ok ? 200 : 503).json({
     api: "ok",
     db: dbOk ? "ok" : "error",
     musixmatch: musixmatchConfigured ? "configured" : "not configured",
+    storage: storage.ok ? "ok" : storage.code,
   });
 });
 

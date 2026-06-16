@@ -152,6 +152,7 @@ export interface HealthResponse {
   api: string;
   db: string;
   musixmatch: string;
+  storage?: string;
 }
 
 // ---------------------------------------------------------------------------

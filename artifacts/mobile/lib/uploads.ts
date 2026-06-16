@@ -295,6 +295,13 @@ export async function createPost(
     trackTitle?: string;
     trackArtist?: string;
     lyricSectionId?: string;
+    lyricSectionLabel?: string;
+    lyricSectionStartMs?: number;
+    lyricSectionEndMs?: number;
+    lyricSectionStartLine?: number;
+    lyricSectionEndLine?: number;
+    lyricTimingMode?: string;
+    lyricTimingOffsetMs?: number;
     rightsConfirmed?: boolean;
   },
   token: string,

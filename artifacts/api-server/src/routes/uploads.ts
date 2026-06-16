@@ -97,8 +97,20 @@ router.post(
       );
       res.status(200).json({ signedUrl, objectKey });
     } catch (err) {
-      req.log.error({ err, uploadRequestId: uploadRequestId ?? "none" }, "Failed to sign video upload URL");
-      res.status(503).json({ error: "Storage unavailable. Please try again." });
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const code = !process.env.PRIVATE_OBJECT_DIR
+        ? "STORAGE_NOT_CONFIGURED"
+        : errMsg.includes("sidecar") || errMsg.includes("127.0.0.1") || errMsg.includes("fetch")
+          ? "STORAGE_SIDECAR_UNAVAILABLE"
+          : "STORAGE_SIGNING_FAILED";
+      req.log.error(
+        { err, code, uploadRequestId: uploadRequestId ?? "none" },
+        "Failed to sign video upload URL",
+      );
+      res.status(503).json({
+        error: "Couldn't connect to video storage. Please try again.",
+        code,
+      });
     }
   },
 );
@@ -183,7 +195,7 @@ router.post(
       res.status(200).json({ videoUrl, thumbnailUrl: null });
     } catch (err) {
       req.log.error({ err, uploadRequestId: uploadRequestId ?? "none" }, "Failed to confirm video upload");
-      res.status(503).json({ error: "Storage unavailable. Please try again." });
+      res.status(503).json({ error: "Couldn't verify your upload. Please try again." });
     }
   },
 );
@@ -227,7 +239,7 @@ router.post(
       res.status(201).json({ avatarUrl });
     } catch (err) {
       req.log.error({ err }, "Failed to upload avatar to object storage");
-      res.status(503).json({ error: "Storage unavailable. Please try again." });
+      res.status(503).json({ error: "Couldn't upload your photo. Please try again." });
     }
   },
 );

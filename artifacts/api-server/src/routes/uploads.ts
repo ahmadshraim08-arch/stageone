@@ -6,7 +6,7 @@ import { requireAuth } from "../middleware/auth";
 
 const router: IRouter = Router();
 
-const VIDEO_SIZE_LIMIT = 200 * 1024 * 1024; // 200 MB
+const VIDEO_SIZE_LIMIT = 100 * 1024 * 1024; // 100 MB
 const IMAGE_SIZE_LIMIT = 5 * 1024 * 1024;   // 5 MB
 
 const ACCEPTED_VIDEO_MIMES = new Set(["video/mp4", "video/quicktime", "video/x-m4v"]);
@@ -81,7 +81,7 @@ router.post(
   (req, res, next) => {
     videoUpload.single("video")(req, res, (err) => {
       if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
-        res.status(413).json({ error: "Video exceeds 200 MB limit" });
+        res.status(413).json({ error: "Video exceeds 100 MB limit" });
         return;
       }
       if (err) {

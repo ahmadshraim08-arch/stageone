@@ -390,6 +390,11 @@ export default function PostScreen() {
         Alert.alert("Too long", "Please select a video under 60 seconds.");
         return;
       }
+      const MAX_BYTES = 100 * 1024 * 1024;
+      if (asset.fileSize && asset.fileSize > MAX_BYTES) {
+        Alert.alert("File too large", "Please select a video under 100 MB.");
+        return;
+      }
       setVideoUri(asset.uri);
       setVideoDurationSec(Math.round((asset.duration ?? 0) / 1000));
     }

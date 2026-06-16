@@ -671,15 +671,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const postMusicMinute = useCallback(
-    (_mmData: Omit<MusicMinute, "id" | "views" | "likesCount" | "commentsCount" | "sharesCount" | "savesCount" | "goldenMicsCount" | "createdAt" | "isRisingVoice" | "isFeatured">) => {
-      // The actual post was already saved via createPost() in post.tsx.
-      // Refresh the feed to pick it up.
+    (mmData: Omit<MusicMinute, "id" | "views" | "likesCount" | "commentsCount" | "sharesCount" | "savesCount" | "goldenMicsCount" | "createdAt" | "isRisingVoice" | "isFeatured">) => {
+      // Optimistic update: prepend the new post immediately so it appears in the feed.
+      const optimisticPost: MusicMinute = {
+        ...mmData,
+        id: `optimistic-${Date.now()}`,
+        views: 0,
+        likesCount: 0,
+        commentsCount: 0,
+        sharesCount: 0,
+        savesCount: 0,
+        goldenMicsCount: 0,
+        createdAt: new Date().toISOString(),
+        isRisingVoice: false,
+        isFeatured: false,
+        creatorDisplayName: currentUser?.displayName ?? mmData.userId,
+        creatorUsername: currentUser?.username ?? mmData.userId,
+        creatorAvatarUrl: currentUser?.avatarUrl ?? null,
+      };
+      setApiFeed((prev) => (prev ? [optimisticPost, ...prev] : [optimisticPost]));
+
+      // Then refresh from API to replace optimistic entry with the real record.
       getToken().then((token) => {
         if (!token) return;
         fetchFeedInternal(token);
       });
     },
-    [getToken, fetchFeedInternal],
+    [getToken, fetchFeedInternal, currentUser],
   );
 
   const sendDirectShare = useCallback(

@@ -137,6 +137,7 @@ export interface ApiNotification {
   type: string;
   postId: number | null;
   postTitle: string | null;
+  postThumbnailUrl: string | null;
   createdAt: string;
   readAt: string | null;
   actor: {

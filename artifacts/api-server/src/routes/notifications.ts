@@ -21,6 +21,7 @@ router.get("/notifications", requireAuth, async (req, res): Promise<void> => {
       type: notificationsTable.type,
       postId: notificationsTable.postId,
       postTitle: postsTable.title,
+      postThumbnailUrl: postsTable.thumbnailUrl,
       createdAt: notificationsTable.createdAt,
       readAt: notificationsTable.readAt,
       actor: {

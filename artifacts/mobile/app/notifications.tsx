@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
+  Image,
   RefreshControl,
   StyleSheet,
   Text,
@@ -179,6 +180,13 @@ export default function NotificationsScreen() {
                     {timeAgo(item.createdAt)}
                   </Text>
                 </View>
+                {item.postThumbnailUrl ? (
+                  <Image
+                    source={{ uri: item.postThumbnailUrl }}
+                    style={[styles.thumbnail, { borderColor: colors.border }]}
+                    resizeMode="cover"
+                  />
+                ) : null}
                 {unread && <View style={[styles.unreadDot, { backgroundColor: colors.primary }]} />}
                 {dest && <Ionicons name="chevron-forward" size={16} color={colors.mutedForeground} />}
               </TouchableOpacity>
@@ -249,5 +257,12 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 4,
     flexShrink: 0,
+  },
+  thumbnail: {
+    width: 40,
+    height: 40,
+    borderRadius: 6,
+    flexShrink: 0,
+    borderWidth: StyleSheet.hairlineWidth,
   },
 });

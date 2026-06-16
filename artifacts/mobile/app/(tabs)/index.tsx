@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import { router, useFocusEffect } from "expo-router";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   AppState,
@@ -11,6 +11,7 @@ import {
   Platform,
   Pressable,
   RefreshControl,
+  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
@@ -39,6 +40,7 @@ export default function HomeScreen() {
   const { musicMinutes, followingFeed, followingLoading, fetchFollowingFeed, currentUser, isLoaded, feedLoading, refreshFeed, unreadNotifications, recordView } = useApp();
 
   const [activeTab, setActiveTab] = useState<FeedTab>("forYou");
+  const [selectedGenre, setSelectedGenre] = useState<string | null>(null);
   const [commentsMmId, setCommentsMmId] = useState<string | null>(null);
   const [goldenMicMmId, setGoldenMicMmId] = useState<string | null>(null);
   const [gmToast, setGmToast] = useState(false);
@@ -149,16 +151,42 @@ export default function HomeScreen() {
     setRefreshing(false);
   }, [refreshFeed]);
 
-  const feedData: MusicMinute[] = activeTab === "forYou" ? musicMinutes : followingFeed;
+  const rawFeedData: MusicMinute[] = activeTab === "forYou" ? musicMinutes : followingFeed;
+
+  const feedGenres = useMemo(() => {
+    const seen = new Set<string>();
+    const genres: string[] = [];
+    for (const mm of rawFeedData) {
+      if (mm.genre && mm.genre !== "Any" && !seen.has(mm.genre)) {
+        seen.add(mm.genre);
+        genres.push(mm.genre);
+      }
+    }
+    return genres;
+  }, [rawFeedData]);
+
+  const feedData: MusicMinute[] = useMemo(() => {
+    if (!selectedGenre) return rawFeedData;
+    return rawFeedData.filter(
+      (mm) => mm.genre && mm.genre.toLowerCase().includes(selectedGenre.toLowerCase()),
+    );
+  }, [rawFeedData, selectedGenre]);
 
   const handleTabChange = useCallback((tab: FeedTab) => {
     Haptics.selectionAsync();
     setActiveTab(tab);
+    setSelectedGenre(null);
     flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
     if (tab === "following" && currentUser && !currentUser.isGuest) {
       fetchFollowingFeed();
     }
   }, [currentUser, fetchFollowingFeed]);
+
+  const handleGenreSelect = useCallback((genre: string | null) => {
+    Haptics.selectionAsync();
+    setSelectedGenre(genre);
+    flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
+  }, []);
 
   const handleGoldenMicSuccess = useCallback(() => {
     setGmToast(true);
@@ -175,8 +203,8 @@ export default function HomeScreen() {
       <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
 
       <LinearGradient
-        colors={["rgba(5,2,10,0.85)", "rgba(5,2,10,0.4)", "transparent"]}
-        style={[styles.headerGradient, { height: topPad + 80 }]}
+        colors={["rgba(5,2,10,0.9)", "rgba(5,2,10,0.5)", "transparent"]}
+        style={[styles.headerGradient, { height: topPad + 130 }]}
         pointerEvents="none"
       />
       <View style={[styles.topBar, { paddingTop: topPad + 8 }]}>
@@ -206,6 +234,49 @@ export default function HomeScreen() {
           )}
         </TouchableOpacity>
       </View>
+
+      {feedGenres.length > 0 && (
+        <View style={[styles.genreRow, { top: topPad + 58 }]}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.genreRowContent}
+          >
+            <TouchableOpacity
+              onPress={() => handleGenreSelect(null)}
+              style={[
+                styles.genreChip,
+                !selectedGenre && styles.genreChipActive,
+              ]}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.genreChipText, !selectedGenre && styles.genreChipTextActive]}>
+                All
+              </Text>
+            </TouchableOpacity>
+            {feedGenres.map((genre) => (
+              <TouchableOpacity
+                key={genre}
+                onPress={() => handleGenreSelect(selectedGenre === genre ? null : genre)}
+                style={[
+                  styles.genreChip,
+                  selectedGenre === genre && styles.genreChipActive,
+                ]}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    styles.genreChipText,
+                    selectedGenre === genre && styles.genreChipTextActive,
+                  ]}
+                >
+                  {genre}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
 
       {showLoading && feedData.length === 0 ? (
         <View style={styles.loadingFeed}>
@@ -405,6 +476,38 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 14,
     fontWeight: "700",
+  },
+  genreRow: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    zIndex: 10,
+  },
+  genreRowContent: {
+    paddingHorizontal: 12,
+    gap: 8,
+    alignItems: "center",
+    paddingVertical: 6,
+  },
+  genreChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: "rgba(255,255,255,0.15)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.2)",
+  },
+  genreChipActive: {
+    backgroundColor: "#A855F7",
+    borderColor: "#A855F7",
+  },
+  genreChipText: {
+    color: "rgba(255,255,255,0.8)",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  genreChipTextActive: {
+    color: "#fff",
   },
   toast: {
     position: "absolute",

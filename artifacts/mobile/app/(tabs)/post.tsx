@@ -1516,6 +1516,37 @@ export default function PostScreen() {
                     </View>
                   )}
 
+                  {/* Genre & language detections */}
+                  {(analysisResult.musixmatchGenre || analysisResult.detectedLanguage) && (
+                    <View style={[styles.aiDetectCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                      <View style={styles.aiDetectCardHeader}>
+                        <MaterialCommunityIcons name="magic-staff" size={13} color={colors.primary} />
+                        <Text style={[styles.aiDetectCardTitle, { color: colors.primary }]}>AI also detected</Text>
+                      </View>
+                      <View style={styles.aiDetectChips}>
+                        {analysisResult.musixmatchGenre && (
+                          <View style={[styles.aiDetectChip, { backgroundColor: `${colors.primary}15`, borderColor: `${colors.primary}30` }]}>
+                            <Ionicons name="musical-notes-outline" size={13} color={colors.primary} />
+                            <Text style={[styles.aiDetectChipText, { color: colors.primary }]}>
+                              {mapMusixmatchGenre(analysisResult.musixmatchGenre) ?? analysisResult.musixmatchGenre}
+                            </Text>
+                          </View>
+                        )}
+                        {analysisResult.detectedLanguage && (
+                          <View style={[styles.aiDetectChip, { backgroundColor: "rgba(34,197,94,0.12)", borderColor: "rgba(34,197,94,0.3)" }]}>
+                            <Ionicons name="language-outline" size={13} color="#22C55E" />
+                            <Text style={[styles.aiDetectChipText, { color: "#22C55E" }]}>
+                              {mapDetectedLanguage(analysisResult.detectedLanguage) ?? analysisResult.detectedLanguage}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                      <Text style={[styles.aiDetectCardHint, { color: colors.mutedForeground }]}>
+                        These will be pre-filled in the details step.
+                      </Text>
+                    </View>
+                  )}
+
                   {/* Always show "Not this song" / manual search option */}
                   <View style={styles.confirmActions}>
                     <TouchableOpacity
@@ -2289,6 +2320,13 @@ const styles = StyleSheet.create({
   noMatchTitle: { fontSize: 16, fontWeight: "700" },
   noMatchSub: { fontSize: 13, textAlign: "center", lineHeight: 18 },
   confirmActions: { flexDirection: "row", gap: 10 },
+  aiDetectCard: { borderRadius: 12, borderWidth: 1, padding: 12, gap: 8 },
+  aiDetectCardHeader: { flexDirection: "row", alignItems: "center", gap: 6 },
+  aiDetectCardTitle: { fontSize: 12, fontWeight: "600", letterSpacing: 0.3 },
+  aiDetectChips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  aiDetectChip: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, borderWidth: 1 },
+  aiDetectChipText: { fontSize: 13, fontWeight: "600" },
+  aiDetectCardHint: { fontSize: 11, lineHeight: 15 },
   secondaryBtn: { flex: 1, alignItems: "center", paddingVertical: 12, paddingHorizontal: 14, borderRadius: 12, borderWidth: 1 },
   secondaryBtnText: { fontSize: 13, fontWeight: "600" },
   // Song search

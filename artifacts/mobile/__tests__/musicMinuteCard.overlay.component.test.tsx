@@ -145,6 +145,7 @@ describe("MusicMinuteCard — overlay smoke tests", () => {
       renderer = create(
         <MusicMinuteCard
           item={mm021}
+          isActive={false}
           onCommentPress={jest.fn()}
           onGoldenMicPress={jest.fn()}
         />,
@@ -161,6 +162,7 @@ describe("MusicMinuteCard — overlay smoke tests", () => {
       renderer = create(
         <MusicMinuteCard
           item={mm021}
+          isActive={false}
           onCommentPress={jest.fn()}
           onGoldenMicPress={jest.fn()}
         />,

@@ -1,8 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import React, { useCallback, useRef, useState } from "react";
 import {
+  AppState,
+  AppStateStatus,
   FlatList,
   Platform,
   Pressable,
@@ -11,6 +13,7 @@ import {
   Text,
   TouchableOpacity,
   View,
+  ViewToken,
   useWindowDimensions,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -34,8 +37,36 @@ export default function HomeScreen() {
   const [commentsMmId, setCommentsMmId] = useState<string | null>(null);
   const [goldenMicMmId, setGoldenMicMmId] = useState<string | null>(null);
   const [gmToast, setGmToast] = useState(false);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [isScreenActive, setIsScreenActive] = useState(true);
 
   const flatListRef = useRef<FlatList>(null);
+
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 70 }).current;
+
+  const onViewableItemsChanged = useRef(
+    ({ viewableItems }: { viewableItems: ViewToken[] }) => {
+      if (viewableItems.length > 0) {
+        setActiveId((viewableItems[0].item as { id: string }).id);
+      }
+    }
+  ).current;
+
+  useFocusEffect(
+    useCallback(() => {
+      setIsScreenActive(true);
+      const subscription = AppState.addEventListener(
+        "change",
+        (state: AppStateStatus) => {
+          setIsScreenActive(state === "active");
+        }
+      );
+      return () => {
+        setIsScreenActive(false);
+        subscription.remove();
+      };
+    }, [])
+  );
 
   const feedData: MusicMinute[] =
     activeTab === "forYou"
@@ -108,6 +139,7 @@ export default function HomeScreen() {
           renderItem={({ item }) => (
             <MusicMinuteCard
               item={item}
+              isActive={item.id === activeId && isScreenActive}
               onCommentPress={(id) => setCommentsMmId(id)}
               onGoldenMicPress={(id) => {
                 if (!currentUser) {
@@ -127,6 +159,8 @@ export default function HomeScreen() {
             offset: cardHeight * index,
             index,
           })}
+          viewabilityConfig={viewabilityConfig}
+          onViewableItemsChanged={onViewableItemsChanged}
         />
       )}
 

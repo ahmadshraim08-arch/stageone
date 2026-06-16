@@ -44,6 +44,7 @@ const LANG_LABELS: Record<string, string> = {
 
 interface Props {
   item: MusicMinute;
+  isActive: boolean;
   onCommentPress: (id: string) => void;
   onGoldenMicPress: (id: string) => void;
 }
@@ -84,7 +85,7 @@ function ActionButton({
   );
 }
 
-export function MusicMinuteCard({ item, onCommentPress, onGoldenMicPress }: Props) {
+export function MusicMinuteCard({ item, isActive, onCommentPress, onGoldenMicPress }: Props) {
   const colors = useColors();
   const { height: screenHeight } = useWindowDimensions();
   const { likedIds, savedIds, goldenMicsSent, toggleLike, toggleSave, currentUser } = useApp();
@@ -95,10 +96,37 @@ export function MusicMinuteCard({ item, onCommentPress, onGoldenMicPress }: Prop
 
   const likeScale = useRef(new Animated.Value(1)).current;
   const gmScale = useRef(new Animated.Value(1)).current;
+  const tapIconOpacity = useRef(new Animated.Value(0)).current;
 
   const [localLikes, setLocalLikes] = useState(item.likesCount);
   const [localGMs, setLocalGMs] = useState(item.goldenMicsCount);
   const [isMuted, setIsMuted] = useState(false);
+  const [isManuallyPaused, setIsManuallyPaused] = useState(false);
+  const [tapIcon, setTapIcon] = useState<"play" | "pause">("play");
+
+  // Reset manual pause when this card becomes inactive so next activation auto-plays
+  useEffect(() => {
+    if (!isActive) {
+      setIsManuallyPaused(false);
+    }
+  }, [isActive]);
+
+  const shouldPlay = isActive && !isManuallyPaused;
+
+  const handleVideoTap = useCallback(() => {
+    setIsManuallyPaused((prev) => {
+      const willBePaused = !prev;
+      setTapIcon(willBePaused ? "play" : "pause");
+      tapIconOpacity.stopAnimation();
+      tapIconOpacity.setValue(0.85);
+      Animated.timing(tapIconOpacity, {
+        toValue: 0,
+        duration: 700,
+        useNativeDriver: true,
+      }).start();
+      return willBePaused;
+    });
+  }, [tapIconOpacity]);
 
   const videoRef = useRef<Video>(null);
 
@@ -315,7 +343,7 @@ export function MusicMinuteCard({ item, onCommentPress, onGoldenMicPress }: Prop
           source={{ uri: item.videoUri }}
           style={StyleSheet.absoluteFill}
           resizeMode={ResizeMode.COVER}
-          shouldPlay
+          shouldPlay={shouldPlay}
           isLooping
           isMuted={isMuted}
         />
@@ -334,6 +362,21 @@ export function MusicMinuteCard({ item, onCommentPress, onGoldenMicPress }: Prop
         style={StyleSheet.absoluteFill}
         pointerEvents="none"
       />
+
+      {/* Tap-to-pause overlay — sits below side buttons so their touches pass through */}
+      <Pressable style={StyleSheet.absoluteFill} onPress={handleVideoTap} />
+
+      {/* Animated play/pause icon that briefly appears on tap */}
+      <Animated.View
+        style={[styles.tapIconOverlay, { opacity: tapIconOpacity }]}
+        pointerEvents="none"
+      >
+        <Ionicons
+          name={tapIcon === "play" ? "play" : "pause"}
+          size={64}
+          color="rgba(255,255,255,0.9)"
+        />
+      </Animated.View>
 
       {item.isRisingVoice && (
         <View style={styles.risingBadge}>
@@ -613,6 +656,11 @@ const styles = StyleSheet.create({
     width: "100%",
     backgroundColor: "#000",
     position: "relative",
+  },
+  tapIconOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: "center",
+    alignItems: "center",
   },
   risingBadge: {
     position: "absolute",

@@ -129,6 +129,9 @@ interface AppContextType {
   fetchFollowingFeed: () => Promise<void>;
   resetUnreadNotifications: () => void;
   recordView: (postId: number, watchDurationMs: number) => void;
+  removeFromFeed: (postId: string) => void;
+  patchInFeed: (postId: string, updates: Partial<MusicMinute>) => void;
+  adjustPostCount: (delta: number) => void;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -817,6 +820,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [getToken],
   );
 
+  const removeFromFeed = useCallback((postId: string) => {
+    setApiFeed((feed) => feed ? feed.filter((mm) => mm.id !== postId) : feed);
+  }, []);
+
+  const patchInFeed = useCallback((postId: string, updates: Partial<MusicMinute>) => {
+    setApiFeed((feed) =>
+      feed ? feed.map((mm) => mm.id === postId ? { ...mm, ...updates } : mm) : feed,
+    );
+  }, []);
+
+  const adjustPostCount = useCallback((delta: number) => {
+    setCurrentUser((u) => u ? { ...u, postCount: Math.max(0, u.postCount + delta) } : u);
+  }, []);
+
   return (
     <AppContext.Provider
       value={{
@@ -856,6 +873,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         fetchFollowingFeed,
         resetUnreadNotifications,
         recordView,
+        removeFromFeed,
+        patchInFeed,
+        adjustPostCount,
       }}
     >
       {children}

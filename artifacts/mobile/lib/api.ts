@@ -374,6 +374,35 @@ export interface ApiAnalysisJob {
   result: ApiAnalysisResult | null;
 }
 
+export const getMyPosts = (
+  token: string,
+  params: { cursor?: string; limit?: number } = {},
+): Promise<{ items: ApiPost[]; nextCursor: string | null }> => {
+  const q = new URLSearchParams();
+  if (params.cursor !== undefined) q.set("cursor", params.cursor);
+  if (params.limit !== undefined) q.set("limit", String(params.limit));
+  const qs = q.toString();
+  return apiFetch(`/users/me/posts${qs ? `?${qs}` : ""}`, token);
+};
+
+export const patchPost = (
+  token: string,
+  postId: number,
+  body: {
+    title?: string;
+    caption?: string;
+    genre?: string;
+    language?: string;
+    musixmatchTrackId?: string;
+    trackTitle?: string;
+    trackArtist?: string;
+  },
+): Promise<void> =>
+  apiFetch<void>(`/posts/${postId}`, token, { method: "PATCH", body: JSON.stringify(body) });
+
+export const deletePost = (token: string, postId: number): Promise<void> =>
+  apiFetch<void>(`/posts/${postId}`, token, { method: "DELETE" });
+
 export const startAnalysisJob = (
   token: string,
   body: {

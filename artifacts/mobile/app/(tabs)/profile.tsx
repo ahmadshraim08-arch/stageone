@@ -24,7 +24,7 @@ import { useAuth } from "@clerk/expo";
 import { useApp, apiPostToMusicMinute } from "@/context/AppContext";
 import { SEED_USERS, formatCount, MusicMinute } from "@/data/seedData";
 import { useColors } from "@/hooks/useColors";
-import { apiBase, getPosts } from "@/lib/api";
+import { apiBase, getMyPosts } from "@/lib/api";
 import { uploadAvatar } from "@/lib/uploads";
 
 const SINGER_IMAGES = [
@@ -40,6 +40,8 @@ export default function ProfileScreen() {
   const { currentUser, musicMinutes, likedIds, savedIds, unreadMessages, logout, isLoaded, updateAvatar, updateProfile } = useApp();
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [myApiPosts, setMyApiPosts] = useState<MusicMinute[]>([]);
+
+  const [postsLoading, setPostsLoading] = useState(false);
 
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editDisplayName, setEditDisplayName] = useState("");
@@ -68,18 +70,23 @@ export default function ProfileScreen() {
     }
   };
 
-  // Fetch the signed-in user's own posts directly (not derived from home feed cache)
+  // Fetch the signed-in user's own posts via server-side identity resolution
   useEffect(() => {
-    if (!currentUser || currentUser.isGuest || currentUser.dbId === 0) return;
+    if (!currentUser || currentUser.isGuest) return;
+    let cancelled = false;
     (async () => {
+      setPostsLoading(true);
       try {
         const token = await getToken();
-        if (!token) return;
-        const result = await getPosts(token, { userId: currentUser.dbId });
-        setMyApiPosts(result.items.map(apiPostToMusicMinute));
-      } catch {}
+        if (!token || cancelled) return;
+        const result = await getMyPosts(token);
+        if (!cancelled) setMyApiPosts(result.items.map(apiPostToMusicMinute));
+      } catch {} finally {
+        if (!cancelled) setPostsLoading(false);
+      }
     })();
-  }, [currentUser?.dbId]);
+    return () => { cancelled = true; };
+  }, [currentUser?.id]);
 
   const handleAvatarUpload = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -182,10 +189,7 @@ export default function ProfileScreen() {
     );
   }
 
-  // Use dedicated API fetch result (falls back to feed cache during load)
-  const myMMs = myApiPosts.length > 0
-    ? myApiPosts
-    : musicMinutes.filter((m) => m.userId === String(currentUser.dbId));
+  const myMMs = myApiPosts;
   const savedMMs = musicMinutes.filter((m) => savedIds.has(m.id));
 
   return (
@@ -288,57 +292,60 @@ export default function ProfileScreen() {
         </TouchableOpacity>
       </LinearGradient>
 
-      {myMMs.length > 0 && (
+      {(myMMs.length > 0 || postsLoading) && (
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: colors.foreground, paddingHorizontal: 16 }]}>
             My Music Minutes
           </Text>
-          <View style={styles.mmGrid}>
-            {myMMs.map((mm) => (
-              <View key={mm.id} style={[styles.mmTile, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                <Image
-                  source={SINGER_IMAGES[mm.imageIndex % 3]}
-                  style={StyleSheet.absoluteFill}
-                  contentFit="cover"
-                />
-                <LinearGradient colors={["transparent", "rgba(5,2,10,0.9)"]} style={StyleSheet.absoluteFill} />
-                <View style={styles.mmTileInfo}>
-                  {mm.trackTitle && (mm.performanceType === "cover" || !!mm.musixmatchTrackId) && (
-                    <TouchableOpacity
-                      style={styles.mmSongTag}
-                      activeOpacity={0.7}
-                      onPress={() => {
-                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                        if (mm.musixmatchTrackId) {
-                          router.push({ pathname: "/(tabs)/post", params: { prefillTrackId: mm.musixmatchTrackId } });
-                        } else {
-                          router.push({ pathname: "/(tabs)/post", params: { prefillSongQuery: `${mm.trackTitle} ${mm.trackArtist ?? ""}`.trim() } });
-                        }
-                      }}
-                    >
-                      <Ionicons name="musical-note" size={9} color="#A855F7" />
-                      <Text style={styles.mmSongText} numberOfLines={1}>
-                        {mm.performanceType === "cover"
-                          ? mm.trackTitle
-                          : mm.performanceType === "freestyle"
-                            ? `Backing: ${mm.trackTitle}`
-                            : `Inspired by: ${mm.trackTitle}`}
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-                  <Text style={styles.mmTileTitle} numberOfLines={1}>{mm.title}</Text>
-                  <View style={styles.mmTileStats}>
-                    <Ionicons name="heart" size={10} color="#EF4444" />
-                    <Text style={styles.mmTileStatText}>{formatCount(mm.likesCount)}</Text>
+          {postsLoading ? (
+            <View style={styles.postsLoadingRow}>
+              <ActivityIndicator color="#A855F7" size="small" />
+            </View>
+          ) : (
+            <View style={styles.mmGrid}>
+              {myMMs.map((mm) => (
+                <TouchableOpacity
+                  key={mm.id}
+                  style={[styles.mmTile, { backgroundColor: colors.card, borderColor: colors.border }]}
+                  activeOpacity={0.82}
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    router.push(`/post/${mm.id}`);
+                  }}
+                >
+                  <Image
+                    source={mm.videoUri ? { uri: mm.videoUri } : SINGER_IMAGES[mm.imageIndex % 3]}
+                    style={StyleSheet.absoluteFill}
+                    contentFit="cover"
+                  />
+                  <LinearGradient colors={["transparent", "rgba(5,2,10,0.9)"]} style={StyleSheet.absoluteFill} />
+                  <View style={styles.mmTileInfo}>
+                    {mm.trackTitle && (mm.performanceType === "cover" || !!mm.musixmatchTrackId) && (
+                      <View style={styles.mmSongTag}>
+                        <Ionicons name="musical-note" size={9} color="#A855F7" />
+                        <Text style={styles.mmSongText} numberOfLines={1}>
+                          {mm.performanceType === "cover"
+                            ? mm.trackTitle
+                            : mm.performanceType === "freestyle"
+                              ? `Backing: ${mm.trackTitle}`
+                              : `Inspired by: ${mm.trackTitle}`}
+                        </Text>
+                      </View>
+                    )}
+                    <Text style={styles.mmTileTitle} numberOfLines={1}>{mm.title}</Text>
+                    <View style={styles.mmTileStats}>
+                      <Ionicons name="heart" size={10} color="#EF4444" />
+                      <Text style={styles.mmTileStatText}>{formatCount(mm.likesCount)}</Text>
+                    </View>
                   </View>
-                </View>
-              </View>
-            ))}
-          </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
         </View>
       )}
 
-      {myMMs.length === 0 && (
+      {myMMs.length === 0 && !postsLoading && (
         <View style={styles.emptyMMs}>
           <MaterialCommunityIcons name="microphone-outline" size={48} color={colors.mutedForeground} />
           <Text style={[styles.emptyMMsTitle, { color: colors.foreground }]}>Your stage is waiting…</Text>
@@ -622,6 +629,11 @@ const styles = StyleSheet.create({
   mmTileTitle: { color: "#fff", fontSize: 11, fontWeight: "600" },
   mmTileStats: { flexDirection: "row", alignItems: "center", gap: 3, marginTop: 2 },
   mmTileStatText: { color: "rgba(255,255,255,0.7)", fontSize: 10 },
+  postsLoadingRow: {
+    paddingVertical: 32,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   loadingView: {
     flex: 1,
     alignItems: "center",

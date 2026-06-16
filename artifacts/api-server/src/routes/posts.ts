@@ -421,6 +421,124 @@ router.post("/posts", requireAuth, async (req, res): Promise<void> => {
   res.status(201).json(post);
 });
 
+router.get("/users/me/posts", requireAuth, async (req, res): Promise<void> => {
+  const ownerId = req.userId;
+  const limitRaw = req.query.limit as string | undefined;
+  const cursorRaw = req.query.cursor as string | undefined;
+
+  const limit = Math.min(parseInt(limitRaw ?? "50", 10) || 50, 100);
+  const cursor = cursorRaw ? parseInt(cursorRaw, 10) : undefined;
+
+  const conditions = [isNull(postsTable.deletedAt), eq(postsTable.userId, ownerId)];
+  if (cursor !== undefined && !isNaN(cursor)) conditions.push(lt(postsTable.id, cursor));
+
+  const rows = await db
+    .select({
+      id: postsTable.id,
+      userId: postsTable.userId,
+      videoUrl: postsTable.videoUrl,
+      videoObjectKey: postsTable.videoObjectKey,
+      thumbnailUrl: postsTable.thumbnailUrl,
+      title: postsTable.title,
+      caption: postsTable.caption,
+      performanceType: postsTable.performanceType,
+      genre: postsTable.genre,
+      language: postsTable.language,
+      musixmatchTrackId: postsTable.musixmatchTrackId,
+      trackTitle: postsTable.trackTitle,
+      trackArtist: postsTable.trackArtist,
+      lyricSectionId: postsTable.lyricSectionId,
+      rightsConfirmed: postsTable.rightsConfirmed,
+      goldenMicCount: postsTable.goldenMicCount,
+      createdAt: postsTable.createdAt,
+      creator: {
+        id: usersTable.id,
+        username: usersTable.username,
+        displayName: usersTable.displayName,
+        avatarUrl: usersTable.avatarUrl,
+      },
+      likesCount: sql<number>`(SELECT COUNT(*) FROM likes WHERE likes.post_id = ${postsTable.id})`,
+      commentsCount: sql<number>`(SELECT COUNT(*) FROM comments WHERE comments.post_id = ${postsTable.id} AND comments.deleted_at IS NULL)`,
+      savesCount: sql<number>`(SELECT COUNT(*) FROM saves WHERE saves.post_id = ${postsTable.id})`,
+      viewerHasLiked: sql<boolean>`EXISTS(SELECT 1 FROM likes WHERE likes.post_id = ${postsTable.id} AND likes.user_id = ${ownerId})`,
+      viewerHasSaved: sql<boolean>`EXISTS(SELECT 1 FROM saves WHERE saves.post_id = ${postsTable.id} AND saves.user_id = ${ownerId})`,
+      viewerIsFollowing: sql<boolean>`false`,
+    })
+    .from(postsTable)
+    .innerJoin(usersTable, eq(postsTable.userId, usersTable.id))
+    .where(and(...conditions))
+    .orderBy(desc(postsTable.id))
+    .limit(limit + 1);
+
+  const hasMore = rows.length > limit;
+  const items = hasMore ? rows.slice(0, limit) : rows;
+  const nextCursor = hasMore ? String(items[items.length - 1].id) : null;
+
+  const signedItems = await Promise.all(
+    items.map(async (item) => ({
+      ...item,
+      videoUrl: await freshenVideoUrl(item.videoUrl, item.videoObjectKey),
+    })),
+  );
+
+  res.json({ items: signedItems, nextCursor });
+});
+
+router.patch("/posts/:id", requireAuth, async (req, res): Promise<void> => {
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const postId = parseInt(raw, 10);
+
+  if (isNaN(postId)) {
+    res.status(400).json({ error: "Invalid post id" });
+    return;
+  }
+
+  const body = req.body as {
+    title?: string;
+    caption?: string;
+    genre?: string;
+    language?: string;
+    musixmatchTrackId?: string;
+    trackTitle?: string;
+    trackArtist?: string;
+  };
+
+  const [existing] = await db
+    .select({ userId: postsTable.userId, deletedAt: postsTable.deletedAt })
+    .from(postsTable)
+    .where(eq(postsTable.id, postId))
+    .limit(1);
+
+  if (!existing || existing.deletedAt !== null) {
+    res.status(404).json({ error: "Post not found" });
+    return;
+  }
+
+  if (existing.userId !== req.userId) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
+  const updates = {
+    ...(body.title !== undefined ? { title: body.title.trim() } : {}),
+    ...(body.caption !== undefined ? { caption: body.caption } : {}),
+    ...(body.genre !== undefined ? { genre: body.genre } : {}),
+    ...(body.language !== undefined ? { language: body.language } : {}),
+    ...(body.musixmatchTrackId !== undefined ? { musixmatchTrackId: body.musixmatchTrackId } : {}),
+    ...(body.trackTitle !== undefined ? { trackTitle: body.trackTitle } : {}),
+    ...(body.trackArtist !== undefined ? { trackArtist: body.trackArtist } : {}),
+  };
+
+  if (Object.keys(updates).length === 0) {
+    res.status(400).json({ error: "No fields to update" });
+    return;
+  }
+
+  await db.update(postsTable).set(updates).where(eq(postsTable.id, postId));
+
+  res.sendStatus(204);
+});
+
 router.delete("/posts/:id", requireAuth, async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const postId = parseInt(raw, 10);

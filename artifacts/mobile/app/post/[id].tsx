@@ -7,11 +7,16 @@ import { Video, ResizeMode } from "expo-av";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Animated,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -19,7 +24,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useApp } from "@/context/AppContext";
 import { useColors } from "@/hooks/useColors";
-import { ApiPost, getPost } from "@/lib/api";
+import { ApiPost, getPost, patchPost, deletePost } from "@/lib/api";
 import { formatCount } from "@/data/seedData";
 
 const SINGER_IMAGES = [
@@ -43,7 +48,7 @@ export default function PostDetailScreen() {
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { getToken, isSignedIn } = useAuth();
-  const { likedIds, savedIds } = useApp();
+  const { likedIds, savedIds, currentUser, removeFromFeed, patchInFeed, adjustPostCount } = useApp();
 
   const [post, setPost] = useState<ApiPost | null>(null);
   const [loading, setLoading] = useState(true);
@@ -54,6 +59,17 @@ export default function PostDetailScreen() {
   const [videoError, setVideoError] = useState(false);
   const tapIconOpacity = useRef(new Animated.Value(0)).current;
   const [tapIcon, setTapIcon] = useState<"play" | "pause">("play");
+
+  // Edit state
+  const [editVisible, setEditVisible] = useState(false);
+  const [editTitle, setEditTitle] = useState("");
+  const [editCaption, setEditCaption] = useState("");
+  const [editGenre, setEditGenre] = useState("");
+  const [editLanguage, setEditLanguage] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Delete state
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     const postId = parseInt(id ?? "", 10);
@@ -111,6 +127,95 @@ export default function PostDetailScreen() {
   const isLiked = post ? likedIds.has(String(post.id)) : false;
   const isSaved = post ? savedIds.has(String(post.id)) : false;
   const placeholderImg = post ? SINGER_IMAGES[post.id % SINGER_IMAGES.length] : SINGER_IMAGES[0];
+  const isOwner = !!(currentUser && post && currentUser.dbId === post.userId);
+
+  const openEdit = () => {
+    if (!post) return;
+    setEditTitle(post.title);
+    setEditCaption(post.caption ?? "");
+    setEditGenre(post.genre ?? "");
+    setEditLanguage(post.language ?? "");
+    setEditVisible(true);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!post) return;
+    if (!editTitle.trim()) {
+      Alert.alert("Title required", "Please enter a title.");
+      return;
+    }
+    setIsSaving(true);
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated");
+      await patchPost(token, post.id, {
+        title: editTitle.trim(),
+        caption: editCaption.trim() || undefined,
+        genre: editGenre.trim() || undefined,
+        language: editLanguage.trim() || undefined,
+      });
+      const updated: ApiPost = {
+        ...post,
+        title: editTitle.trim(),
+        caption: editCaption.trim() || null,
+        genre: editGenre.trim() || null,
+        language: editLanguage.trim() || null,
+      };
+      setPost(updated);
+      patchInFeed(String(post.id), {
+        title: updated.title,
+        caption: updated.caption ?? "",
+        genre: updated.genre ?? "Pop",
+        language: updated.language ?? "English",
+      });
+      setEditVisible(false);
+    } catch {
+      Alert.alert("Save failed", "Could not update this post. Please try again.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDelete = () => {
+    if (!post) return;
+    Alert.alert(
+      "Delete post?",
+      "This will permanently remove your Music Minute. This cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            setIsDeleting(true);
+            try {
+              const token = await getToken();
+              if (!token) throw new Error("Not authenticated");
+              await deletePost(token, post.id);
+              removeFromFeed(String(post.id));
+              adjustPostCount(-1);
+              router.back();
+            } catch {
+              setIsDeleting(false);
+              Alert.alert("Delete failed", "Could not delete this post. Please try again.");
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const showOwnerMenu = () => {
+    Alert.alert(
+      post?.title ?? "Music Minute",
+      undefined,
+      [
+        { text: "Edit post", onPress: openEdit },
+        { text: "Delete post", style: "destructive", onPress: handleDelete },
+        { text: "Cancel", style: "cancel" },
+      ],
+    );
+  };
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -119,7 +224,15 @@ export default function PostDetailScreen() {
           <Ionicons name="chevron-back" size={24} color={colors.foreground} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.foreground }]}>Music Minute</Text>
-        <View style={styles.headerSpacer} />
+        {isOwner ? (
+          <TouchableOpacity onPress={showOwnerMenu} style={styles.menuBtn} activeOpacity={0.7} disabled={isDeleting}>
+            {isDeleting
+              ? <ActivityIndicator size="small" color={colors.mutedForeground} />
+              : <Ionicons name="ellipsis-horizontal" size={22} color={colors.foreground} />}
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.headerSpacer} />
+        )}
       </View>
 
       {loading ? (
@@ -291,9 +404,118 @@ export default function PostDetailScreen() {
                 )}
               </View>
             )}
+
+            {isOwner && (
+              <View style={styles.ownerActions}>
+                <TouchableOpacity
+                  style={[styles.ownerBtn, { borderColor: colors.border }]}
+                  activeOpacity={0.8}
+                  onPress={openEdit}
+                >
+                  <Ionicons name="pencil-outline" size={16} color={colors.foreground} />
+                  <Text style={[styles.ownerBtnText, { color: colors.foreground }]}>Edit</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.ownerBtn, styles.deleteBtn]}
+                  activeOpacity={0.8}
+                  onPress={handleDelete}
+                  disabled={isDeleting}
+                >
+                  {isDeleting
+                    ? <ActivityIndicator size="small" color="#EF4444" />
+                    : <Ionicons name="trash-outline" size={16} color="#EF4444" />}
+                  <Text style={styles.deleteBtnText}>Delete</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
         </ScrollView>
       )}
+
+      <Modal visible={editVisible} animationType="slide" transparent onRequestClose={() => setEditVisible(false)}>
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+        >
+          <View style={[styles.modalSheet, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.foreground }]}>Edit Post</Text>
+              <TouchableOpacity onPress={() => setEditVisible(false)} activeOpacity={0.7}>
+                <Ionicons name="close" size={22} color={colors.mutedForeground} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>Title</Text>
+            <TextInput
+              style={[styles.textInput, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background }]}
+              value={editTitle}
+              onChangeText={setEditTitle}
+              placeholder="Post title"
+              placeholderTextColor={colors.mutedForeground}
+              maxLength={120}
+              returnKeyType="next"
+            />
+
+            <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>Caption</Text>
+            <TextInput
+              style={[styles.textInput, styles.captionInput, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background }]}
+              value={editCaption}
+              onChangeText={setEditCaption}
+              placeholder="Add a caption…"
+              placeholderTextColor={colors.mutedForeground}
+              maxLength={300}
+              multiline
+              numberOfLines={3}
+              textAlignVertical="top"
+            />
+
+            <View style={styles.twoCol}>
+              <View style={styles.halfField}>
+                <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>Genre</Text>
+                <TextInput
+                  style={[styles.textInput, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background }]}
+                  value={editGenre}
+                  onChangeText={setEditGenre}
+                  placeholder="e.g. Pop"
+                  placeholderTextColor={colors.mutedForeground}
+                  maxLength={40}
+                  returnKeyType="next"
+                />
+              </View>
+              <View style={styles.halfField}>
+                <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>Language</Text>
+                <TextInput
+                  style={[styles.textInput, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background }]}
+                  value={editLanguage}
+                  onChangeText={setEditLanguage}
+                  placeholder="e.g. English"
+                  placeholderTextColor={colors.mutedForeground}
+                  maxLength={40}
+                  returnKeyType="done"
+                />
+              </View>
+            </View>
+
+            <TouchableOpacity
+              onPress={handleSaveEdit}
+              activeOpacity={0.85}
+              disabled={isSaving}
+              style={[styles.saveBtn, isSaving && { opacity: 0.6 }]}
+            >
+              <LinearGradient
+                colors={["#A855F7", "#EC4899"]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.saveBtnGradient}
+              >
+                {isSaving
+                  ? <ActivityIndicator size="small" color="#fff" />
+                  : <Text style={styles.saveBtnText}>Save Changes</Text>}
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
@@ -447,4 +669,68 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   tagText: { fontSize: 12, fontWeight: "500" },
+  ownerActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 4,
+  },
+  ownerBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 11,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  ownerBtnText: { fontSize: 14, fontWeight: "600" },
+  deleteBtn: {
+    borderColor: "rgba(239,68,68,0.35)",
+    backgroundColor: "rgba(239,68,68,0.07)",
+  },
+  deleteBtnText: { fontSize: 14, fontWeight: "600", color: "#EF4444" },
+  menuBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(0,0,0,0.6)",
+  },
+  modalSheet: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    borderWidth: 1,
+    padding: 24,
+    gap: 12,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 4,
+  },
+  modalTitle: { fontSize: 18, fontWeight: "800" },
+  fieldLabel: { fontSize: 12, fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.5, marginTop: 4 },
+  textInput: {
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+  },
+  captionInput: {
+    minHeight: 72,
+    paddingTop: 12,
+  },
+  twoCol: { flexDirection: "row", gap: 10 },
+  halfField: { flex: 1, gap: 4 },
+  saveBtn: { borderRadius: 14, overflow: "hidden", marginTop: 8 },
+  saveBtnGradient: { paddingVertical: 14, alignItems: "center", justifyContent: "center" },
+  saveBtnText: { color: "#fff", fontSize: 15, fontWeight: "700" },
 });

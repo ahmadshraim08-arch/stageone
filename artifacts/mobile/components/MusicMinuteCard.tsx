@@ -310,8 +310,13 @@ export function MusicMinuteCard({ item, isActive, onCommentPress, onGoldenMicPre
   }, [gmScale, item.id, onGoldenMicPress]);
 
   const handleCreatorPress = useCallback(() => {
-    if (seedCreator) router.push(`/creator/${seedCreator.username}`);
-  }, [seedCreator]);
+    if (isCurrentUser) {
+      router.push("/(tabs)/profile");
+      return;
+    }
+    const usernameToNav = seedCreator?.username ?? item.creatorUsername;
+    if (usernameToNav) router.push(`/creator/${usernameToNav}`);
+  }, [isCurrentUser, seedCreator, item.creatorUsername]);
 
   const handleSingThisPart = useCallback(() => {
     if (matchingChallenge) {

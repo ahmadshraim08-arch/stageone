@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
+import { router } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
   Animated,
@@ -26,7 +27,7 @@ interface Props {
   onClose: () => void;
 }
 
-function CommentRow({ comment }: { comment: SeedComment }) {
+function CommentRow({ comment, onAvatarPress }: { comment: SeedComment; onAvatarPress?: () => void }) {
   const colors = useColors();
   const timeAgo = (dateStr: string) => {
     const diff = Date.now() - new Date(dateStr).getTime();
@@ -38,14 +39,18 @@ function CommentRow({ comment }: { comment: SeedComment }) {
 
   return (
     <View style={styles.commentRow}>
-      <View style={[styles.commentAvatar, { backgroundColor: comment.avatarColor }]}>
-        <Text style={styles.commentAvatarText}>{comment.displayName.charAt(0)}</Text>
-      </View>
+      <TouchableOpacity onPress={onAvatarPress} activeOpacity={onAvatarPress ? 0.7 : 1} disabled={!onAvatarPress}>
+        <View style={[styles.commentAvatar, { backgroundColor: comment.avatarColor }]}>
+          <Text style={styles.commentAvatarText}>{comment.displayName.charAt(0)}</Text>
+        </View>
+      </TouchableOpacity>
       <View style={styles.commentBody}>
         <View style={styles.commentHeader}>
-          <Text style={[styles.commentUsername, { color: colors.foreground }]}>
-            {comment.username}
-          </Text>
+          <TouchableOpacity onPress={onAvatarPress} activeOpacity={onAvatarPress ? 0.7 : 1} disabled={!onAvatarPress}>
+            <Text style={[styles.commentUsername, { color: colors.foreground }]}>
+              {comment.username}
+            </Text>
+          </TouchableOpacity>
           <Text style={[styles.commentTime, { color: colors.mutedForeground }]}>
             {timeAgo(comment.createdAt)}
           </Text>
@@ -131,7 +136,16 @@ export function CommentsSheet({ visible, musicMinuteId, onClose }: Props) {
         <FlatList
           data={sheetComments}
           keyExtractor={(c) => c.id}
-          renderItem={({ item }) => <CommentRow comment={item} />}
+          renderItem={({ item }) => (
+            <CommentRow
+              comment={item}
+              onAvatarPress={
+                item.username && item.username !== currentUser?.username
+                  ? () => { onClose(); router.push(`/creator/${item.username}`); }
+                  : undefined
+              }
+            />
+          )}
           style={styles.commentsList}
           contentContainerStyle={{ paddingVertical: 8 }}
           ListEmptyComponent={

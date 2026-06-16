@@ -5,6 +5,7 @@ import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
+  ActivityIndicator,
   Platform,
   ScrollView,
   StyleSheet,
@@ -16,14 +17,15 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@clerk/expo";
 
 import { GoldenMicModal } from "@/components/GoldenMicModal";
-import { useApp } from "@/context/AppContext";
+import { useApp, apiPostToMusicMinute } from "@/context/AppContext";
 import {
   getUserByUsername as getSeedUserByUsername,
   getMusicMinutesByUserId,
   formatCount,
+  MusicMinute,
 } from "@/data/seedData";
 import { useColors } from "@/hooks/useColors";
-import { ApiUser, getUserByUsername as getApiUserByUsername } from "@/lib/api";
+import { ApiUser, getUserByUsername as getApiUserByUsername, getPosts } from "@/lib/api";
 
 const SINGER_IMAGES = [
   require("@/assets/images/singer_placeholder_1.png"),
@@ -49,6 +51,8 @@ export default function CreatorProfileScreen() {
   const [gmVisible, setGmVisible] = useState(false);
   const [gmToast, setGmToast] = useState(false);
   const [apiUser, setApiUser] = useState<ApiUser | null>(null);
+  const [apiPosts, setApiPosts] = useState<MusicMinute[] | null>(null);
+  const [postsLoading, setPostsLoading] = useState(false);
 
   // Try to load real API user data; seed data serves as fallback for demo creators
   useEffect(() => {
@@ -59,6 +63,16 @@ export default function CreatorProfileScreen() {
         if (!token) return;
         const u = await getApiUserByUsername(token, username);
         setApiUser(u);
+        // Fetch the creator's real posts using their DB id
+        setPostsLoading(true);
+        try {
+          const result = await getPosts(token, { userId: u.id });
+          setApiPosts(result.items.map(apiPostToMusicMinute));
+        } catch {
+          setApiPosts([]);
+        } finally {
+          setPostsLoading(false);
+        }
       } catch {
         // Creator is seed-only; gracefully ignore
       }
@@ -67,7 +81,12 @@ export default function CreatorProfileScreen() {
 
   const user = getSeedUserByUsername(username ?? "");
   const seedMMs = user ? getMusicMinutesByUserId(user.id) : [];
-  const userMMs = user ? [...musicMinutes.filter((m) => m.userId === user.id && !seedMMs.find((s) => s.id === m.id)), ...seedMMs] : seedMMs;
+  // For API-backed creators, prefer real fetched posts; fall back to feed cache + seed data
+  const userMMs: MusicMinute[] = apiPosts !== null
+    ? apiPosts
+    : user
+      ? [...musicMinutes.filter((m) => m.userId === user.id && !seedMMs.find((s) => s.id === m.id)), ...seedMMs]
+      : seedMMs;
 
   // When API user found, prefer their real stats; else fall back to seed data
   const followUserId = apiUser ? String(apiUser.id) : user?.id ?? "";
@@ -136,6 +155,8 @@ export default function CreatorProfileScreen() {
     userMMs.length >= 3,
   ].filter(Boolean).length;
 
+  const avatarUrl = apiUser?.avatarUrl ?? null;
+
   return (
     <ScrollView
       style={[styles.container, { backgroundColor: colors.background }]}
@@ -144,11 +165,24 @@ export default function CreatorProfileScreen() {
     >
       <LinearGradient
         colors={[`${displayProfile.avatarColor}40`, "#05020A"]}
-        style={[styles.hero, { paddingTop: topPad + 16 }]}
+        style={[styles.hero, { paddingTop: topPad + 8 }]}
       >
+        {/* Back button */}
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={styles.backBtn}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="chevron-back" size={24} color="#fff" />
+        </TouchableOpacity>
+
         <View style={styles.heroTop}>
           <View style={[styles.avatar, { backgroundColor: displayProfile.avatarColor }]}>
-            <Text style={styles.avatarText}>{displayProfile.avatarInitials}</Text>
+            {avatarUrl ? (
+              <Image source={{ uri: avatarUrl }} style={styles.avatarImage} contentFit="cover" />
+            ) : (
+              <Text style={styles.avatarText}>{displayProfile.avatarInitials}</Text>
+            )}
             {displayProfile.liveEligible && (
               <View style={styles.liveEligibleDot}>
                 <Ionicons name="radio" size={10} color="#fff" />
@@ -262,9 +296,13 @@ export default function CreatorProfileScreen() {
 
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: colors.foreground }]}>
-          Music Minutes ({userMMs.length})
+          Music Minutes{!postsLoading ? ` (${userMMs.length})` : ""}
         </Text>
-        {userMMs.length === 0 ? (
+        {postsLoading ? (
+          <View style={styles.emptyMMs}>
+            <ActivityIndicator color="#A855F7" size="small" />
+          </View>
+        ) : userMMs.length === 0 ? (
           <View style={styles.emptyMMs}>
             <MaterialCommunityIcons name="microphone-off" size={32} color={colors.mutedForeground} />
             <Text style={[styles.emptyMMsText, { color: colors.mutedForeground }]}>No Music Minutes yet</Text>
@@ -337,6 +375,15 @@ export default function CreatorProfileScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   hero: { paddingHorizontal: 20, paddingBottom: 24, gap: 18 },
+  backBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 4,
+  },
   heroTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
   avatar: {
     width: 84,
@@ -345,6 +392,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     position: "relative",
+    overflow: "hidden",
+  },
+  avatarImage: {
+    width: 84,
+    height: 84,
+    borderRadius: 42,
   },
   avatarText: { color: "#fff", fontSize: 32, fontWeight: "800" },
   liveEligibleDot: {

@@ -29,6 +29,9 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
+  withTiming,
+  withSequence,
+  Easing,
   FadeInDown,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -261,6 +264,18 @@ export default function PostScreen() {
   // Tracks which stages have ever been reported — used for conditional checklist display
   const [seenStages, setSeenStages] = useState<Set<string>>(new Set());
 
+  // ── Confirming burst animation ────────────────────────────────────────────
+  const confirmCardScale = useSharedValue(1);
+  const confirmCardOpacity = useSharedValue(1);
+  const confirmGlowOpacity = useSharedValue(0);
+  const confirmCardAnimStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: confirmCardScale.value }],
+    opacity: confirmCardOpacity.value,
+  }));
+  const confirmGlowAnimStyle = useAnimatedStyle(() => ({
+    opacity: confirmGlowOpacity.value,
+  }));
+
   // ── Step 6 video playback sync ────────────────────────────────────────────
   const videoRef = useRef<InstanceType<typeof Video> | null>(null);
   const [videoPositionMs, setVideoPositionMs] = useState(0);
@@ -322,6 +337,25 @@ export default function PostScreen() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Burst animation + haptic when AI detection succeeds
+  useEffect(() => {
+    if (analysisPhase === "confirming" && analysisResult?.detectedTrackId) {
+      confirmCardScale.value = 0.82;
+      confirmCardOpacity.value = 0;
+      confirmGlowOpacity.value = 0;
+      confirmCardScale.value = withSpring(1, { damping: 11, stiffness: 220 });
+      confirmCardOpacity.value = withTiming(1, { duration: 280, easing: Easing.out(Easing.cubic) });
+      confirmGlowOpacity.value = withSequence(
+        withTiming(1, { duration: 180 }),
+        withTiming(0.55, { duration: 100 }),
+        withTiming(0.9, { duration: 100 }),
+        withTiming(0, { duration: 600, easing: Easing.out(Easing.quad) }),
+      );
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [analysisPhase]);
 
   // Debounced song search
   useEffect(() => {
@@ -1165,30 +1199,41 @@ export default function PostScreen() {
                   {/* High/Medium confidence: show main match */}
                   {analysisResult.detectedTrackId && (analysisResult.songMatchConfidence ?? 0) >= 0.4 && (
                     <>
-                      <View style={[styles.songConfirmCard, { backgroundColor: colors.card, borderColor: `${colors.primary}40` }]}>
-                        {analysisResult.detectedAlbumArt ? (
-                          <Image source={{ uri: analysisResult.detectedAlbumArt }} style={styles.albumArt} />
-                        ) : (
-                          <View style={[styles.albumArtPlaceholder, { backgroundColor: `${colors.primary}20` }]}>
-                            <Ionicons name="musical-notes" size={32} color={colors.primary} />
-                          </View>
-                        )}
-                        <View style={{ flex: 1, gap: 4 }}>
-                          <Text style={[styles.confirmedTrackTitle, { color: colors.foreground }]} numberOfLines={2}>
-                            {analysisResult.detectedTrackTitle}
-                          </Text>
-                          <Text style={[styles.confirmedTrackArtist, { color: colors.mutedForeground }]} numberOfLines={1}>
-                            {analysisResult.detectedTrackArtist}
-                          </Text>
-                          {analysisResult.songMatchConfidence !== undefined && (
-                            <View style={[styles.confidenceBadge, { backgroundColor: `${confidenceLabel(analysisResult.songMatchConfidence).color}20` }]}>
-                              <Text style={[styles.confidenceBadgeText, { color: confidenceLabel(analysisResult.songMatchConfidence).color }]}>
-                                {confidenceLabel(analysisResult.songMatchConfidence).label}
-                              </Text>
+                      <Animated.View style={confirmCardAnimStyle}>
+                        {/* Glow ring that pulses on entrance */}
+                        <Animated.View
+                          pointerEvents="none"
+                          style={[
+                            StyleSheet.absoluteFillObject,
+                            { borderRadius: 18, borderWidth: 2.5, borderColor: colors.primary },
+                            confirmGlowAnimStyle,
+                          ]}
+                        />
+                        <View style={[styles.songConfirmCard, { backgroundColor: colors.card, borderColor: `${colors.primary}40` }]}>
+                          {analysisResult.detectedAlbumArt ? (
+                            <Image source={{ uri: analysisResult.detectedAlbumArt }} style={styles.albumArt} />
+                          ) : (
+                            <View style={[styles.albumArtPlaceholder, { backgroundColor: `${colors.primary}20` }]}>
+                              <Ionicons name="musical-notes" size={32} color={colors.primary} />
                             </View>
                           )}
+                          <View style={{ flex: 1, gap: 4 }}>
+                            <Text style={[styles.confirmedTrackTitle, { color: colors.foreground }]} numberOfLines={2}>
+                              {analysisResult.detectedTrackTitle}
+                            </Text>
+                            <Text style={[styles.confirmedTrackArtist, { color: colors.mutedForeground }]} numberOfLines={1}>
+                              {analysisResult.detectedTrackArtist}
+                            </Text>
+                            {analysisResult.songMatchConfidence !== undefined && (
+                              <View style={[styles.confidenceBadge, { backgroundColor: `${confidenceLabel(analysisResult.songMatchConfidence).color}20` }]}>
+                                <Text style={[styles.confidenceBadgeText, { color: confidenceLabel(analysisResult.songMatchConfidence).color }]}>
+                                  {confidenceLabel(analysisResult.songMatchConfidence).label}
+                                </Text>
+                              </View>
+                            )}
+                          </View>
                         </View>
-                      </View>
+                      </Animated.View>
 
                       <View style={[styles.musixmatchBadge, { backgroundColor: "rgba(255,191,0,0.12)", borderColor: "rgba(255,191,0,0.35)" }]}>
                         <MaterialCommunityIcons name="music-note" size={13} color="#FFBF00" />

@@ -1,6 +1,7 @@
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { Image } from "expo-image";
+import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import React, { useMemo } from "react";
 import {
@@ -189,7 +190,18 @@ export default function ProfileScreen() {
                 <LinearGradient colors={["transparent", "rgba(5,2,10,0.9)"]} style={StyleSheet.absoluteFill} />
                 <View style={styles.mmTileInfo}>
                   {mm.trackTitle && (mm.performanceType === "cover" || !!mm.musixmatchTrackId) && (
-                    <View style={styles.mmSongTag}>
+                    <TouchableOpacity
+                      style={styles.mmSongTag}
+                      activeOpacity={0.7}
+                      onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        if (mm.musixmatchTrackId) {
+                          router.push({ pathname: "/(tabs)/post", params: { prefillTrackId: mm.musixmatchTrackId } });
+                        } else {
+                          router.push({ pathname: "/(tabs)/post", params: { prefillSongQuery: `${mm.trackTitle} ${mm.trackArtist ?? ""}`.trim() } });
+                        }
+                      }}
+                    >
                       <Ionicons name="musical-note" size={9} color="#A855F7" />
                       <Text style={styles.mmSongText} numberOfLines={1}>
                         {mm.performanceType === "cover"
@@ -198,7 +210,7 @@ export default function ProfileScreen() {
                             ? `Backing: ${mm.trackTitle}`
                             : `Inspired by: ${mm.trackTitle}`}
                       </Text>
-                    </View>
+                    </TouchableOpacity>
                   )}
                   <Text style={styles.mmTileTitle} numberOfLines={1}>{mm.title}</Text>
                   <View style={styles.mmTileStats}>
@@ -248,7 +260,18 @@ export default function ProfileScreen() {
                 <LinearGradient colors={["transparent", "rgba(5,2,10,0.9)"]} style={StyleSheet.absoluteFill} />
                 <View style={styles.mmTileInfo}>
                   {mm.trackTitle && (mm.performanceType === "cover" || !!mm.musixmatchTrackId) && (
-                    <View style={styles.mmSongTag}>
+                    <TouchableOpacity
+                      style={styles.mmSongTag}
+                      activeOpacity={0.7}
+                      onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        if (mm.musixmatchTrackId) {
+                          router.push({ pathname: "/(tabs)/post", params: { prefillTrackId: mm.musixmatchTrackId } });
+                        } else {
+                          router.push({ pathname: "/(tabs)/post", params: { prefillSongQuery: `${mm.trackTitle} ${mm.trackArtist ?? ""}`.trim() } });
+                        }
+                      }}
+                    >
                       <Ionicons name="musical-note" size={9} color="#A855F7" />
                       <Text style={styles.mmSongText} numberOfLines={1}>
                         {mm.performanceType === "cover"
@@ -257,7 +280,7 @@ export default function ProfileScreen() {
                             ? `Backing: ${mm.trackTitle}`
                             : `Inspired by: ${mm.trackTitle}`}
                       </Text>
-                    </View>
+                    </TouchableOpacity>
                   )}
                   <Text style={styles.mmTileTitle} numberOfLines={1}>{mm.title}</Text>
                 </View>

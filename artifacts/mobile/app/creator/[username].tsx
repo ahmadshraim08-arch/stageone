@@ -1,6 +1,7 @@
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { Image } from "expo-image";
+import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams } from "expo-router";
 import React from "react";
 import {
@@ -213,7 +214,18 @@ export default function CreatorProfileScreen() {
                 <LinearGradient colors={["transparent", "rgba(5,2,10,0.92)"]} style={StyleSheet.absoluteFill} />
                 <View style={styles.mmTileOverlay}>
                   {mm.trackTitle && (mm.performanceType === "cover" || !!mm.musixmatchTrackId) && (
-                    <View style={styles.mmSongTag}>
+                    <TouchableOpacity
+                      style={styles.mmSongTag}
+                      activeOpacity={0.7}
+                      onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        if (mm.musixmatchTrackId) {
+                          router.push({ pathname: "/(tabs)/post", params: { prefillTrackId: mm.musixmatchTrackId } });
+                        } else {
+                          router.push({ pathname: "/(tabs)/post", params: { prefillSongQuery: `${mm.trackTitle} ${mm.trackArtist ?? ""}`.trim() } });
+                        }
+                      }}
+                    >
                       <Ionicons name="musical-note" size={9} color={colors.primary} />
                       <Text style={[styles.mmSongText, { color: colors.primary }]} numberOfLines={1}>
                         {mm.performanceType === "cover"
@@ -222,7 +234,7 @@ export default function CreatorProfileScreen() {
                             ? `Backing: ${mm.trackTitle}`
                             : `Inspired by: ${mm.trackTitle}`}
                       </Text>
-                    </View>
+                    </TouchableOpacity>
                   )}
                   <Text style={styles.mmTileTitle} numberOfLines={1}>{mm.title}</Text>
                   <View style={styles.mmTileStats}>

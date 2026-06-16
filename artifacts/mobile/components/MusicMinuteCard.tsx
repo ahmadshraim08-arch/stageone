@@ -588,14 +588,18 @@ export function MusicMinuteCard({ item, onCommentPress, onGoldenMicPress }: Prop
           )}
         </View>
 
-        {item.trackTitle && item.trackArtist && (
+        {item.trackTitle && item.trackArtist && (item.performanceType === "cover" || !!item.musixmatchTrackId) && (
           <View style={styles.songRef}>
             <Ionicons name="musical-note" size={12} color={colors.primary} />
             <Text
               style={[styles.songText, { color: colors.primary }]}
               numberOfLines={1}
             >
-              {item.trackTitle} — {item.trackArtist}
+              {item.performanceType === "cover"
+                ? `${item.trackTitle} — ${item.trackArtist}`
+                : item.performanceType === "freestyle"
+                  ? `Backing: ${item.trackTitle} — ${item.trackArtist}`
+                  : `Inspired by: ${item.trackTitle} — ${item.trackArtist}`}
             </Text>
           </View>
         )}

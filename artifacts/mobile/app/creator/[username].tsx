@@ -211,11 +211,15 @@ export default function CreatorProfileScreen() {
                 />
                 <LinearGradient colors={["transparent", "rgba(5,2,10,0.92)"]} style={StyleSheet.absoluteFill} />
                 <View style={styles.mmTileOverlay}>
-                  {mm.performanceType === "cover" && mm.trackTitle && (
+                  {mm.trackTitle && (mm.performanceType === "cover" || !!mm.musixmatchTrackId) && (
                     <View style={styles.mmSongTag}>
                       <Ionicons name="musical-note" size={9} color={colors.primary} />
                       <Text style={[styles.mmSongText, { color: colors.primary }]} numberOfLines={1}>
-                        {mm.trackTitle}
+                        {mm.performanceType === "cover"
+                          ? mm.trackTitle
+                          : mm.performanceType === "freestyle"
+                            ? `Backing: ${mm.trackTitle}`
+                            : `Inspired by: ${mm.trackTitle}`}
                       </Text>
                     </View>
                   )}

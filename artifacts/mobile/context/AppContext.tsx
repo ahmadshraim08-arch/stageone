@@ -25,6 +25,7 @@ interface CurrentUser {
   goldenMicBalance: number;
   genres: string[];
   isGuest: boolean;
+  avatarUrl?: string | null;
 }
 
 export interface DirectShare {
@@ -61,6 +62,7 @@ interface AppContextType {
     email: string;
     genres: string[];
   }) => Promise<void>;
+  updateAvatar: (avatarUrl: string) => void;
   toggleLike: (musicMinuteId: string) => void;
   toggleFollow: (userId: string) => void;
   toggleSave: (musicMinuteId: string) => void;
@@ -242,6 +244,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [currentUser]
   );
 
+  const updateAvatar = useCallback(
+    (avatarUrl: string) => {
+      if (!currentUser) return;
+      const updated = { ...currentUser, avatarUrl };
+      setCurrentUser(updated);
+      AsyncStorage.setItem(STORAGE_KEYS.currentUser, JSON.stringify(updated));
+    },
+    [currentUser]
+  );
+
   const addComment = useCallback(
     (musicMinuteId: string, content: string) => {
       if (!currentUser) return;
@@ -361,6 +373,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         login,
         logout,
         signUp,
+        updateAvatar,
         toggleLike,
         toggleFollow,
         toggleSave,

@@ -20,6 +20,8 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { useAuth } from "@clerk/expo";
+
 import { useApp } from "@/context/AppContext";
 import { MusicMinute } from "@/data/seedData";
 import { useColors } from "@/hooks/useColors";
@@ -31,6 +33,7 @@ import {
   type LyricsResponse,
   type LyricLine,
 } from "@/lib/musixmatch";
+import { uploadVideo, createPost } from "@/lib/uploads";
 import { TimingSlider } from "@/components/TimingSlider";
 
 type PerformanceType = "original" | "cover" | "freestyle";
@@ -80,6 +83,7 @@ function fmtMs(ms: number): string {
 export default function PostScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const { getToken } = useAuth();
   const { currentUser, postMusicMinute, musicMinutes } = useApp();
 
   const [step, setStep] = useState(1);
@@ -125,6 +129,9 @@ export default function PostScreen() {
   // Review + posting (step 7)
   const [rightsConfirmed, setRightsConfirmed] = useState(false);
   const [isPosting, setIsPosting] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadPhase, setUploadPhase] = useState<"idle" | "uploading" | "saving" | "done">("idle");
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [posted, setPosted] = useState(false);
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
@@ -437,10 +444,81 @@ export default function PostScreen() {
       Alert.alert("Rights confirmation required", "Please confirm your rights before posting.");
       return;
     }
+    if (!videoUri) {
+      Alert.alert("No video", "Please select or record a video first.");
+      return;
+    }
+
     setIsPosting(true);
-    await new Promise((r) => setTimeout(r, 800));
+    setUploadError(null);
+    setUploadProgress(0);
+    setUploadPhase("uploading");
+
+    const token = await getToken();
+    if (!token) {
+      setUploadError("You must be signed in to post. Please log in and try again.");
+      setUploadPhase("idle");
+      setIsPosting(false);
+      return;
+    }
+
+    let cloudVideoUrl: string;
+    try {
+      const mimeType = videoUri.endsWith(".mov") ? "video/quicktime" : "video/mp4";
+      const result = await uploadVideo(videoUri, mimeType, token, (pct) => {
+        setUploadProgress(pct);
+      });
+      cloudVideoUrl = result.videoUrl;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Upload failed";
+      setUploadError(message);
+      setUploadPhase("idle");
+      setIsPosting(false);
+      return;
+    }
+
+    setUploadPhase("saving");
 
     const imageIndex = musicMinutes.length % 3;
+    const lyricSection =
+      performanceType === "cover" && selectedSong && selectedSection
+        ? {
+            sectionId: selectedSection.id,
+            sectionLabel: selectedSection.label,
+            trackId: selectedSong.track_id,
+            startMs: selectedSection.startMs,
+            endMs: selectedSection.endMs,
+            lineCount: selectedSection.lineCount,
+            timingOffsetMs,
+            language: "en",
+          }
+        : undefined;
+
+    try {
+      await createPost(
+        {
+          videoUrl: cloudVideoUrl,
+          title,
+          caption,
+          performanceType,
+          genre,
+          language,
+          musixmatchTrackId: selectedSong?.track_id,
+          trackTitle: selectedSong?.track_name,
+          trackArtist: selectedSong?.artist_name,
+          lyricSectionId: lyricSection?.sectionId,
+          rightsConfirmed,
+        },
+        token,
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not save post";
+      setUploadError(message);
+      setUploadPhase("idle");
+      setIsPosting(false);
+      return;
+    }
+
     const mm: Omit<
       MusicMinute,
       | "id"
@@ -466,24 +544,13 @@ export default function PostScreen() {
       trackTitle: selectedSong?.track_name,
       trackArtist: selectedSong?.artist_name,
       imageIndex,
-      videoUri: videoUri ?? undefined,
-      lyricSection:
-        performanceType === "cover" && selectedSong && selectedSection
-          ? {
-              sectionId: selectedSection.id,
-              sectionLabel: selectedSection.label,
-              trackId: selectedSong.track_id,
-              startMs: selectedSection.startMs,
-              endMs: selectedSection.endMs,
-              lineCount: selectedSection.lineCount,
-              timingOffsetMs,
-              language: "en",
-            }
-          : undefined,
+      videoUri: cloudVideoUrl,
+      lyricSection,
     };
 
     postMusicMinute(mm);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setUploadPhase("done");
     setIsPosting(false);
     setPosted(true);
   };
@@ -1508,10 +1575,38 @@ export default function PostScreen() {
                   I confirm this is my performance and I have the right to upload it.
                 </Text>
               </TouchableOpacity>
+              {uploadError && (
+                <View style={[styles.uploadErrorCard, { backgroundColor: `${"#EF4444"}18`, borderColor: "#EF4444" }]}>
+                  <Ionicons name="alert-circle" size={18} color="#EF4444" />
+                  <Text style={[styles.uploadErrorText, { color: "#EF4444" }]}>{uploadError}</Text>
+                </View>
+              )}
+
+              {isPosting && (
+                <View style={[styles.uploadProgressCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                  <Text style={[styles.uploadProgressLabel, { color: colors.mutedForeground }]}>
+                    {uploadPhase === "uploading"
+                      ? `Uploading video… ${uploadProgress}%`
+                      : "Saving post…"}
+                  </Text>
+                  <View style={[styles.uploadProgressTrack, { backgroundColor: colors.muted }]}>
+                    <View
+                      style={[
+                        styles.uploadProgressFill,
+                        {
+                          width: uploadPhase === "saving" ? "100%" : `${uploadProgress}%`,
+                          backgroundColor: colors.primary,
+                        },
+                      ]}
+                    />
+                  </View>
+                </View>
+              )}
+
               <TouchableOpacity
                 onPress={handlePost}
                 disabled={isPosting || !rightsConfirmed}
-                style={[styles.nextBtn, !rightsConfirmed && { opacity: 0.5 }]}
+                style={[styles.nextBtn, (!rightsConfirmed || isPosting) && { opacity: 0.5 }]}
                 activeOpacity={0.85}
               >
                 <LinearGradient
@@ -1522,7 +1617,13 @@ export default function PostScreen() {
                 >
                   <MaterialCommunityIcons name="microphone" size={20} color="#fff" />
                   <Text style={styles.nextBtnText}>
-                    {isPosting ? "Posting..." : "Post Music Minute"}
+                    {isPosting
+                      ? uploadPhase === "uploading"
+                        ? "Uploading…"
+                        : "Saving…"
+                      : uploadError
+                        ? "Retry"
+                        : "Post Music Minute"}
                   </Text>
                 </LinearGradient>
               </TouchableOpacity>
@@ -1902,4 +2003,29 @@ const styles = StyleSheet.create({
   },
   lyricLineText: { fontSize: 13, flex: 1, lineHeight: 18 },
   lyricLineTime: { fontSize: 11, marginLeft: 8 },
+  uploadProgressCard: {
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    gap: 8,
+  },
+  uploadProgressLabel: { fontSize: 13, fontWeight: "600" },
+  uploadProgressTrack: {
+    height: 6,
+    borderRadius: 3,
+    overflow: "hidden",
+  },
+  uploadProgressFill: {
+    height: 6,
+    borderRadius: 3,
+  },
+  uploadErrorCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  uploadErrorText: { fontSize: 13, flex: 1 },
 });

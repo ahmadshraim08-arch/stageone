@@ -2,10 +2,12 @@ import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
+import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Platform,
   ScrollView,
   StyleSheet,
@@ -14,10 +16,12 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useAuth } from "@clerk/expo";
 
 import { useApp } from "@/context/AppContext";
 import { SEED_USERS, formatCount } from "@/data/seedData";
 import { useColors } from "@/hooks/useColors";
+import { uploadAvatar } from "@/lib/uploads";
 
 const SINGER_IMAGES = [
   require("@/assets/images/singer_placeholder_1.png"),
@@ -28,7 +32,47 @@ const SINGER_IMAGES = [
 export default function ProfileScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { currentUser, musicMinutes, likedIds, savedIds, followingIds, directShares, logout, isLoaded } = useApp();
+  const { getToken } = useAuth();
+  const { currentUser, musicMinutes, likedIds, savedIds, followingIds, directShares, logout, isLoaded, updateAvatar } = useApp();
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+
+  const handleAvatarUpload = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert("Permission needed", "Please allow access to your photo library.");
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+    if (result.canceled || !result.assets[0]) return;
+    const asset = result.assets[0];
+    setIsUploadingAvatar(true);
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated");
+      const mimeType = asset.mimeType ?? (asset.uri.endsWith(".png") ? "image/png" : "image/jpeg");
+      const { avatarUrl } = await uploadAvatar(asset.uri, mimeType, token);
+      const domain = process.env.EXPO_PUBLIC_DOMAIN;
+      const base = domain ? `https://${domain}/api` : `/api`;
+      const patchRes = await fetch(`${base}/users/me`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ avatarUrl }),
+      });
+      if (!patchRes.ok) {
+        throw new Error(`Failed to save avatar (HTTP ${patchRes.status})`);
+      }
+      updateAvatar(avatarUrl);
+    } catch (err) {
+      Alert.alert("Upload failed", err instanceof Error ? err.message : "Could not upload avatar.");
+    } finally {
+      setIsUploadingAvatar(false);
+    }
+  };
 
   const inboxCount = useMemo(() => {
     if (!currentUser) return 0;
@@ -112,11 +156,22 @@ export default function ProfileScreen() {
         style={[styles.profileHero, { paddingTop: topPad + 16 }]}
       >
         <View style={styles.profileRow}>
-          <View style={[styles.bigAvatar, { backgroundColor: colors.primary }]}>
-            <Text style={styles.bigAvatarText}>
-              {currentUser.displayName.charAt(0).toUpperCase()}
-            </Text>
-          </View>
+          <TouchableOpacity onPress={handleAvatarUpload} activeOpacity={0.8} style={styles.bigAvatarWrapper}>
+            {currentUser.avatarUrl ? (
+              <Image source={{ uri: currentUser.avatarUrl }} style={styles.bigAvatar} contentFit="cover" />
+            ) : (
+              <View style={[styles.bigAvatar, { backgroundColor: colors.primary }]}>
+                <Text style={styles.bigAvatarText}>
+                  {currentUser.displayName.charAt(0).toUpperCase()}
+                </Text>
+              </View>
+            )}
+            <View style={[styles.avatarEditBadge, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              {isUploadingAvatar
+                ? <ActivityIndicator size="small" color={colors.primary} />
+                : <Ionicons name="camera" size={12} color={colors.primary} />}
+            </View>
+          </TouchableOpacity>
           <View style={styles.profileInfo}>
             <Text style={[styles.displayName, { color: colors.foreground }]}>{currentUser.displayName}</Text>
             <Text style={[styles.username, { color: colors.mutedForeground }]}>@{currentUser.username}</Text>
@@ -317,14 +372,31 @@ const styles = StyleSheet.create({
   loginLink: { fontSize: 13 },
   profileHero: { paddingHorizontal: 20, paddingBottom: 24, gap: 20 },
   profileRow: { flexDirection: "row", alignItems: "flex-start", gap: 16 },
+  bigAvatarWrapper: {
+    position: "relative",
+    width: 70,
+    height: 70,
+  },
   bigAvatar: {
     width: 70,
     height: 70,
     borderRadius: 35,
     justifyContent: "center",
     alignItems: "center",
+    overflow: "hidden",
   },
   bigAvatarText: { color: "#fff", fontSize: 28, fontWeight: "800" },
+  avatarEditBadge: {
+    position: "absolute",
+    bottom: 0,
+    right: 0,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
   profileInfo: { flex: 1, gap: 4 },
   displayName: { fontSize: 20, fontWeight: "800" },
   username: { fontSize: 14 },

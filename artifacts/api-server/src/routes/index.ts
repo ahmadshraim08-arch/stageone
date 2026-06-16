@@ -4,6 +4,7 @@ import musixmatchRouter from "./musixmatch";
 import authRouter from "./auth";
 import usersRouter from "./users";
 import postsRouter from "./posts";
+import uploadsRouter from "./uploads";
 
 const router: IRouter = Router();
 
@@ -12,5 +13,6 @@ router.use(musixmatchRouter);
 router.use(authRouter);
 router.use(usersRouter);
 router.use(postsRouter);
+router.use(uploadsRouter);
 
 export default router;

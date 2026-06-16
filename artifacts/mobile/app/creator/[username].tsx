@@ -46,6 +46,7 @@ export default function CreatorProfileScreen() {
   const userMMs = user ? [...musicMinutes.filter((m) => m.userId === user.id && !seedMMs.find((s) => s.id === m.id)), ...seedMMs] : seedMMs;
 
   const isFollowing = user ? followingIds.has(user.id) : false;
+  const isOwnProfile = currentUser?.id === user?.id || currentUser?.username === user?.username;
   const topPad = Platform.OS === "web" ? 67 : insets.top;
 
   if (!user) {
@@ -87,7 +88,7 @@ export default function CreatorProfileScreen() {
             )}
           </View>
           <View style={styles.heroActions}>
-            {currentUser && (
+            {currentUser && !isOwnProfile && (
               <TouchableOpacity
                 onPress={() => toggleFollow(user.id)}
                 style={[

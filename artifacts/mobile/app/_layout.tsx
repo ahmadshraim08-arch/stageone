@@ -100,6 +100,12 @@ function RootLayoutNav() {
             headerShadowVisible: false,
           }}
         />
+        <Stack.Screen
+          name="inbox"
+          options={{
+            headerShown: false,
+          }}
+        />
       </Stack>
     </>
   );

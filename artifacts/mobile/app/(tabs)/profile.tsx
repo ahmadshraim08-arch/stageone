@@ -2,7 +2,7 @@ import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { Image } from "expo-image";
 import { router } from "expo-router";
-import React from "react";
+import React, { useMemo } from "react";
 import {
   ActivityIndicator,
   Platform,
@@ -27,7 +27,12 @@ const SINGER_IMAGES = [
 export default function ProfileScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { currentUser, musicMinutes, likedIds, savedIds, followingIds, logout, isLoaded } = useApp();
+  const { currentUser, musicMinutes, likedIds, savedIds, followingIds, directShares, logout, isLoaded } = useApp();
+
+  const inboxCount = useMemo(() => {
+    if (!currentUser) return 0;
+    return directShares.filter((s) => s.recipientId === currentUser.id && !s.seenAt).length;
+  }, [directShares, currentUser]);
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
 
@@ -121,16 +126,32 @@ export default function ProfileScreen() {
               </Text>
             </View>
           </View>
-          <TouchableOpacity onPress={() => logout()} style={[styles.logoutBtn, { borderColor: colors.border }]} activeOpacity={0.7}>
-            <Ionicons name="log-out-outline" size={20} color={colors.mutedForeground} />
-          </TouchableOpacity>
+            <View style={styles.profileActions}>
+            <TouchableOpacity
+              onPress={() => router.push({ pathname: "/inbox" })}
+              style={[styles.iconBtn, { borderColor: colors.border }]}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="mail-outline" size={20} color={colors.mutedForeground} />
+              {inboxCount > 0 && (
+                <View style={[styles.inboxBadge, { backgroundColor: colors.primary }]}>
+                  <Text style={styles.inboxBadgeText}>
+                    {inboxCount > 9 ? "9+" : inboxCount}
+                  </Text>
+                </View>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => logout()} style={[styles.iconBtn, { borderColor: colors.border }]} activeOpacity={0.7}>
+              <Ionicons name="log-out-outline" size={20} color={colors.mutedForeground} />
+            </TouchableOpacity>
+          </View>
         </View>
 
         <View style={styles.statsGrid}>
           {[
             { label: "Posts", value: myMMs.length },
+            { label: "Followers", value: 0 },
             { label: "Following", value: followingIds.size },
-            { label: "Saved", value: savedMMs.length },
             { label: "Liked", value: likedIds.size },
           ].map((s) => (
             <View key={s.label} style={styles.statItem}>
@@ -295,13 +316,35 @@ const styles = StyleSheet.create({
     alignSelf: "flex-start",
   },
   gmBalanceText: { fontSize: 12, fontWeight: "700" },
-  logoutBtn: {
+  profileActions: {
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+  },
+  iconBtn: {
     width: 36,
     height: 36,
     borderRadius: 18,
     borderWidth: 1,
     justifyContent: "center",
     alignItems: "center",
+    position: "relative",
+  },
+  inboxBadge: {
+    position: "absolute",
+    top: -4,
+    right: -4,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 3,
+  },
+  inboxBadgeText: {
+    color: "#fff",
+    fontSize: 9,
+    fontWeight: "800",
   },
   statsGrid: { flexDirection: "row", justifyContent: "space-around" },
   statItem: { alignItems: "center", gap: 2 },

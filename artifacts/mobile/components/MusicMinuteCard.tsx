@@ -20,6 +20,7 @@ import {
 import { useApp } from "@/context/AppContext";
 import { MusicMinute, formatCount, getUserById, SEED_CHALLENGES } from "@/data/seedData";
 import { useColors } from "@/hooks/useColors";
+import { ShareSheet } from "@/components/ShareSheet";
 import {
   fetchLyrics,
   fetchTranslation,
@@ -103,6 +104,7 @@ export function MusicMinuteCard({ item, isActive, onCommentPress, onGoldenMicPre
   const [isMuted, setIsMuted] = useState(false);
   const [isManuallyPaused, setIsManuallyPaused] = useState(false);
   const [tapIcon, setTapIcon] = useState<"play" | "pause">("play");
+  const [shareVisible, setShareVisible] = useState(false);
 
   // Reset manual pause when this card becomes inactive so next activation auto-plays
   useEffect(() => {
@@ -534,7 +536,7 @@ export function MusicMinuteCard({ item, isActive, onCommentPress, onGoldenMicPre
         <ActionButton
           icon={<Ionicons name="arrow-redo-outline" size={30} color="#fff" />}
           count={item.sharesCount}
-          onPress={() => {}}
+          onPress={() => setShareVisible(true)}
           color="#fff"
         />
 
@@ -658,6 +660,13 @@ export function MusicMinuteCard({ item, isActive, onCommentPress, onGoldenMicPre
             </View>
           )}
         </View>
+
+        <ShareSheet
+          visible={shareVisible}
+          onClose={() => setShareVisible(false)}
+          musicMinuteId={item.id}
+          musicMinuteTitle={item.title || item.caption.slice(0, 60)}
+        />
 
         {item.trackTitle && item.trackArtist && (item.performanceType === "cover" || !!item.musixmatchTrackId) && (
           <TouchableOpacity

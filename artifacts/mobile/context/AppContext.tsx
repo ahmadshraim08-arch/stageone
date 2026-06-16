@@ -27,6 +27,20 @@ interface CurrentUser {
   isGuest: boolean;
 }
 
+export interface DirectShare {
+  id: string;
+  senderId: string;
+  senderDisplayName: string;
+  senderUsername: string;
+  senderAvatarColor: string;
+  recipientId: string;
+  musicMinuteId: string;
+  musicMinuteTitle: string;
+  message: string;
+  createdAt: string;
+  seenAt: string | null;
+}
+
 interface AppContextType {
   currentUser: CurrentUser | null;
   musicMinutes: MusicMinute[];
@@ -36,6 +50,7 @@ interface AppContextType {
   savedIds: Set<string>;
   goldenMicsSent: Record<string, number>;
   comments: Record<string, SeedComment[]>;
+  directShares: DirectShare[];
   isLoaded: boolean;
 
   login: (user: CurrentUser) => Promise<void>;
@@ -53,6 +68,9 @@ interface AppContextType {
   addGoldenMics: (quantity: number) => void;
   addComment: (musicMinuteId: string, content: string) => void;
   postMusicMinute: (mm: Omit<MusicMinute, "id" | "views" | "likesCount" | "commentsCount" | "sharesCount" | "savesCount" | "goldenMicsCount" | "createdAt" | "isRisingVoice" | "isFeatured">) => void;
+  sendDirectShare: (recipientId: string, musicMinuteId: string, musicMinuteTitle: string, message: string) => boolean;
+  getInboxShares: (userId: string) => DirectShare[];
+  markShareSeen: (shareId: string) => void;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -65,6 +83,7 @@ const STORAGE_KEYS = {
   goldenMicsSent: "stageone_golden_mics_sent",
   musicMinutesExtra: "stageone_music_minutes_extra",
   commentsExtra: "stageone_comments_extra",
+  directShares: "stageone_direct_shares",
 };
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
@@ -75,6 +94,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [goldenMicsSent, setGoldenMicsSent] = useState<Record<string, number>>({});
   const [extraMusicMinutes, setExtraMusicMinutes] = useState<MusicMinute[]>([]);
   const [extraComments, setExtraComments] = useState<Record<string, SeedComment[]>>({});
+  const [directShares, setDirectShares] = useState<DirectShare[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
@@ -83,7 +103,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   async function loadState() {
     try {
-      const [userStr, likedStr, followingStr, savedStr, gmStr, mmStr, cStr] =
+      const [userStr, likedStr, followingStr, savedStr, gmStr, mmStr, cStr, dsStr] =
         await Promise.all([
           AsyncStorage.getItem(STORAGE_KEYS.currentUser),
           AsyncStorage.getItem(STORAGE_KEYS.likedIds),
@@ -92,6 +112,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           AsyncStorage.getItem(STORAGE_KEYS.goldenMicsSent),
           AsyncStorage.getItem(STORAGE_KEYS.musicMinutesExtra),
           AsyncStorage.getItem(STORAGE_KEYS.commentsExtra),
+          AsyncStorage.getItem(STORAGE_KEYS.directShares),
         ]);
 
       if (userStr) setCurrentUser(JSON.parse(userStr));
@@ -101,6 +122,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (gmStr) setGoldenMicsSent(JSON.parse(gmStr));
       if (mmStr) setExtraMusicMinutes(JSON.parse(mmStr));
       if (cStr) setExtraComments(JSON.parse(cStr));
+      if (dsStr) setDirectShares(JSON.parse(dsStr));
     } catch {
     } finally {
       setIsLoaded(true);
@@ -269,6 +291,49 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
+  const sendDirectShare = useCallback(
+    (recipientId: string, musicMinuteId: string, musicMinuteTitle: string, message: string): boolean => {
+      if (!currentUser) return false;
+      const share: DirectShare = {
+        id: "ds_" + Date.now().toString(36),
+        senderId: currentUser.id,
+        senderDisplayName: currentUser.displayName,
+        senderUsername: currentUser.username,
+        senderAvatarColor: "#A855F7",
+        recipientId,
+        musicMinuteId,
+        musicMinuteTitle,
+        message,
+        createdAt: new Date().toISOString(),
+        seenAt: null,
+      };
+      setDirectShares((prev) => {
+        const next = [share, ...prev];
+        AsyncStorage.setItem(STORAGE_KEYS.directShares, JSON.stringify(next));
+        return next;
+      });
+      return true;
+    },
+    [currentUser]
+  );
+
+  const getInboxShares = useCallback(
+    (userId: string): DirectShare[] => {
+      return directShares.filter((s) => s.recipientId === userId);
+    },
+    [directShares]
+  );
+
+  const markShareSeen = useCallback((shareId: string) => {
+    setDirectShares((prev) => {
+      const next = prev.map((s) =>
+        s.id === shareId ? { ...s, seenAt: new Date().toISOString() } : s
+      );
+      AsyncStorage.setItem(STORAGE_KEYS.directShares, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
   const allMusicMinutes = [...extraMusicMinutes, ...SEED_MUSIC_MINUTES];
 
   const allComments: Record<string, SeedComment[]> = {};
@@ -291,6 +356,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         savedIds,
         goldenMicsSent,
         comments: allComments,
+        directShares,
         isLoaded,
         login,
         logout,
@@ -302,6 +368,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         addGoldenMics,
         addComment,
         postMusicMinute,
+        sendDirectShare,
+        getInboxShares,
+        markShareSeen,
       }}
     >
       {children}

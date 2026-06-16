@@ -122,6 +122,7 @@ interface AppContextType {
   markShareSeen: (shareId: string) => void;
   refreshFeed: () => Promise<void>;
   fetchFollowingFeed: () => Promise<void>;
+  resetUnreadNotifications: () => void;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -728,6 +729,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const markShareSeen = useCallback((_shareId: string) => {}, []);
 
+  const resetUnreadNotifications = useCallback(() => {
+    setUnreadNotifications(0);
+  }, []);
+
   return (
     <AppContext.Provider
       value={{
@@ -764,6 +769,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         markShareSeen,
         refreshFeed,
         fetchFollowingFeed,
+        resetUnreadNotifications,
       }}
     >
       {children}

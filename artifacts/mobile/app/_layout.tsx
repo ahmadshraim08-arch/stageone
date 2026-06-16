@@ -87,6 +87,10 @@ function RootLayoutNav() {
         name="notifications"
         options={{ headerShown: false }}
       />
+      <Stack.Screen
+        name="post/[id]"
+        options={{ headerShown: false }}
+      />
     </Stack>
   );
 }

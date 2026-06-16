@@ -262,6 +262,9 @@ export const markConversationRead = (token: string, convId: number) =>
 // Notifications
 // ---------------------------------------------------------------------------
 
+export const getPost = (token: string, postId: number): Promise<ApiPost> =>
+  apiFetch<ApiPost>(`/posts/${postId}`, token);
+
 export const getNotifications = (token: string, cursor?: number) =>
   apiFetch<{ items: ApiNotification[]; nextCursor: number | null }>(
     `/notifications${cursor !== undefined ? `?cursor=${cursor}` : ""}`,

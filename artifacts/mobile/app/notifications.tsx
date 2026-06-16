@@ -17,6 +17,23 @@ import { useApp } from "@/context/AppContext";
 import { useColors } from "@/hooks/useColors";
 import { ApiNotification, getNotifications, markNotificationsRead } from "@/lib/api";
 
+function notificationDestination(n: ApiNotification): string | null {
+  switch (n.type) {
+    case "like":
+    case "comment":
+    case "golden_mic":
+      if (n.postId != null) return `/post/${n.postId}`;
+      if (n.actor?.username) return `/creator/${n.actor.username}`;
+      return null;
+    case "follow":
+      if (n.actor?.username) return `/creator/${n.actor.username}`;
+      return null;
+    default:
+      if (n.actor?.username) return `/creator/${n.actor.username}`;
+      return null;
+  }
+}
+
 function timeAgo(isoDate: string): string {
   const diff = Date.now() - new Date(isoDate).getTime();
   const mins = Math.floor(diff / 60000);
@@ -62,7 +79,7 @@ export default function NotificationsScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { getToken } = useAuth();
-  const { currentUser } = useApp();
+  const { currentUser, resetUnreadNotifications } = useApp();
 
   const [notifications, setNotifications] = useState<ApiNotification[]>([]);
   const [loading, setLoading] = useState(false);
@@ -77,10 +94,11 @@ export default function NotificationsScreen() {
       const result = await getNotifications(token);
       setNotifications(result.items);
       await markNotificationsRead(token).catch(() => {});
+      resetUnreadNotifications();
     } catch {}
     if (isRefresh) setRefreshing(false);
     else setLoading(false);
-  }, [getToken]);
+  }, [getToken, resetUnreadNotifications]);
 
   useEffect(() => {
     if (currentUser) fetchNotifications();
@@ -134,8 +152,21 @@ export default function NotificationsScreen() {
             const unread = !item.readAt;
             const icon = notificationIcon(item.type);
             const iconColor = notificationColor(item.type);
+            const dest = notificationDestination(item);
+            const handlePress = dest
+              ? () => {
+                  setNotifications((prev) =>
+                    prev.map((n) => (n.id === item.id ? { ...n, readAt: new Date().toISOString() } : n)),
+                  );
+                  router.push(dest as `/creator/${string}` | `/post/${string}`);
+                }
+              : undefined;
             return (
-              <View style={[styles.row, { borderBottomColor: colors.border }, unread && { backgroundColor: `${colors.primary}08` }]}>
+              <TouchableOpacity
+                onPress={handlePress}
+                activeOpacity={dest ? 0.7 : 1}
+                style={[styles.row, { borderBottomColor: colors.border }, unread && { backgroundColor: `${colors.primary}08` }]}
+              >
                 <View style={[styles.iconCircle, { backgroundColor: `${iconColor}20` }]}>
                   <Ionicons name={icon as "heart"} size={20} color={iconColor} />
                 </View>
@@ -148,7 +179,8 @@ export default function NotificationsScreen() {
                   </Text>
                 </View>
                 {unread && <View style={[styles.unreadDot, { backgroundColor: colors.primary }]} />}
-              </View>
+                {dest && <Ionicons name="chevron-forward" size={16} color={colors.mutedForeground} />}
+              </TouchableOpacity>
             );
           }}
         />

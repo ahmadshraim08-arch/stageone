@@ -34,7 +34,7 @@ export default function HomeScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { height: screenHeight } = useWindowDimensions();
-  const { musicMinutes, followingFeed, followingLoading, fetchFollowingFeed, currentUser, isLoaded, feedLoading, refreshFeed } = useApp();
+  const { musicMinutes, followingFeed, followingLoading, fetchFollowingFeed, currentUser, isLoaded, feedLoading, refreshFeed, unreadNotifications } = useApp();
 
   const [activeTab, setActiveTab] = useState<FeedTab>("forYou");
   const [commentsMmId, setCommentsMmId] = useState<string | null>(null);
@@ -126,6 +126,13 @@ export default function HomeScreen() {
         </View>
         <TouchableOpacity onPress={() => router.push("/notifications")} style={styles.searchBtn} activeOpacity={0.7}>
           <Ionicons name="notifications-outline" size={22} color="#fff" />
+          {unreadNotifications > 0 && (
+            <View style={styles.bellBadge}>
+              <Text style={styles.bellBadgeText}>
+                {unreadNotifications > 9 ? "9+" : unreadNotifications}
+              </Text>
+            </View>
+          )}
         </TouchableOpacity>
       </View>
 
@@ -274,6 +281,24 @@ const styles = StyleSheet.create({
   },
   searchBtn: {
     padding: 2,
+  },
+  bellBadge: {
+    position: "absolute",
+    top: -4,
+    right: -4,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: "#EC4899",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 3,
+  },
+  bellBadgeText: {
+    color: "#fff",
+    fontSize: 9,
+    fontWeight: "700",
+    lineHeight: 12,
   },
   loadingFeed: {
     flex: 1,

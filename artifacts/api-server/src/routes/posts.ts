@@ -149,6 +149,61 @@ router.delete("/posts/:id", requireAuth, async (req, res): Promise<void> => {
   res.sendStatus(204);
 });
 
+router.get("/posts/:id", requireAuth, async (req, res): Promise<void> => {
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const postId = parseInt(raw, 10);
+
+  if (isNaN(postId)) {
+    res.status(400).json({ error: "Invalid post id" });
+    return;
+  }
+
+  const viewerId = req.userId;
+
+  const rows = await db
+    .select({
+      id: postsTable.id,
+      userId: postsTable.userId,
+      videoUrl: postsTable.videoUrl,
+      thumbnailUrl: postsTable.thumbnailUrl,
+      title: postsTable.title,
+      caption: postsTable.caption,
+      performanceType: postsTable.performanceType,
+      genre: postsTable.genre,
+      language: postsTable.language,
+      musixmatchTrackId: postsTable.musixmatchTrackId,
+      trackTitle: postsTable.trackTitle,
+      trackArtist: postsTable.trackArtist,
+      lyricSectionId: postsTable.lyricSectionId,
+      rightsConfirmed: postsTable.rightsConfirmed,
+      goldenMicCount: postsTable.goldenMicCount,
+      createdAt: postsTable.createdAt,
+      creator: {
+        id: usersTable.id,
+        username: usersTable.username,
+        displayName: usersTable.displayName,
+        avatarUrl: usersTable.avatarUrl,
+      },
+      likesCount: sql<number>`(SELECT COUNT(*) FROM likes WHERE likes.post_id = ${postsTable.id})`,
+      commentsCount: sql<number>`(SELECT COUNT(*) FROM comments WHERE comments.post_id = ${postsTable.id} AND comments.deleted_at IS NULL)`,
+      savesCount: sql<number>`(SELECT COUNT(*) FROM saves WHERE saves.post_id = ${postsTable.id})`,
+      viewerHasLiked: sql<boolean>`EXISTS(SELECT 1 FROM likes WHERE likes.post_id = ${postsTable.id} AND likes.user_id = ${viewerId})`,
+      viewerHasSaved: sql<boolean>`EXISTS(SELECT 1 FROM saves WHERE saves.post_id = ${postsTable.id} AND saves.user_id = ${viewerId})`,
+      viewerIsFollowing: sql<boolean>`EXISTS(SELECT 1 FROM follows WHERE follows.follower_id = ${viewerId} AND follows.following_id = ${postsTable.userId})`,
+    })
+    .from(postsTable)
+    .innerJoin(usersTable, eq(postsTable.userId, usersTable.id))
+    .where(and(eq(postsTable.id, postId), isNull(postsTable.deletedAt)))
+    .limit(1);
+
+  if (rows.length === 0) {
+    res.status(404).json({ error: "Post not found" });
+    return;
+  }
+
+  res.json(rows[0]);
+});
+
 router.post("/posts/:id/like", requireAuth, async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const postId = parseInt(raw, 10);

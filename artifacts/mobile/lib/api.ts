@@ -357,6 +357,7 @@ export interface ApiAnalysisResult {
   timingAnchors?: AnalysisTimingAnchor[];
   timingOffsetMs?: number;
   syncConfidence?: number;
+  musixmatchGenre?: string;
   cyaniteGenre?: string;
   cyaniteMoods?: string[];
   cyaniteEnergy?: string;

@@ -372,6 +372,10 @@ router.post("/posts", requireAuth, async (req, res): Promise<void> => {
     cyaniteMoods?: string[];
     cyaniteEnergy?: string;
     audioAnalysisSource?: string;
+    genreDetectionSource?: string;
+    languageDetectionSource?: string;
+    creatorOverrodeGenre?: boolean;
+    creatorOverrodeLanguage?: boolean;
   };
 
   if (!body.videoUrl || !body.title || !body.performanceType) {
@@ -415,6 +419,10 @@ router.post("/posts", requireAuth, async (req, res): Promise<void> => {
       cyaniteMoods: body.cyaniteMoods ?? null,
       cyaniteEnergy: body.cyaniteEnergy ?? null,
       audioAnalysisSource: body.audioAnalysisSource ?? null,
+      genreDetectionSource: body.genreDetectionSource ?? null,
+      languageDetectionSource: body.languageDetectionSource ?? null,
+      creatorOverrodeGenre: body.creatorOverrodeGenre ?? null,
+      creatorOverrodeLanguage: body.creatorOverrodeLanguage ?? null,
     })
     .returning();
 

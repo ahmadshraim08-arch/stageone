@@ -75,6 +75,44 @@ const LANGUAGES = [
   "English", "Arabic", "Spanish", "French", "Portuguese", "Hindi", "Swahili", "Other",
 ];
 
+/** Map a raw Musixmatch genre string to the nearest StageOne GENRES chip. */
+function mapMusixmatchGenre(raw: string): string | null {
+  const lower = raw.toLowerCase().replace(/[^a-z0-9 &/'-]/g, "").trim();
+  const tests: Array<[RegExp, string]> = [
+    [/r\s*&\s*b|rnb|rhythm.and.blues/, "R&B"],
+    [/soul/, "Soul"],
+    [/hip.?hop|rap/, "Rap"],
+    [/country/, "Country"],
+    [/jazz/, "Jazz"],
+    [/gospel|christian/, "Gospel"],
+    [/latin/, "Latin Pop"],
+    [/arabic|arab/, "Arabic Pop"],
+    [/singer.?songwriter/, "Singer-Songwriter"],
+    [/indie|alternative/, "Indie"],
+    [/acoustic|folk/, "Acoustic"],
+    [/pop/, "Pop"],
+  ];
+  for (const [pattern, genre] of tests) {
+    if (pattern.test(lower)) return genre;
+  }
+  return null;
+}
+
+/** Map an ElevenLabs language code or name to the nearest LANGUAGES chip. */
+function mapDetectedLanguage(lang: string): string | null {
+  const lower = lang.toLowerCase().trim();
+  const map: Record<string, string> = {
+    en: "English", english: "English",
+    ar: "Arabic", arabic: "Arabic",
+    es: "Spanish", spanish: "Spanish",
+    fr: "French", french: "French",
+    pt: "Portuguese", portuguese: "Portuguese",
+    hi: "Hindi", hindi: "Hindi",
+    sw: "Swahili", swahili: "Swahili",
+  };
+  return map[lower] ?? "Other";
+}
+
 const STAGE_LABELS: Record<string, string> = {
   preparing: "Preparing audio",
   isolating_vocals: "Isolating vocals",
@@ -443,6 +481,11 @@ export default function PostScreen() {
   const [cyaniteGenreAccepted, setCyaniteGenreAccepted] = useState(false);
   const [cyaniteMoodsAccepted, setCyaniteMoodsAccepted] = useState(false);
 
+  // ── Auto-detected genre / language (step 7) ───────────────────────────────
+  const [detectedGenre, setDetectedGenre] = useState<string | null>(null);
+  const [detectedLanguage, setDetectedLanguage] = useState<string | null>(null);
+  const prefillStep7AppliedRef = useRef(false);
+
   // ── Details (step 7) ─────────────────────────────────────────────────────
   const [title, setTitle] = useState("");
   const [caption, setCaption] = useState("");
@@ -538,6 +581,27 @@ export default function PostScreen() {
     prefillQueryAppliedRef.current = true;
     setSongQuery(prefillSongQuery);
   }, [prefillSongQuery, prefillTrackId]);
+
+  // Auto-prefill genre + language from analysis result on first step 7 entry
+  useEffect(() => {
+    if (step !== 7 || prefillStep7AppliedRef.current) return;
+    prefillStep7AppliedRef.current = true;
+    if (analysisResult?.musixmatchGenre) {
+      const mapped = mapMusixmatchGenre(analysisResult.musixmatchGenre);
+      if (mapped && GENRES.includes(mapped)) {
+        setGenre(mapped);
+        setDetectedGenre(mapped);
+      }
+    }
+    if (analysisResult?.detectedLanguage) {
+      const mapped = mapDetectedLanguage(analysisResult.detectedLanguage);
+      if (mapped && LANGUAGES.includes(mapped)) {
+        setLanguage(mapped);
+        setDetectedLanguage(mapped);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
 
   // Load full lyrics when entering step 5
   useEffect(() => {
@@ -921,6 +985,10 @@ export default function PostScreen() {
           cyaniteMoods: cyaniteMoodsAccepted ? (analysisResult?.cyaniteMoods ?? undefined) : undefined,
           cyaniteEnergy: cyaniteMoodsAccepted ? (analysisResult?.cyaniteEnergy ?? undefined) : undefined,
           audioAnalysisSource: (cyaniteGenreAccepted || cyaniteMoodsAccepted) ? "cyanite" : undefined,
+          genreDetectionSource: detectedGenre ? "musixmatch" : undefined,
+          languageDetectionSource: detectedLanguage ? "elevenlabs" : undefined,
+          creatorOverrodeGenre: detectedGenre ? genre !== detectedGenre : undefined,
+          creatorOverrodeLanguage: detectedLanguage ? language !== detectedLanguage : undefined,
         },
         token,
       );
@@ -1929,9 +1997,22 @@ export default function PostScreen() {
                     activeOpacity={0.8}
                   >
                     <Text style={[styles.tagChipText, { color: genre === g ? "#fff" : colors.mutedForeground }]}>{g}</Text>
+                    {detectedGenre === g && (
+                      <View style={[styles.detectedDot, { backgroundColor: genre === g ? "rgba(255,255,255,0.6)" : colors.primary }]} />
+                    )}
                   </TouchableOpacity>
                 ))}
               </ScrollView>
+              {detectedGenre && (
+                <View style={[styles.detectedHint, { backgroundColor: `${colors.primary}0F`, borderColor: `${colors.primary}30` }]}>
+                  <MaterialCommunityIcons name="music-note" size={11} color={colors.primary} />
+                  <Text style={[styles.detectedHintText, { color: colors.primary }]}>
+                    {genre === detectedGenre
+                      ? `Detected from song match — tap another to override`
+                      : `Detected: ${detectedGenre}`}
+                  </Text>
+                </View>
+              )}
 
               {/* ── Cyanite suggestion chips ── */}
               {analysisResult && (analysisResult.cyaniteGenre || (analysisResult.cyaniteMoods && analysisResult.cyaniteMoods.length > 0)) && (
@@ -2002,9 +2083,22 @@ export default function PostScreen() {
                     activeOpacity={0.8}
                   >
                     <Text style={[styles.tagChipText, { color: language === l ? "#fff" : colors.mutedForeground }]}>{l}</Text>
+                    {detectedLanguage === l && (
+                      <View style={[styles.detectedDot, { backgroundColor: language === l ? "rgba(255,255,255,0.6)" : colors.primary }]} />
+                    )}
                   </TouchableOpacity>
                 ))}
               </ScrollView>
+              {detectedLanguage && (
+                <View style={[styles.detectedHint, { backgroundColor: `${colors.primary}0F`, borderColor: `${colors.primary}30` }]}>
+                  <MaterialCommunityIcons name="translate" size={11} color={colors.primary} />
+                  <Text style={[styles.detectedHintText, { color: colors.primary }]}>
+                    {language === detectedLanguage
+                      ? `Detected from your performance — tap another to override`
+                      : `Detected: ${detectedLanguage}`}
+                  </Text>
+                </View>
+              )}
 
               <TextInput
                 value={location}
@@ -2244,8 +2338,11 @@ const styles = StyleSheet.create({
   fieldInput: { paddingHorizontal: 14, paddingVertical: 13, borderRadius: 12, borderWidth: 1, fontSize: 15 },
   captionInput: { minHeight: 80, textAlignVertical: "top" },
   tagsList: { gap: 8, paddingVertical: 4 },
-  tagChip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1 },
+  tagChip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1, flexDirection: "row", alignItems: "center", gap: 5 },
   tagChipText: { fontSize: 13, fontWeight: "600" },
+  detectedDot: { width: 6, height: 6, borderRadius: 3 },
+  detectedHint: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, borderWidth: 1, marginTop: -6 },
+  detectedHintText: { fontSize: 11, fontWeight: "500", flex: 1 },
   // Error card
   errorCard: { flexDirection: "row", alignItems: "center", gap: 8, padding: 12, borderRadius: 12, borderWidth: 1 },
   // Review

@@ -313,6 +313,7 @@ export interface SongMatchResult {
   trackTitle?: string;
   artistName?: string;
   albumArt?: string;
+  musixmatchGenre?: string;
   lyricRange?: LyricRangeResult;
 }
 
@@ -380,7 +381,10 @@ export async function identifySong(
   const maxPossible = phrases.length;
   const confidence = Math.min(top.score / maxPossible, 1);
 
-  const lyricsData = await fetchLyrics(top.trackId);
+  const [lyricsData, musixmatchGenre] = await Promise.all([
+    fetchLyrics(top.trackId),
+    fetchTrackGenre(top.trackId),
+  ]);
 
   let lyricRange: LyricRangeResult | undefined;
   if (lyricsData) {
@@ -409,6 +413,31 @@ export async function identifySong(
     trackTitle: top.trackTitle,
     artistName: top.artistName,
     albumArt: top.albumArt,
+    musixmatchGenre: musixmatchGenre ?? undefined,
     lyricRange,
   };
+}
+
+/**
+ * Fetch the primary genre name for a track from Musixmatch.
+ * Returns null if not available or on any error.
+ */
+async function fetchTrackGenre(trackId: string): Promise<string | null> {
+  try {
+    const data = await mxFetch("track.get", { track_id: trackId });
+    if (mxStatus(data) !== 200) return null;
+    const body = mxBody(data) as {
+      track?: {
+        primary_genres?: {
+          music_genre_list?: Array<{
+            music_genre?: { music_genre_name?: string };
+          }>;
+        };
+      };
+    } | null;
+    const genreName = body?.track?.primary_genres?.music_genre_list?.[0]?.music_genre?.music_genre_name;
+    return genreName ? String(genreName) : null;
+  } catch {
+    return null;
+  }
 }

@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import { pool } from "@workspace/db";
+import { checkFfmpegHealth } from "../lib/audioExtract.js";
 
 const router: IRouter = Router();
 
@@ -70,7 +71,10 @@ router.get("/healthz", async (req, res): Promise<void> => {
     req.log.warn({ err }, "DB health check failed");
   }
 
-  const storage = await checkStorageHealth();
+  const [storage, ffmpeg] = await Promise.all([
+    checkStorageHealth(),
+    checkFfmpegHealth(),
+  ]);
   const partners = checkPartnerKeys();
 
   const ok = dbOk && storage.ok;
@@ -78,6 +82,7 @@ router.get("/healthz", async (req, res): Promise<void> => {
     api: "ok",
     db: dbOk ? "ok" : "error",
     storage: storage.ok ? "ok" : storage.code,
+    audioExtraction: ffmpeg.ok ? `ok (${ffmpeg.version ?? "unknown version"})` : ffmpeg.code,
     partners,
   });
 });

@@ -55,6 +55,8 @@ export interface AnalysisResult {
   timingOffsetMs?: number;
   syncConfidence?: number;
 
+  musixmatchGenre?: string;
+
   cyaniteGenre?: string;
   cyaniteMoods?: string[];
   cyaniteEnergy?: string;
@@ -218,6 +220,7 @@ export async function runPipeline(
         result.detectedTrackTitle = match.trackTitle;
         result.detectedTrackArtist = match.artistName;
         result.detectedAlbumArt = match.albumArt;
+        result.musixmatchGenre = match.musixmatchGenre;
 
         if (await isCanceled(jobId)) return;
 

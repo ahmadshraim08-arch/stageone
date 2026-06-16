@@ -319,6 +319,10 @@ export async function createPost(
     cyaniteMoods?: string[];
     cyaniteEnergy?: string;
     audioAnalysisSource?: string;
+    genreDetectionSource?: string;
+    languageDetectionSource?: string;
+    creatorOverrodeGenre?: boolean;
+    creatorOverrodeLanguage?: boolean;
   },
   token: string,
 ): Promise<{ id: number }> {

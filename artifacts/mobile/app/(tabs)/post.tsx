@@ -1931,12 +1931,14 @@ export default function PostScreen() {
 
               {isPosting && (
                 <View style={[styles.uploadProgressCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                  <Text style={[styles.uploadProgressLabel, { color: colors.mutedForeground }]}>
-                    {uploadPhase === "saving" ? "Saving your Music Minute…"
-                      : uploadProgress === 0 ? "Preparing video…"
-                      : uploadProgress < 95 ? `Uploading… ${uploadProgress}%`
-                      : "Finishing upload…"}
-                  </Text>
+                  <AnalysisWaveform
+                    stageLabel={
+                      uploadPhase === "saving" ? "Saving your Music Minute…"
+                        : uploadProgress === 0 ? "Preparing video…"
+                        : uploadProgress < 95 ? `Uploading… ${uploadProgress}%`
+                        : "Finishing upload…"
+                    }
+                  />
                   <View style={[styles.uploadProgressTrack, { backgroundColor: colors.muted }]}>
                     <View style={[styles.uploadProgressFill, { width: uploadPhase === "saving" ? "100%" : `${uploadProgress}%`, backgroundColor: colors.primary }]} />
                   </View>

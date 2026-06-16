@@ -1,0 +1,450 @@
+# Fix Profile Posts, Audio Extraction, and Automatic Genre/Language Detection
+
+Do not add unrelated features.
+
+Real Music Minutes are uploading successfully and playing in the Home feed. The current blocking issues are:
+
+1. The authenticated Profile still shows `0 Posts`, and uploaded Music Minutes do not appear under “My Music Minutes.”
+2. Automatic analysis fails with:
+   `Audio extraction failed: spawn ffmpeg ENOENT`
+3. Step 4 still requires completely manual genre and language selection, even after the video and song have been analyzed.
+
+Work through these priorities in order.
+
+---
+
+# Priority 1 — Fix real Music Minutes on Profile
+
+Two or more real Music Minutes exist in the feed for:
+
+`@ahmadshraim08`
+
+But Profile shows:
+
+* 0 Posts
+* Empty “My Music Minutes”
+* No ability to play, edit, or delete the posts
+
+## Diagnose the exact identity and environment mismatch
+
+For one existing post visible in Home, compare:
+
+* Clerk user ID attached to the current session
+* Internal PostgreSQL user ID
+* Post owner/creator ID
+* Feed creator ID
+* `/api/users/me` user ID
+* Profile screen user ID
+* Username
+* Database environment used by the feed
+* Database environment used by Profile
+
+Determine whether the cause is:
+
+* Clerk ID versus internal database ID
+* Development versus production database mismatch
+* Username-based filtering
+* Stale profile state
+* Incorrect `/posts?userId=` parameter
+* Missing profile refresh
+* Post status filter excluding published posts
+
+Do not guess. Report the exact root cause.
+
+## Use a canonical protected endpoint
+
+Create or repair:
+
+`GET /api/users/me/posts`
+
+It must:
+
+1. Authenticate through Clerk.
+2. Resolve the Clerk identity to the internal PostgreSQL user.
+3. Query posts using the internal user ID.
+4. Return published posts newest first.
+5. Use the same database and API environment as Home.
+
+Return enough data for:
+
+* Profile grid
+* Post count
+* Playback
+* Edit
+* Delete
+* Musixmatch badges and metadata
+
+## Profile requirements
+
+“My Music Minutes” must display:
+
+* Real video thumbnail or poster
+* Play icon
+* Duration
+* Title
+* Song and artist when present
+* LyricStage badge when present
+* Engagement counts where appropriate
+
+States:
+
+* Loading skeleton
+* Populated grid
+* Clear empty state
+* Error and Retry
+
+The post count must come from the same real query.
+
+For the current account, the count should equal the number of real posts already owned by that database user.
+
+## Open and play
+
+Tapping a Profile tile must:
+
+* Navigate using the post ID
+* Fetch the real post
+* Play the remote video
+* Show its metadata and Musixmatch information
+* Stop playback when leaving
+
+Do not redirect an existing post to the creation flow.
+
+## Edit
+
+Add or repair owner-only editing.
+
+Allow editing:
+
+* Title
+* Caption
+* Genre
+* Language
+* Location
+* Song association where appropriate
+* Lyric section metadata
+
+Do not re-upload the video for metadata edits.
+
+After saving, refresh:
+
+* Home
+* Profile
+* Post detail
+
+## Delete
+
+Add or repair owner-only deletion.
+
+Required:
+
+* Confirmation dialog
+* Server ownership validation
+* Remove database post
+* Remove it from Home and Profile
+* Update post count
+* Clean up the App Storage object safely
+* Prevent non-owners from deleting it
+* Prevent duplicate delete requests
+
+Confirmation:
+
+**Delete this Music Minute? This action cannot be undone.**
+
+## Priority 1 acceptance test
+
+Using the existing uploaded posts:
+
+1. Open Profile.
+2. Confirm the correct post count.
+3. Confirm every owned post appears.
+4. Tap a post and play it.
+5. Edit its title.
+6. Confirm the edit appears in Home and Profile.
+7. Delete one test post.
+8. Confirm it disappears everywhere.
+9. Restart the app.
+10. Confirm the remaining posts persist.
+11. Confirm another account cannot edit or delete them.
+
+Do not move on until this works.
+
+---
+
+# Priority 2 — Fix `spawn ffmpeg ENOENT`
+
+The analysis screen currently fails with:
+
+`Audio extraction failed: spawn ffmpeg ENOENT`
+
+This means the runtime attempted to launch FFmpeg but could not find the executable.
+
+## Find the exact code path
+
+Report:
+
+* File and function calling `spawn`
+* Command being executed
+* Executable path used
+* Arguments
+* Development runtime PATH
+* Published runtime PATH
+* Whether FFmpeg exists in each runtime
+* Whether the failure occurs in development, deployment, or both
+
+Do not expose the raw technical error to normal users.
+
+## Preferred solution: avoid unnecessary extraction
+
+Inspect the selected transcription or audio-analysis provider.
+
+If it accepts the original video format directly:
+
+* Send the stabilized video file directly
+* Skip FFmpeg extraction
+* Preserve MIME type and filename
+* Do not convert the video to Base64
+
+This is preferred when supported because it removes an unnecessary failure point.
+
+## If audio extraction is required
+
+Make FFmpeg available reliably in both development and deployed runtimes.
+
+Use one supported approach:
+
+* Install/configure FFmpeg as a persistent Replit system dependency
+* Bundle a compatible static FFmpeg binary through a package
+* Resolve the binary path explicitly rather than assuming `ffmpeg` is in PATH
+
+Do not fix it only in the temporary shell.
+
+Before processing, run a startup health check:
+
+* Resolve FFmpeg executable
+* Run `ffmpeg -version`
+* Report `audioExtraction: "ok"` or a specific failure code in diagnostics
+
+Use the resolved absolute executable path in `spawn`.
+
+## Extraction requirements
+
+Create a temporary audio analysis file with:
+
+* Mono audio where suitable
+* A transcription-friendly sample rate
+* A supported audio format
+* Original video preserved unchanged
+
+After extraction verify:
+
+* Process exit code is 0
+* Output file exists
+* File size is greater than zero
+* Duration is valid
+* MIME type is correct
+
+Then:
+
+* Send it to the transcription provider
+* Delete it when analysis finishes or fails
+* Do not store it permanently
+* Do not put it in PostgreSQL
+* Do not read it as Base64
+
+## Error handling
+
+The user should see:
+
+**We couldn’t analyze the audio. You can retry or search for the song manually.**
+
+Development logs should retain codes such as:
+
+* `FFMPEG_NOT_AVAILABLE`
+* `AUDIO_EXTRACTION_FAILED`
+* `AUDIO_OUTPUT_EMPTY`
+* `TRANSCRIPTION_FAILED`
+
+Do not show `spawn ffmpeg ENOENT` in the mobile UI.
+
+## Priority 2 acceptance tests
+
+Test with:
+
+* `.mov` iPhone video
+* `.mp4` video
+* 5-second video
+* 20-second video
+* 53-second video
+* Video containing vocals and background music
+
+Confirm:
+
+1. Analysis starts.
+2. Audio is extracted or direct video is accepted.
+3. Transcription completes.
+4. Temporary files are cleaned up.
+5. Manual search remains available.
+6. No raw ENOENT error appears.
+
+---
+
+# Priority 3 — Automatically suggest language and genre
+
+After analysis and song identification, Step 4 should be pre-filled intelligently.
+
+The user must still be able to override both values.
+
+## Automatic language detection
+
+Use this priority:
+
+1. Transcription service detected language
+2. Musixmatch lyric language or track-language metadata
+3. Existing creator selection
+4. Manual selection
+
+Save:
+
+* Suggested language
+* Detection source
+* Confidence when available
+* Whether the creator manually changed it
+
+Display:
+
+**Detected: English**
+
+Allow the creator to tap another language.
+
+If transcription and Musixmatch disagree, do not silently choose. Show the most reliable suggestion and allow correction.
+
+## Automatic genre detection for covers
+
+After the real Musixmatch track is identified:
+
+* Inspect official track genre metadata returned by the API
+* Map the official genre to StageOne’s available genre options
+* Preselect the closest valid StageOne genre
+* Preserve the original API genre in diagnostics
+* Allow manual override
+
+Example mapping may normalize values such as:
+
+* Contemporary R&B → R&B
+* Hip-Hop/Rap → Rap
+* Singer/Songwriter → Acoustic or Pop, depending on available categories
+
+Do not invent genre based solely on lyric text.
+
+## Original and Freestyle handling
+
+For Original or Freestyle posts, Musixmatch track metadata may not exist.
+
+Use:
+
+* A configured audio-analysis partner such as Cyanite, if available and authorized
+
+Otherwise:
+
+* Keep genre manual
+* Do not falsely label it as automatically detected
+
+The feature must clearly distinguish:
+
+* `musixmatch_metadata`
+* `audio_analysis`
+* `creator_selected`
+* `unknown`
+
+## Step 4 experience
+
+When Step 4 opens, show suggestions such as:
+
+* **Genre detected: Pop**
+* **Language detected: English**
+
+Preselect the suggested chips.
+
+The creator can change them before publishing.
+
+Do not block publishing when automatic detection fails.
+
+## Persist detection metadata
+
+Store minimal fields such as:
+
+* `genre`
+* `genreDetectionSource`
+* `genreConfidence`
+* `language`
+* `languageDetectionSource`
+* `languageConfidence`
+* `creatorOverrodeGenre`
+* `creatorOverrodeLanguage`
+
+Do not permanently store full transcripts unless required and permitted.
+
+---
+
+# Priority 4 — Verify the complete creator cycle
+
+Complete this physical-phone flow:
+
+1. Select a real video.
+2. Choose Cover.
+3. Analyze the video successfully.
+4. Automatically suggest the song.
+5. Confirm the real Musixmatch track.
+6. Detect the performed lyric range.
+7. Preview lyrics with the video.
+8. Pre-fill genre.
+9. Pre-fill language.
+10. Allow manual correction.
+11. Publish.
+12. Confirm the post appears in Home.
+13. Confirm it appears on Profile.
+14. Open it from Profile.
+15. Edit it.
+16. Delete a test post.
+17. Restart the app and verify persistence.
+
+---
+
+# Final acceptance criteria
+
+This work is complete only when:
+
+* Existing real Music Minutes appear on the correct Profile.
+* Profile post count is accurate.
+* Profile posts can be played.
+* Owners can edit and delete.
+* Non-owners cannot edit or delete.
+* FFmpeg ENOENT is eliminated or extraction is bypassed safely.
+* Audio analysis completes on a real physical-phone video.
+* Language is automatically suggested.
+* Cover genre is automatically suggested from real track metadata.
+* Automatic values remain editable.
+* Failed analysis falls back to manual search and manual metadata.
+* Published posts preserve the selected metadata.
+* Home and Profile stay synchronized.
+* Mobile and API-server typechecks pass.
+
+# Completion report
+
+Report:
+
+1. Root cause of the missing Profile posts
+2. Database and identity mismatch found
+3. Existing posts recovered
+4. Root cause of FFmpeg ENOENT
+5. Extraction approach used
+6. Development and deployment FFmpeg health
+7. Transcription result
+8. Language detection source
+9. Genre detection source
+10. Files changed
+11. Database changes
+12. Physical-device test results
+13. Edit/delete authorization results
+14. Typecheck results
+15. Remaining limitations

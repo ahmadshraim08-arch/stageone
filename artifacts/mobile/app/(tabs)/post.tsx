@@ -1030,6 +1030,10 @@ export default function PostScreen() {
                     Uploading your video for AI analysis. This usually takes 10–30 seconds.
                   </Text>
 
+                  <View style={[styles.waveformCard, { backgroundColor: colors.card, borderColor: `${colors.primary}30` }]}>
+                    <AnalysisWaveform />
+                  </View>
+
                   {analysisError ? (
                     <View style={[styles.errorCard, { backgroundColor: "rgba(239,68,68,0.1)", borderColor: "rgba(239,68,68,0.3)" }]}>
                       <Ionicons name="alert-circle-outline" size={16} color="#EF4444" />

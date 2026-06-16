@@ -15,7 +15,7 @@ import Animated, {
 import { useColors } from "@/hooks/useColors";
 
 interface Props {
-  stageLabel: string;
+  stageLabel?: string;
 }
 
 const BAR_COUNT = 9;
@@ -140,15 +140,17 @@ export function AnalysisWaveform({ stageLabel }: Props) {
         ))}
       </View>
 
-      <Animated.Text
-        key={stageLabel}
-        entering={FadeIn.duration(300)}
-        exiting={FadeOut.duration(200)}
-        style={[styles.stageText, { color: colors.mutedForeground }]}
-        numberOfLines={1}
-      >
-        {stageLabel}
-      </Animated.Text>
+      {stageLabel ? (
+        <Animated.Text
+          key={stageLabel}
+          entering={FadeIn.duration(300)}
+          exiting={FadeOut.duration(200)}
+          style={[styles.stageText, { color: colors.mutedForeground }]}
+          numberOfLines={1}
+        >
+          {stageLabel}
+        </Animated.Text>
+      ) : null}
     </View>
   );
 }

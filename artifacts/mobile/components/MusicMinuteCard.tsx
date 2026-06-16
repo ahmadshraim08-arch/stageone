@@ -632,7 +632,24 @@ export function MusicMinuteCard({ item, isActive, onCommentPress, onGoldenMicPre
         </View>
 
         {item.trackTitle && item.trackArtist && (item.performanceType === "cover" || !!item.musixmatchTrackId) && (
-          <View style={styles.songRef}>
+          <TouchableOpacity
+            style={styles.songRef}
+            activeOpacity={0.7}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              if (item.musixmatchTrackId) {
+                router.push({
+                  pathname: "/(tabs)/post",
+                  params: { prefillTrackId: item.musixmatchTrackId },
+                });
+              } else {
+                router.push({
+                  pathname: "/(tabs)/post",
+                  params: { prefillSongQuery: `${item.trackTitle} ${item.trackArtist}` },
+                });
+              }
+            }}
+          >
             <Ionicons name="musical-note" size={12} color={colors.primary} />
             <Text
               style={[styles.songText, { color: colors.primary }]}
@@ -644,7 +661,8 @@ export function MusicMinuteCard({ item, isActive, onCommentPress, onGoldenMicPre
                   ? `Backing: ${item.trackTitle} — ${item.trackArtist}`
                   : `Inspired by: ${item.trackTitle} — ${item.trackArtist}`}
             </Text>
-          </View>
+            <Ionicons name="chevron-forward" size={10} color={colors.primary} style={{ opacity: 0.7 }} />
+          </TouchableOpacity>
         )}
       </View>
     </View>

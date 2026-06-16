@@ -129,12 +129,14 @@ export default function PostScreen() {
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
 
-  // Prefill from challenge Join button deep-link
-  const { prefillTrackId, prefillSectionId } = useLocalSearchParams<{
+  // Prefill from challenge Join button deep-link or song chip tap
+  const { prefillTrackId, prefillSectionId, prefillSongQuery } = useLocalSearchParams<{
     prefillTrackId?: string;
     prefillSectionId?: string;
+    prefillSongQuery?: string;
   }>();
   const prefillAppliedRef = useRef(false);
+  const prefillQueryAppliedRef = useRef(false);
 
   // Fetch lyric segments when reaching step 4 with a selected song
   useEffect(() => {
@@ -233,6 +235,13 @@ export default function PostScreen() {
       .catch(() => {});
     // Upload step (1) remains mandatory — do NOT call setStep here
   }, [prefillTrackId]);
+
+  // Apply prefill query from song chip tap (no track ID available)
+  useEffect(() => {
+    if (prefillQueryAppliedRef.current || !prefillSongQuery || prefillTrackId) return;
+    prefillQueryAppliedRef.current = true;
+    setSongQuery(prefillSongQuery);
+  }, [prefillSongQuery, prefillTrackId]);
 
   // Fetch lyrics for timing preview when entering step 5
   useEffect(() => {

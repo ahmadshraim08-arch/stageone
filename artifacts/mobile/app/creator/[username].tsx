@@ -377,6 +377,14 @@ export default function CreatorProfileScreen() {
                 />
                 <LinearGradient colors={["transparent", "rgba(5,2,10,0.92)"]} style={StyleSheet.absoluteFill} />
                 <View style={styles.mmTileOverlay}>
+                  {mm.genre ? (
+                    <View style={styles.mmGenreChip}>
+                      {mm.genreDetectionSource === "musixmatch_metadata" && (
+                        <MaterialCommunityIcons name="music-note" size={8} color="#A78BFA" />
+                      )}
+                      <Text style={styles.mmGenreText} numberOfLines={1}>{mm.genre}</Text>
+                    </View>
+                  ) : null}
                   {mm.trackTitle && (mm.performanceType === "cover" || !!mm.musixmatchTrackId) && (
                     <TouchableOpacity
                       style={styles.mmSongTag}
@@ -533,6 +541,19 @@ const styles = StyleSheet.create({
   mmTileTitle: { color: "#fff", fontSize: 11, fontWeight: "700" },
   mmTileStats: { flexDirection: "row", alignItems: "center", gap: 4 },
   mmTileStatText: { fontSize: 10 },
+  mmGenreChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderRadius: 6,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.15)",
+  },
+  mmGenreText: { color: "#CBD5E1", fontSize: 8, fontWeight: "600" },
   emptyMMs: { alignItems: "center", paddingVertical: 40, gap: 8 },
   emptyMMsText: { fontSize: 14 },
   notFound: { flex: 1, alignItems: "center", justifyContent: "center", gap: 10 },

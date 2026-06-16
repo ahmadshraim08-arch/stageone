@@ -615,7 +615,7 @@ router.get("/musixmatch/richsync/:trackId", async (req, res) => {
             words: [{ text: l.text, startMs: l.startMs, endMs: l.endMs }],
           }));
         const response: RichsyncResponse = {
-          source: "musixmatch",
+          source: lyricResult.source as LyricSource,
           trackId,
           durationMs: lyricResult.durationMs,
           hasRichsync: false,

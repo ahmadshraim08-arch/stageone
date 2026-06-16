@@ -1,0 +1,56 @@
+Do not add more features yet.
+
+Validate the live Musixmatch integration end-to-end and determine exactly why the API currently returns 401.
+
+Please inspect the API configuration without exposing the secret value.
+
+Check:
+
+1. Whether `MUSIXMATCH_API_KEY` exists in the running API-server environment.
+2. Whether the value contains leading/trailing whitespace or quotation marks.
+3. Whether the server was restarted after the secret was updated.
+4. Whether all Musixmatch requests send the key using the exact authentication format required by the official Musicathon documentation.
+5. Whether the correct Musixmatch base URL and API version are being used.
+6. Whether the Musicathon-issued key has access to:
+
+   * Track search
+   * Plain lyrics
+   * Subtitles
+   * RichSync
+   * Translations
+   * Lyrics analysis
+7. Whether any endpoint returns 403 because the endpoint is unavailable on the current plan rather than because the key is invalid.
+
+Run direct server-side tests for:
+
+* Track search
+* Track metadata
+* Plain lyrics
+* Subtitles
+* RichSync
+* Translation
+* Lyrics analysis or mood data
+
+For every test, report:
+
+* Endpoint tested
+* HTTP status
+* Musixmatch header status code
+* Whether data came from Musixmatch or demo fallback
+* Number of results or lyric lines returned
+* Whether the mobile app can consume the response
+* Any plan/access limitation
+
+Do not print or reveal the API key.
+
+The integration is accepted only when:
+
+* At least one search response returns `source: "musixmatch"`
+* At least one real lyric or subtitle response is displayed in the mobile app
+* RichSync is tested against a track that supports it
+* The app falls back safely when RichSync is unavailable
+* Translation behavior is verified
+* Mood analysis clearly reports whether it came from Musixmatch or a derived fallback
+* The UI clearly distinguishes live Musixmatch data from demo content
+
+If the new key still returns 401, provide the exact sanitized request structure and response header so we can compare it with the official Musicathon API documentation.

@@ -1,0 +1,389 @@
+# Fix the StageOne Music Minute Video Picker and Full Upload Cycle
+
+Do not add new features.
+
+The Music Minute upload flow is currently blocked on iPhone.
+
+Observed errors:
+
+1. An earlier error shown as `HT001`.
+2. A React Native console error after choosing a video:
+
+`Uncaught (in promise) Error: Failed to read picked video`
+
+The selected video never reaches the rest of the post flow, so I cannot test a full Music Minute upload.
+
+Inspect the actual code and logs before changing anything. Do not assume the backend is the only problem. Determine whether the failure occurs during:
+
+* Media permission
+* Video selection
+* Local URI access
+* Local file copying
+* Video preview
+* File metadata reading
+* Upload preparation
+* Network upload
+* Replit Object Storage
+* Database post creation
+
+## 1. Reproduce and identify the exact root cause
+
+Reproduce on a physical iPhone using a video selected from the Photos library.
+
+Record sanitized diagnostic information:
+
+* Platform and OS
+* Expo SDK version
+* `expo-image-picker` version
+* URI scheme only, such as `file://`, `ph://`, or another scheme
+* Asset type
+* File name
+* MIME type
+* File size
+* Duration
+* Whether `assetId` exists
+* Whether permission is full, limited, or denied
+* Exact function that throws `Failed to read picked video`
+* Full internal stack trace
+* Whether the error happens before any network request
+* Whether an upload request reaches the API server
+* Meaning and source of error code `HT001`
+
+Do not log personal file paths, video content, tokens, or secrets.
+
+Find where the custom error text `Failed to read picked video` is created and report the underlying exception instead of hiding it.
+
+## 2. Fix iOS media-library permission
+
+Before opening the video picker on iOS:
+
+* Check media-library permission.
+* Request permission when needed.
+* Handle full access.
+* Handle limited access.
+* Handle denial.
+* If permission cannot be requested again, offer an “Open Settings” action.
+
+Do not open the picker and then unexpectedly request access after selection.
+
+Show a clear user message if access is unavailable:
+
+**StageOne needs access to the selected video so it can upload your Music Minute.**
+
+## 3. Use video-only picker configuration
+
+Configure the picker specifically for videos.
+
+Requirements:
+
+* Select one video only.
+* Videos only.
+* No Base64.
+* No image cropping.
+* Allow a maximum duration suitable for Music Minutes.
+* Request download from the network on iOS when the asset is stored in iCloud, if supported by the installed Expo version.
+* Preserve original quality where practical, but do not block the flow on unsupported editing options.
+
+Confirm that the result is not canceled and that at least one asset exists before reading it.
+
+Validate:
+
+* `asset.type === "video"` where available
+* URI is present
+* Duration is known or can be probed
+* File size is below the application limit
+* The file is not zero bytes
+
+## 4. Stabilize the selected file immediately
+
+Do not rely on the picker URI remaining accessible through the entire multi-step post flow.
+
+Immediately after selection:
+
+1. Create a unique destination path inside the app cache directory.
+2. Preserve or determine the correct file extension.
+3. Copy the selected video into the StageOne app cache.
+4. Verify the copied file exists.
+5. Verify copied file size is greater than zero.
+6. Store the copied cache URI in post state.
+7. Use the copied URI for preview and upload.
+
+Use a safe filename such as:
+
+`music-minute-<timestamp>-<random-id>.<extension>`
+
+If the URI is not directly readable:
+
+* Resolve the Media Library asset using `assetId` if available.
+* Handle iCloud-backed assets that must download first.
+* Handle limited-library access.
+* Show a recoverable error instead of crashing.
+
+If copying fails, show:
+
+**We couldn’t prepare this video for upload. Try downloading it to your phone first or choose another video.**
+
+## 5. Do not read the whole video as Base64
+
+Inspect whether the app currently uses any of these patterns:
+
+* `readAsStringAsync(..., { encoding: Base64 })`
+* Conversion of the entire video to a Base64 string
+* Loading the entire video into JavaScript memory
+* Creating a giant data URI
+* Reading a video as text
+
+Remove that behavior.
+
+A video must be uploaded as a file or streamed binary data.
+
+Use one of these supported approaches based on the current backend:
+
+* Multipart `FormData` upload using the stabilized local URI
+* Direct upload to a signed storage URL
+* File-system upload task
+* Existing Replit Object Storage upload endpoint
+
+Do not convert the full video to Base64.
+
+## 6. Handle file types correctly
+
+Support common iPhone formats:
+
+* `.mov`
+* `.mp4`
+* `video/quicktime`
+* `video/mp4`
+* HEVC/H.265 when the current playback and storage stack supports it
+
+Do not assume all selected videos are `.mp4`.
+
+Determine upload filename and MIME type using this priority:
+
+1. Picker-provided MIME type
+2. Picker-provided filename extension
+3. URI extension
+4. Safe platform fallback
+
+For example:
+
+* `.mov` → `video/quicktime`
+* `.mp4` → `video/mp4`
+
+If the uploaded format cannot be previewed by the app, show a clear compatibility message rather than crashing.
+
+Do not add video transcoding unless it is already part of the project.
+
+## 7. Validate duration and size before upload
+
+StageOne Music Minutes should have clear validation.
+
+Check:
+
+* Maximum duration
+* Maximum file size
+* Non-zero file
+* Supported format
+
+Show exact messages:
+
+* **Music Minutes can be up to 60 seconds.**
+* **This video is larger than the 100 MB upload limit.**
+* **This video format is not currently supported.**
+* **The selected video could not be read. Please try another file.**
+
+Do not show raw console errors to the user.
+
+## 8. Add a working preview
+
+After the selected video has been stabilized:
+
+* Open the preview using the copied cache URI.
+* Confirm the video loads.
+* Allow play and pause.
+* Show duration.
+* Allow “Choose another video.”
+* Do not advance until preview readiness is confirmed.
+
+If preview fails, do not attempt upload with the same unreadable URI.
+
+## 9. Repair the upload request
+
+Trace the full request to Replit Object Storage.
+
+Confirm:
+
+* Authentication token is attached.
+* Correct `Content-Type` is sent.
+* Multipart field name matches the API.
+* Filename is included.
+* File URI points to the stabilized cache copy.
+* Request body is not JSON containing a local device URI.
+* Server receives non-zero bytes.
+* Object Storage returns a permanent URL.
+* Database post creation only occurs after storage succeeds.
+
+Add structured stages:
+
+1. Preparing video
+2. Uploading video
+3. Saving Music Minute
+4. Published
+
+If storage succeeds but database creation fails, retain the uploaded URL and offer Retry without re-uploading unnecessarily.
+
+## 10. Investigate `HT001`
+
+Find the exact source of `HT001`.
+
+Report:
+
+* Which file defines it
+* Which layer emits it
+* What condition triggers it
+* Whether it is an HTTP timeout, storage failure, auth failure, or custom validation code
+* The underlying HTTP status and server response
+* Whether it is related to `Failed to read picked video`
+
+Do not replace `HT001` with another vague error.
+
+Map it to a readable user message and keep the technical code only in development logs.
+
+## 11. Prevent uncaught promise errors
+
+The screenshot shows an uncaught promise rejection.
+
+Wrap the complete picker and preparation sequence in explicit error handling:
+
+* Picker launch
+* Asset validation
+* File copy
+* File metadata check
+* Preview setup
+* Upload
+
+No failure should open the Expo red error screen.
+
+Instead:
+
+* Log a sanitized diagnostic in development.
+* Set an error state.
+* Display an alert or inline retry screen.
+* Allow the user to return to the post flow safely.
+
+Reset loading state inside `finally`.
+
+Prevent double taps from starting two picker or upload operations.
+
+## 12. Keep post state alive safely
+
+The copied video URI and metadata must survive navigation between the Music Minute steps.
+
+Store:
+
+* Local cache URI
+* Original filename
+* MIME type
+* File size
+* Duration
+* Width and height if available
+* Upload status
+* Remote URL after upload
+
+Do not retain only the original picker URI.
+
+Clean up abandoned cache files when:
+
+* The user cancels the post
+* The user chooses another video
+* The post publishes successfully
+* Old temporary drafts expire
+
+Do not delete the file before upload and preview are complete.
+
+## 13. Required tests
+
+Test on a physical iPhone with:
+
+### Video sources
+
+* Newly recorded local video
+* Video already stored locally in Photos
+* iCloud-backed video not yet downloaded
+* `.mov` video
+* `.mp4` video
+* Short video under 60 seconds
+* Video over 60 seconds
+* Video near the size limit
+* Video above the size limit
+* Limited Photos permission
+* Full Photos permission
+
+### Full success path
+
+1. Create or log into a real account.
+2. Tap Post a Music Minute.
+3. Select a video from Photos.
+4. Confirm the app copies and validates it.
+5. Preview it.
+6. Select Cover.
+7. Tag a song.
+8. Choose a lyric section.
+9. Add details.
+10. Upload.
+11. Confirm Object Storage returns a permanent URL.
+12. Confirm the post record is created.
+13. Confirm the Music Minute appears in Home.
+14. Confirm it appears on the creator profile.
+15. Tap it and confirm it plays.
+16. Close and reopen the app.
+17. Confirm it still plays from the permanent remote URL.
+
+### Failure path
+
+* Deny permission.
+* Cancel picker.
+* Select unreadable asset.
+* Select iCloud asset while offline.
+* Simulate server failure.
+* Simulate Object Storage failure.
+* Interrupt upload.
+* Retry upload.
+
+No test should produce an uncaught promise rejection or red error screen.
+
+## 14. Acceptance criteria
+
+This task is complete only when:
+
+* A real iPhone video can be selected.
+* The selected video is copied into an app-controlled cache location.
+* The file is validated without reading it as Base64.
+* The preview works.
+* The video uploads to Replit Object Storage.
+* A Music Minute record is saved.
+* The post appears in the feed and profile.
+* The remote video plays after restarting the app.
+* `.mov` and `.mp4` files are handled correctly.
+* iCloud and permission failures show useful messages.
+* `HT001` is traced and explained.
+* No uncaught promise error occurs.
+* Mobile and API-server typechecks pass.
+
+## 15. Completion report
+
+After fixing it, report:
+
+1. Root cause of `Failed to read picked video`.
+2. Root cause of `HT001`.
+3. Picker configuration before and after.
+4. How the URI is stabilized.
+5. Whether Base64 reading was removed.
+6. Upload method used.
+7. Supported file formats.
+8. Files changed.
+9. Typecheck results.
+10. Results of every physical-iPhone test.
+11. Any remaining limitation.
+
+Do not report this as fixed based only on simulator or mock-file testing. Test the complete upload cycle using a physical iPhone.

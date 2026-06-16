@@ -64,7 +64,7 @@ function CommentRow({ comment }: { comment: SeedComment }) {
 export function CommentsSheet({ visible, musicMinuteId, onClose }: Props) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { comments, addComment, currentUser } = useApp();
+  const { comments, addComment, loadComments, currentUser } = useApp();
   const [inputText, setInputText] = useState("");
   const slideAnim = useRef(new Animated.Value(500)).current;
 
@@ -80,6 +80,9 @@ export function CommentsSheet({ visible, musicMinuteId, onClose }: Props) {
         damping: 20,
         stiffness: 200,
       }).start();
+      if (musicMinuteId) {
+        loadComments(musicMinuteId);
+      }
     } else {
       Animated.timing(slideAnim, {
         toValue: 500,
@@ -87,7 +90,7 @@ export function CommentsSheet({ visible, musicMinuteId, onClose }: Props) {
         useNativeDriver: true,
       }).start();
     }
-  }, [visible, slideAnim]);
+  }, [visible, musicMinuteId, slideAnim]);
 
   const handleSend = () => {
     if (!inputText.trim() || !musicMinuteId || !currentUser) return;

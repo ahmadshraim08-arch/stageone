@@ -4,7 +4,7 @@ import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -18,9 +18,10 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@clerk/expo";
 
-import { useApp } from "@/context/AppContext";
-import { SEED_USERS, formatCount } from "@/data/seedData";
+import { useApp, apiPostToMusicMinute } from "@/context/AppContext";
+import { SEED_USERS, formatCount, MusicMinute } from "@/data/seedData";
 import { useColors } from "@/hooks/useColors";
+import { apiBase, getPosts } from "@/lib/api";
 import { uploadAvatar } from "@/lib/uploads";
 
 const SINGER_IMAGES = [
@@ -33,8 +34,22 @@ export default function ProfileScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { getToken } = useAuth();
-  const { currentUser, musicMinutes, likedIds, savedIds, followingIds, directShares, logout, isLoaded, updateAvatar } = useApp();
+  const { currentUser, musicMinutes, likedIds, savedIds, unreadMessages, logout, isLoaded, updateAvatar } = useApp();
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+  const [myApiPosts, setMyApiPosts] = useState<MusicMinute[]>([]);
+
+  // Fetch the signed-in user's own posts directly (not derived from home feed cache)
+  useEffect(() => {
+    if (!currentUser || currentUser.isGuest || currentUser.dbId === 0) return;
+    (async () => {
+      try {
+        const token = await getToken();
+        if (!token) return;
+        const result = await getPosts(token, { userId: currentUser.dbId });
+        setMyApiPosts(result.items.map(apiPostToMusicMinute));
+      } catch {}
+    })();
+  }, [currentUser?.dbId]);
 
   const handleAvatarUpload = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -56,9 +71,7 @@ export default function ProfileScreen() {
       if (!token) throw new Error("Not authenticated");
       const mimeType = asset.mimeType ?? (asset.uri.endsWith(".png") ? "image/png" : "image/jpeg");
       const { avatarUrl } = await uploadAvatar(asset.uri, mimeType, token);
-      const domain = process.env.EXPO_PUBLIC_DOMAIN;
-      const base = domain ? `https://${domain}/api` : `/api`;
-      const patchRes = await fetch(`${base}/users/me`, {
+      const patchRes = await fetch(`${apiBase()}/users/me`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ avatarUrl }),
@@ -74,10 +87,7 @@ export default function ProfileScreen() {
     }
   };
 
-  const inboxCount = useMemo(() => {
-    if (!currentUser) return 0;
-    return directShares.filter((s) => s.recipientId === currentUser.id && !s.seenAt).length;
-  }, [directShares, currentUser]);
+  const inboxCount = unreadMessages;
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
 
@@ -142,7 +152,10 @@ export default function ProfileScreen() {
     );
   }
 
-  const myMMs = musicMinutes.filter((m) => m.userId === currentUser.id);
+  // Use dedicated API fetch result (falls back to feed cache during load)
+  const myMMs = myApiPosts.length > 0
+    ? myApiPosts
+    : musicMinutes.filter((m) => m.userId === String(currentUser.dbId));
   const savedMMs = musicMinutes.filter((m) => savedIds.has(m.id));
 
   return (
@@ -197,6 +210,9 @@ export default function ProfileScreen() {
                 </View>
               )}
             </TouchableOpacity>
+            <TouchableOpacity onPress={() => router.push("/diagnostic")} style={[styles.iconBtn, { borderColor: colors.border }]} activeOpacity={0.7}>
+              <Ionicons name="settings-outline" size={20} color={colors.mutedForeground} />
+            </TouchableOpacity>
             <TouchableOpacity onPress={() => logout()} style={[styles.iconBtn, { borderColor: colors.border }]} activeOpacity={0.7}>
               <Ionicons name="log-out-outline" size={20} color={colors.mutedForeground} />
             </TouchableOpacity>
@@ -205,9 +221,9 @@ export default function ProfileScreen() {
 
         <View style={styles.statsGrid}>
           {[
-            { label: "Posts", value: myMMs.length },
-            { label: "Followers", value: 0 },
-            { label: "Following", value: followingIds.size },
+            { label: "Posts", value: currentUser.postCount },
+            { label: "Followers", value: currentUser.followerCount },
+            { label: "Following", value: currentUser.followingCount },
             { label: "Liked", value: likedIds.size },
           ].map((s) => (
             <View key={s.label} style={styles.statItem}>

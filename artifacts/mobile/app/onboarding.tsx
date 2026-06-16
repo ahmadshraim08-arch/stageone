@@ -1,5 +1,4 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useAuth, useUser } from "@clerk/expo";
+import { useUser } from "@clerk/expo";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
@@ -54,21 +53,11 @@ export default function OnboardingScreen() {
     if (!displayName.trim() || !username.trim()) return;
     setIsLoading(true);
 
-    const profile = {
-      id: user?.id ?? "user_" + Date.now().toString(36),
+    await login({
       username: username.trim().replace(/\s/g, ""),
       displayName: displayName.trim(),
-      email: clerkEmail,
-      bio: "",
-      goldenMicBalance: 5,
       genres: selectedGenres,
-      isGuest: false,
-    };
-
-    if (user?.id) {
-      await AsyncStorage.setItem(`stageone_profile_${user.id}`, JSON.stringify(profile));
-    }
-    await login(profile);
+    });
 
     setIsLoading(false);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);

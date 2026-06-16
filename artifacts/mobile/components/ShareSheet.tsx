@@ -15,7 +15,6 @@ import {
 } from "react-native";
 
 import { useApp } from "@/context/AppContext";
-import { SEED_USERS } from "@/data/seedData";
 import { useColors } from "@/hooks/useColors";
 
 interface Props {
@@ -29,7 +28,7 @@ type SendState = "idle" | "sending" | "sent" | "error";
 
 export function ShareSheet({ visible, onClose, musicMinuteId, musicMinuteTitle }: Props) {
   const colors = useColors();
-  const { currentUser, followingIds, sendDirectShare } = useApp();
+  const { currentUser, followedApiUsers, sendDirectShare } = useApp();
 
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -37,19 +36,15 @@ export function ShareSheet({ visible, onClose, musicMinuteId, musicMinuteTitle }
   const [sendState, setSendState] = useState<SendState>("idle");
   const [copyDone, setCopyDone] = useState(false);
 
-  const followedUsers = useMemo(() => {
-    return SEED_USERS.filter((u) => followingIds.has(u.id));
-  }, [followingIds]);
-
   const filteredUsers = useMemo(() => {
-    if (!search.trim()) return followedUsers;
+    if (!search.trim()) return followedApiUsers;
     const q = search.toLowerCase();
-    return followedUsers.filter(
+    return followedApiUsers.filter(
       (u) =>
         u.displayName.toLowerCase().includes(q) ||
         u.username.toLowerCase().includes(q)
     );
-  }, [followedUsers, search]);
+  }, [followedApiUsers, search]);
 
   const toggleSelect = useCallback((id: string) => {
     setSelectedIds((prev) => {
@@ -145,7 +140,7 @@ export function ShareSheet({ visible, onClose, musicMinuteId, musicMinuteTitle }
           <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
             Sign in to send to other users.
           </Text>
-        ) : followedUsers.length === 0 ? (
+        ) : followedApiUsers.length === 0 ? (
           <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
             You're not following anyone yet. Follow creators to send them Music Minutes.
           </Text>
@@ -175,20 +170,22 @@ export function ShareSheet({ visible, onClose, musicMinuteId, musicMinuteTitle }
                 </Text>
               ) : (
                 filteredUsers.map((user) => {
-                  const selected = selectedIds.has(user.id);
+                  const uid = String(user.dbId);
+                  const selected = selectedIds.has(uid);
+                  const initials = user.displayName.slice(0, 2).toUpperCase() || "?";
                   return (
                     <TouchableOpacity
-                      key={user.id}
+                      key={uid}
                       style={[
                         styles.userRow,
                         { borderColor: colors.border },
                         selected && { backgroundColor: `${colors.primary}12` },
                       ]}
-                      onPress={() => toggleSelect(user.id)}
+                      onPress={() => toggleSelect(uid)}
                       activeOpacity={0.75}
                     >
-                      <View style={[styles.avatar, { backgroundColor: user.avatarColor }]}>
-                        <Text style={styles.avatarText}>{user.avatarInitials}</Text>
+                      <View style={[styles.avatar, { backgroundColor: "#A855F7" }]}>
+                        <Text style={styles.avatarText}>{initials}</Text>
                       </View>
                       <View style={styles.userInfo}>
                         <Text style={[styles.userDisplayName, { color: colors.foreground }]}>

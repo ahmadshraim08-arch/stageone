@@ -10,6 +10,7 @@ import {
   FlatList,
   Platform,
   Pressable,
+  RefreshControl,
   StatusBar,
   StyleSheet,
   Text,
@@ -33,7 +34,7 @@ export default function HomeScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { height: screenHeight } = useWindowDimensions();
-  const { musicMinutes, followingIds, currentUser, isLoaded } = useApp();
+  const { musicMinutes, followingFeed, followingLoading, fetchFollowingFeed, currentUser, isLoaded, feedLoading, refreshFeed } = useApp();
 
   const [activeTab, setActiveTab] = useState<FeedTab>("forYou");
   const [commentsMmId, setCommentsMmId] = useState<string | null>(null);
@@ -41,6 +42,7 @@ export default function HomeScreen() {
   const [gmToast, setGmToast] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [isScreenActive, setIsScreenActive] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   const flatListRef = useRef<FlatList>(null);
 
@@ -70,16 +72,22 @@ export default function HomeScreen() {
     }, [])
   );
 
-  const feedData: MusicMinute[] =
-    activeTab === "forYou"
-      ? musicMinutes
-      : musicMinutes.filter((mm) => followingIds.has(mm.userId));
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await refreshFeed();
+    setRefreshing(false);
+  }, [refreshFeed]);
+
+  const feedData: MusicMinute[] = activeTab === "forYou" ? musicMinutes : followingFeed;
 
   const handleTabChange = useCallback((tab: FeedTab) => {
     Haptics.selectionAsync();
     setActiveTab(tab);
     flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
-  }, []);
+    if (tab === "following" && currentUser && !currentUser.isGuest) {
+      fetchFollowingFeed();
+    }
+  }, [currentUser, fetchFollowingFeed]);
 
   const handleGoldenMicSuccess = useCallback(() => {
     setGmToast(true);
@@ -88,6 +96,8 @@ export default function HomeScreen() {
 
   const cardHeight = Platform.OS === "web" ? 680 : screenHeight;
   const topPad = Platform.OS === "web" ? 67 : insets.top;
+
+  const showLoading = activeTab === "forYou" ? (!isLoaded || feedLoading) : followingLoading;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -114,12 +124,12 @@ export default function HomeScreen() {
             {activeTab === "following" && <View style={styles.tabLine} />}
           </Pressable>
         </View>
-        <TouchableOpacity onPress={() => {}} style={styles.searchBtn} activeOpacity={0.7}>
-          <Ionicons name="search" size={22} color="#fff" />
+        <TouchableOpacity onPress={() => router.push("/notifications")} style={styles.searchBtn} activeOpacity={0.7}>
+          <Ionicons name="notifications-outline" size={22} color="#fff" />
         </TouchableOpacity>
       </View>
 
-      {!isLoaded ? (
+      {showLoading && feedData.length === 0 ? (
         <View style={styles.loadingFeed}>
           <ActivityIndicator size="large" color="#A855F7" />
         </View>
@@ -172,6 +182,16 @@ export default function HomeScreen() {
           })}
           viewabilityConfig={viewabilityConfig}
           onViewableItemsChanged={onViewableItemsChanged}
+          refreshControl={
+            currentUser && !currentUser.isGuest ? (
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={handleRefresh}
+                tintColor="#A855F7"
+                colors={["#A855F7"]}
+              />
+            ) : undefined
+          }
         />
       )}
 
@@ -205,7 +225,7 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 0,
     left: 0,
-    right: 0,
+    right: 1,
     zIndex: 9,
   },
   topBar: {

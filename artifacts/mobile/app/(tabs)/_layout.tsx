@@ -10,6 +10,7 @@ import React from "react";
 import { ActivityIndicator, Platform, StyleSheet, Text, View, useColorScheme } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { useApp } from "@/context/AppContext";
 import { useColors } from "@/hooks/useColors";
 
 function NativeTabLayout() {
@@ -59,6 +60,7 @@ function ClassicTabLayout() {
   const safeAreaInsets = useSafeAreaInsets();
   const isIOS = Platform.OS === "ios";
   const isWeb = Platform.OS === "web";
+  const { unreadNotifications } = useApp();
 
   return (
     <Tabs
@@ -104,6 +106,8 @@ function ClassicTabLayout() {
         name="index"
         options={{
           title: "Home",
+          tabBarBadge: unreadNotifications > 0 ? (unreadNotifications > 9 ? "9+" : unreadNotifications) : undefined,
+          tabBarBadgeStyle: { fontSize: 10, minWidth: 16, height: 16 },
           tabBarIcon: ({ color, focused }) =>
             isIOS ? (
               <SymbolView name={focused ? "house.fill" : "house"} tintColor={color} size={24} />

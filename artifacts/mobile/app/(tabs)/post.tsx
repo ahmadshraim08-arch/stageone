@@ -33,6 +33,7 @@ import {
   type LyricsResponse,
   type LyricLine,
 } from "@/lib/musixmatch";
+import { apiBase } from "@/lib/api";
 import { uploadVideo, createPost } from "@/lib/uploads";
 import { TimingSlider } from "@/components/TimingSlider";
 
@@ -223,9 +224,7 @@ export default function PostScreen() {
     }
 
     // Fetch from API for real Musixmatch track IDs
-    const domain = process.env.EXPO_PUBLIC_DOMAIN;
-    if (!domain) return;
-    fetch(`https://${domain}/api/musixmatch/track/${encodeURIComponent(prefillTrackId)}`)
+    fetch(`${apiBase()}/musixmatch/track/${encodeURIComponent(prefillTrackId)}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data: { track?: Record<string, unknown> } | null) => {
         if (!data?.track) return;

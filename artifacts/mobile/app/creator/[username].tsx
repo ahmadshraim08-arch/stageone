@@ -3,7 +3,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams } from "expo-router";
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
   Platform,
   ScrollView,
@@ -13,11 +13,17 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useAuth } from "@clerk/expo";
 
 import { GoldenMicModal } from "@/components/GoldenMicModal";
 import { useApp } from "@/context/AppContext";
-import { getUserByUsername, getMusicMinutesByUserId, formatCount } from "@/data/seedData";
+import {
+  getUserByUsername as getSeedUserByUsername,
+  getMusicMinutesByUserId,
+  formatCount,
+} from "@/data/seedData";
 import { useColors } from "@/hooks/useColors";
+import { ApiUser, getUserByUsername as getApiUserByUsername } from "@/lib/api";
 
 const SINGER_IMAGES = [
   require("@/assets/images/singer_placeholder_1.png"),
@@ -38,19 +44,45 @@ export default function CreatorProfileScreen() {
   const insets = useSafeAreaInsets();
   const { username } = useLocalSearchParams<{ username: string }>();
   const { followingIds, toggleFollow, currentUser, musicMinutes } = useApp();
+  const { getToken, isSignedIn } = useAuth();
 
-  const [gmVisible, setGmVisible] = React.useState(false);
-  const [gmToast, setGmToast] = React.useState(false);
+  const [gmVisible, setGmVisible] = useState(false);
+  const [gmToast, setGmToast] = useState(false);
+  const [apiUser, setApiUser] = useState<ApiUser | null>(null);
 
-  const user = getUserByUsername(username ?? "");
+  // Try to load real API user data; seed data serves as fallback for demo creators
+  useEffect(() => {
+    if (!isSignedIn || !username) return;
+    (async () => {
+      try {
+        const token = await getToken();
+        if (!token) return;
+        const u = await getApiUserByUsername(token, username);
+        setApiUser(u);
+      } catch {
+        // Creator is seed-only; gracefully ignore
+      }
+    })();
+  }, [isSignedIn, username]);
+
+  const user = getSeedUserByUsername(username ?? "");
   const seedMMs = user ? getMusicMinutesByUserId(user.id) : [];
   const userMMs = user ? [...musicMinutes.filter((m) => m.userId === user.id && !seedMMs.find((s) => s.id === m.id)), ...seedMMs] : seedMMs;
 
-  const isFollowing = user ? followingIds.has(user.id) : false;
-  const isOwnProfile = currentUser?.id === user?.id || currentUser?.username === user?.username;
+  // When API user found, prefer their real stats; else fall back to seed data
+  const followUserId = apiUser ? String(apiUser.id) : user?.id ?? "";
+  const displayFollowers = apiUser ? apiUser.followerCount : user?.followersCount ?? 0;
+  const displayFollowing = apiUser ? apiUser.followingCount : user?.followingCount ?? 0;
+  const displayGoldenMics = apiUser ? apiUser.goldenMicBalance : user?.totalGoldenMics ?? 0;
+  const displayBio = apiUser ? (apiUser.bio ?? "") : (user?.bio ?? "");
+
+  const isFollowing = followingIds.has(followUserId);
+  const isOwnProfile =
+    (apiUser ? currentUser?.dbId === apiUser.id : false) ||
+    currentUser?.username === user?.username;
   const topPad = Platform.OS === "web" ? 67 : insets.top;
 
-  if (!user) {
+  if (!user && !apiUser) {
     return (
       <View style={[styles.container, { backgroundColor: colors.background }]}>
         <View style={styles.notFound}>
@@ -61,10 +93,45 @@ export default function CreatorProfileScreen() {
     );
   }
 
+  // Unified display profile — seed data wins for UI decoration; API overrides real stats
+  const displayProfile = user ? {
+    id: followUserId,
+    displayName: apiUser?.displayName ?? user.displayName,
+    username: apiUser?.username ?? user.username,
+    bio: displayBio,
+    avatarColor: user.avatarColor,
+    avatarInitials: user.avatarInitials,
+    liveEligible: user.liveEligible,
+    followersCount: displayFollowers,
+    followingCount: displayFollowing,
+    totalGoldenMics: displayGoldenMics,
+    totalLikes: user.totalLikes,
+    riseScore: user.riseScore,
+    badges: user.badges as string[],
+    genre: user.genre,
+    location: user.location as string | null,
+  } : {
+    id: followUserId,
+    displayName: apiUser!.displayName,
+    username: apiUser!.username,
+    bio: apiUser!.bio ?? "",
+    avatarColor: "#A855F7",
+    avatarInitials: apiUser!.displayName.slice(0, 2).toUpperCase(),
+    liveEligible: false,
+    followersCount: apiUser!.followerCount,
+    followingCount: apiUser!.followingCount,
+    totalGoldenMics: apiUser!.goldenMicBalance,
+    totalLikes: 0,
+    riseScore: 0,
+    badges: [] as string[],
+    genre: (apiUser!.genres ?? [])[0] ?? "Singer",
+    location: null as string | null,
+  };
+
   const eligibleCount = [
-    user.liveEligible,
-    user.followersCount >= 100,
-    user.totalGoldenMics >= 50,
+    displayProfile.liveEligible,
+    displayProfile.followersCount >= 100,
+    displayProfile.totalGoldenMics >= 50,
     userMMs.reduce((s, m) => s + m.views, 0) >= 2000,
     userMMs.length >= 3,
   ].filter(Boolean).length;
@@ -76,13 +143,13 @@ export default function CreatorProfileScreen() {
       showsVerticalScrollIndicator={false}
     >
       <LinearGradient
-        colors={[`${user.avatarColor}40`, "#05020A"]}
+        colors={[`${displayProfile.avatarColor}40`, "#05020A"]}
         style={[styles.hero, { paddingTop: topPad + 16 }]}
       >
         <View style={styles.heroTop}>
-          <View style={[styles.avatar, { backgroundColor: user.avatarColor }]}>
-            <Text style={styles.avatarText}>{user.avatarInitials}</Text>
-            {user.liveEligible && (
+          <View style={[styles.avatar, { backgroundColor: displayProfile.avatarColor }]}>
+            <Text style={styles.avatarText}>{displayProfile.avatarInitials}</Text>
+            {displayProfile.liveEligible && (
               <View style={styles.liveEligibleDot}>
                 <Ionicons name="radio" size={10} color="#fff" />
               </View>
@@ -91,7 +158,7 @@ export default function CreatorProfileScreen() {
           <View style={styles.heroActions}>
             {currentUser && !isOwnProfile && (
               <TouchableOpacity
-                onPress={() => toggleFollow(user.id)}
+                onPress={() => toggleFollow(displayProfile.id)}
                 style={[
                   styles.followBtn,
                   {
@@ -117,21 +184,21 @@ export default function CreatorProfileScreen() {
         </View>
 
         <View style={styles.nameBlock}>
-          <Text style={[styles.displayName, { color: colors.foreground }]}>{user.displayName}</Text>
-          <Text style={[styles.username, { color: colors.mutedForeground }]}>@{user.username}</Text>
-          {user.bio ? (
+          <Text style={[styles.displayName, { color: colors.foreground }]}>{displayProfile.displayName}</Text>
+          <Text style={[styles.username, { color: colors.mutedForeground }]}>@{displayProfile.username}</Text>
+          {displayProfile.bio ? (
             <Text style={[styles.bio, { color: "rgba(255,255,255,0.75)" }]} numberOfLines={3}>
-              {user.bio}
+              {displayProfile.bio}
             </Text>
           ) : null}
           <View style={styles.tagsRow}>
             <View style={[styles.tag, { backgroundColor: `${colors.primary}20`, borderColor: `${colors.primary}40` }]}>
-              <Text style={[styles.tagText, { color: colors.primary }]}>{user.genre}</Text>
+              <Text style={[styles.tagText, { color: colors.primary }]}>{displayProfile.genre}</Text>
             </View>
-            {user.location ? (
+            {displayProfile.location ? (
               <View style={[styles.tag, { backgroundColor: "rgba(255,255,255,0.08)", borderColor: "rgba(255,255,255,0.15)" }]}>
                 <Ionicons name="location-outline" size={11} color={colors.mutedForeground} />
-                <Text style={[styles.tagText, { color: colors.mutedForeground }]}>{user.location}</Text>
+                <Text style={[styles.tagText, { color: colors.mutedForeground }]}>{displayProfile.location}</Text>
               </View>
             ) : null}
           </View>
@@ -139,9 +206,9 @@ export default function CreatorProfileScreen() {
 
         <View style={styles.statsRow}>
           {[
-            { label: "Followers", value: formatCount(user.followersCount) },
-            { label: "Following", value: formatCount(user.followingCount) },
-            { label: "Likes", value: formatCount(user.totalLikes) },
+            { label: "Followers", value: formatCount(displayProfile.followersCount) },
+            { label: "Following", value: formatCount(displayProfile.followingCount) },
+            { label: "Likes", value: formatCount(displayProfile.totalLikes) },
           ].map((s) => (
             <View key={s.label} style={styles.statItem}>
               <Text style={[styles.statValue, { color: colors.foreground }]}>{s.value}</Text>
@@ -154,22 +221,22 @@ export default function CreatorProfileScreen() {
           <View style={[styles.riseCard, { backgroundColor: `${colors.gold}15`, borderColor: `${colors.gold}30` }]}>
             <MaterialCommunityIcons name="microphone" size={18} color={colors.gold} />
             <View>
-              <Text style={[styles.riseCardValue, { color: colors.gold }]}>{formatCount(user.totalGoldenMics)}</Text>
+              <Text style={[styles.riseCardValue, { color: colors.gold }]}>{formatCount(displayProfile.totalGoldenMics)}</Text>
               <Text style={[styles.riseCardLabel, { color: colors.mutedForeground }]}>Golden Mics</Text>
             </View>
           </View>
           <View style={[styles.riseCard, { backgroundColor: `${colors.primary}15`, borderColor: `${colors.primary}30` }]}>
             <Ionicons name="trending-up" size={18} color={colors.primary} />
             <View>
-              <Text style={[styles.riseCardValue, { color: colors.primary }]}>{formatCount(user.riseScore)}</Text>
+              <Text style={[styles.riseCardValue, { color: colors.primary }]}>{formatCount(displayProfile.riseScore)}</Text>
               <Text style={[styles.riseCardLabel, { color: colors.mutedForeground }]}>Rise Score</Text>
             </View>
           </View>
-          <View style={[styles.riseCard, { backgroundColor: user.liveEligible ? `${colors.accent}15` : `${colors.muted}80`, borderColor: user.liveEligible ? `${colors.accent}30` : colors.border }]}>
-            <Ionicons name="radio" size={18} color={user.liveEligible ? colors.accent : colors.mutedForeground} />
+          <View style={[styles.riseCard, { backgroundColor: displayProfile.liveEligible ? `${colors.accent}15` : `${colors.muted}80`, borderColor: displayProfile.liveEligible ? `${colors.accent}30` : colors.border }]}>
+            <Ionicons name="radio" size={18} color={displayProfile.liveEligible ? colors.accent : colors.mutedForeground} />
             <View>
-              <Text style={[styles.riseCardValue, { color: user.liveEligible ? colors.accent : colors.mutedForeground, fontSize: 13 }]}>
-                {user.liveEligible ? "Eligible" : `${eligibleCount}/5`}
+              <Text style={[styles.riseCardValue, { color: displayProfile.liveEligible ? colors.accent : colors.mutedForeground, fontSize: 13 }]}>
+                {displayProfile.liveEligible ? "Eligible" : `${eligibleCount}/5`}
               </Text>
               <Text style={[styles.riseCardLabel, { color: colors.mutedForeground }]}>Live Status</Text>
             </View>
@@ -177,11 +244,11 @@ export default function CreatorProfileScreen() {
         </View>
       </LinearGradient>
 
-      {user.badges.length > 0 && (
+      {displayProfile.badges.length > 0 && (
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Badges</Text>
           <View style={styles.badgesRow}>
-            {user.badges.map((badge) => (
+            {displayProfile.badges.map((badge) => (
               <View
                 key={badge}
                 style={[styles.badge, { backgroundColor: `${BADGE_COLORS[badge] ?? colors.primary}20`, borderColor: `${BADGE_COLORS[badge] ?? colors.primary}50` }]}

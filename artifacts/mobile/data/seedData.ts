@@ -56,6 +56,10 @@ export interface MusicMinute {
   isFeatured: boolean;
   lyricSection?: LyricSectionData;
   moodTags?: string[];
+  /** Populated for API-backed posts; seed posts use getUserById() instead */
+  creatorDisplayName?: string;
+  creatorUsername?: string;
+  creatorAvatarUrl?: string | null;
 }
 
 export interface SeedComment {

@@ -149,16 +149,18 @@ export function MusicMinuteCard({ item, isActive, onCommentPress, onGoldenMicPre
   const section = item.lyricSection ?? null;
 
   const seedCreator = getUserById(item.userId);
-  const isCurrentUser = currentUser?.id === item.userId;
+  const isCurrentUser =
+    currentUser?.id === item.userId ||
+    (currentUser?.dbId !== undefined && String(currentUser.dbId) === item.userId);
   const cardHeight = Platform.OS === "web" ? 680 : screenHeight;
 
   const displayName = isCurrentUser
     ? currentUser.displayName || currentUser.username
-    : seedCreator?.displayName ?? item.userId.replace("user_", "");
+    : item.creatorDisplayName ?? seedCreator?.displayName ?? item.userId.replace("user_", "");
 
   const username = isCurrentUser
     ? currentUser.username
-    : seedCreator?.username ?? item.userId.replace("user_", "");
+    : item.creatorUsername ?? seedCreator?.username ?? item.userId.replace("user_", "");
 
   const avatarColor = isCurrentUser
     ? "#A855F7"
@@ -166,7 +168,7 @@ export function MusicMinuteCard({ item, isActive, onCommentPress, onGoldenMicPre
 
   const avatarInitials = isCurrentUser
     ? (currentUser.displayName?.[0] ?? currentUser.username?.[0] ?? "?").toUpperCase()
-    : seedCreator?.avatarInitials ?? "?";
+    : item.creatorDisplayName?.[0]?.toUpperCase() ?? seedCreator?.avatarInitials ?? "?";
 
   // Find matching LyricStage challenge for "Sing This Part" CTA
   // Filter by both trackId AND sectionId so the CTA targets the right challenge

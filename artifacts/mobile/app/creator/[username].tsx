@@ -3,7 +3,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Platform,
@@ -96,6 +96,23 @@ export default function CreatorProfileScreen() {
   const displayBio = apiUser ? (apiUser.bio ?? "") : (user?.bio ?? "");
 
   const isFollowing = followingIds.has(followUserId);
+
+  // Snapshot the follower count and initial follow state once the API data loads.
+  // Using isFollowing in the live count formula means rollbacks revert the count automatically.
+  const snapshotRef = useRef<{ count: number; wasFollowing: boolean } | null>(null);
+  useEffect(() => {
+    if (apiUser !== null && snapshotRef.current === null) {
+      snapshotRef.current = { count: apiUser.followerCount, wasFollowing: isFollowing };
+    }
+  }, [apiUser, isFollowing]);
+
+  const liveFollowersCount =
+    snapshotRef.current !== null
+      ? snapshotRef.current.count +
+        (isFollowing ? 1 : 0) -
+        (snapshotRef.current.wasFollowing ? 1 : 0)
+      : displayFollowers;
+
   const isOwnProfile =
     (apiUser ? currentUser?.dbId === apiUser.id : false) ||
     currentUser?.username === user?.username;
@@ -121,7 +138,7 @@ export default function CreatorProfileScreen() {
     avatarColor: user.avatarColor,
     avatarInitials: user.avatarInitials,
     liveEligible: user.liveEligible,
-    followersCount: displayFollowers,
+    followersCount: liveFollowersCount,
     followingCount: displayFollowing,
     totalGoldenMics: displayGoldenMics,
     totalLikes: user.totalLikes,
@@ -137,7 +154,7 @@ export default function CreatorProfileScreen() {
     avatarColor: "#A855F7",
     avatarInitials: apiUser!.displayName.slice(0, 2).toUpperCase(),
     liveEligible: false,
-    followersCount: apiUser!.followerCount,
+    followersCount: liveFollowersCount,
     followingCount: apiUser!.followingCount,
     totalGoldenMics: apiUser!.goldenMicBalance,
     totalLikes: 0,

@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { router, useLocalSearchParams, useFocusEffect } from "expo-router";
@@ -381,6 +381,14 @@ export default function PostDetailScreen() {
               <View style={styles.tags}>
                 {post.genre && (
                   <View style={[styles.tag, { borderColor: colors.border }]}>
+                    {post.genreDetectionSource === "musixmatch_metadata" && (
+                      <MaterialCommunityIcons
+                        name="music-note"
+                        size={11}
+                        color="#A78BFA"
+                        style={{ marginRight: 3 }}
+                      />
+                    )}
                     <Text style={[styles.tagText, { color: colors.mutedForeground }]}>{post.genre}</Text>
                   </View>
                 )}
@@ -661,6 +669,8 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     paddingHorizontal: 10,
     paddingVertical: 4,
+    flexDirection: "row",
+    alignItems: "center",
   },
   tagText: { fontSize: 12, fontWeight: "500" },
   ownerActions: {

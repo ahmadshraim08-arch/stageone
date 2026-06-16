@@ -672,6 +672,14 @@ export function MusicMinuteCard({ item, isActive, onCommentPress, onGoldenMicPre
               { backgroundColor: "rgba(255,255,255,0.08)", borderColor: "rgba(255,255,255,0.15)" },
             ]}
           >
+            {item.genreDetectionSource === "musixmatch_metadata" && (
+              <MaterialCommunityIcons
+                name="music-note"
+                size={11}
+                color="#A78BFA"
+                style={{ marginRight: 3 }}
+              />
+            )}
             <Text style={[styles.tagText, { color: "#CBD5E1" }]}>{item.genre}</Text>
           </View>
           {item.language !== "English" && (
@@ -1038,6 +1046,8 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: 12,
     borderWidth: 1,
+    flexDirection: "row",
+    alignItems: "center",
   },
   tagText: {
     fontSize: 11,

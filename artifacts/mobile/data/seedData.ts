@@ -43,6 +43,7 @@ export interface MusicMinute {
   language: string;
   location: string;
   tags: string[];
+  genreDetectionSource?: string;
   musixmatchTrackId?: string;
   trackTitle?: string;
   trackArtist?: string;

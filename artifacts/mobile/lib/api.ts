@@ -76,6 +76,7 @@ export interface ApiPost {
   caption: string | null;
   performanceType: string;
   genre: string | null;
+  genreDetectionSource: string | null;
   language: string | null;
   musixmatchTrackId: string | null;
   trackTitle: string | null;

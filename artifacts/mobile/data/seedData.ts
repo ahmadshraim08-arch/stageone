@@ -39,7 +39,7 @@ export interface MusicMinute {
   title: string;
   caption: string;
   performanceType: "original" | "cover" | "freestyle";
-  genre: string;
+  genre?: string;
   language: string;
   location: string;
   tags: string[];

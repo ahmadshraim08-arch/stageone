@@ -155,7 +155,7 @@ export function apiPostToMusicMinute(post: ApiPost): MusicMinute {
     title: post.title,
     caption: post.caption ?? "",
     performanceType: (post.performanceType as MusicMinute["performanceType"]) ?? "original",
-    genre: post.genre ?? "Pop",
+    genre: post.genre ?? undefined,
     genreDetectionSource: post.genreDetectionSource ?? undefined,
     language: post.language ?? "English",
     location: "",

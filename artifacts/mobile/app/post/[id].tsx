@@ -159,7 +159,7 @@ export default function PostDetailScreen() {
       patchInFeed(String(post.id), {
         title: updated.title,
         caption: updated.caption ?? "",
-        genre: updated.genre ?? "Pop",
+        genre: updated.genre ?? undefined,
         language: updated.language ?? "English",
       });
       setEditVisible(false);

@@ -666,22 +666,24 @@ export function MusicMinuteCard({ item, isActive, onCommentPress, onGoldenMicPre
               {item.performanceType.charAt(0).toUpperCase() + item.performanceType.slice(1)}
             </Text>
           </View>
-          <View
-            style={[
-              styles.tag,
-              { backgroundColor: "rgba(255,255,255,0.08)", borderColor: "rgba(255,255,255,0.15)" },
-            ]}
-          >
-            {item.genreDetectionSource === "musixmatch_metadata" && (
-              <MaterialCommunityIcons
-                name="music-note"
-                size={11}
-                color="#A78BFA"
-                style={{ marginRight: 3 }}
-              />
-            )}
-            <Text style={[styles.tagText, { color: "#CBD5E1" }]}>{item.genre}</Text>
-          </View>
+          {item.genre ? (
+            <View
+              style={[
+                styles.tag,
+                { backgroundColor: "rgba(255,255,255,0.08)", borderColor: "rgba(255,255,255,0.15)" },
+              ]}
+            >
+              {item.genreDetectionSource === "musixmatch_metadata" && (
+                <MaterialCommunityIcons
+                  name="music-note"
+                  size={11}
+                  color="#A78BFA"
+                  style={{ marginRight: 3 }}
+                />
+              )}
+              <Text style={[styles.tagText, { color: "#CBD5E1" }]}>{item.genre}</Text>
+            </View>
+          ) : null}
           {item.language !== "English" && (
             <View
               style={[

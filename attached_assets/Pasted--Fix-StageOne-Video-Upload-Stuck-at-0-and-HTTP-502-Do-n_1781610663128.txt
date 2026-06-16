@@ -1,0 +1,419 @@
+# Fix StageOne Video Upload Stuck at 0% and HTTP 502
+
+Do not add new features.
+
+The local video picker problem appears to be fixed. The app successfully selects the video, reads its metadata, and reaches the final Review and Post screen.
+
+The current failure is:
+
+* Upload progress remains at 0%.
+* After waiting, the app displays `Upload failed (HTTP 502)`.
+* The selected video is 53 seconds long.
+* A full Music Minute cannot be published.
+
+This is now an upload/backend/storage failure, not primarily a picker failure.
+
+Inspect the implementation and deployment logs before making changes. Do not guess.
+
+## 1. Trace one upload from phone to database
+
+Add a unique upload request ID for every upload attempt.
+
+Trace these stages:
+
+1. Mobile begins upload
+2. Authentication token retrieved
+3. Upload request sent
+4. API gateway receives request
+5. Express upload route receives request
+6. Multipart parser starts
+7. File headers received
+8. First bytes received
+9. Full file received or stream opened
+10. Replit App Storage client initialized
+11. Storage upload begins
+12. Storage upload succeeds
+13. Permanent object path or URL generated
+14. Music Minute database record created
+15. API response returned
+16. Mobile receives success response
+
+Log the request ID at every stage.
+
+Do not log:
+
+* Video contents
+* Authentication tokens
+* API secrets
+* Private local paths
+
+For the failing request, identify the last completed stage.
+
+## 2. Inspect the 502 in deployment logs
+
+Test using the exact published API URL used by the iPhone.
+
+Check:
+
+* Whether the request reaches the published deployment
+* Whether the API process restarts or crashes
+* Whether there is an out-of-memory event
+* Whether there is an unhandled promise rejection
+* Whether the upload route times out
+* Whether Express closes the connection early
+* Whether the reverse proxy rejects the request body
+* Whether App Storage throws an error
+* Whether Clerk authentication fails
+* Whether the production deployment has access to the required storage bucket
+* Whether the request is accidentally sent to a development URL, localhost, or an inactive deployment
+
+Report the exact sanitized server error associated with the 502.
+
+Do not return only “HTTP 502.” Surface the underlying server failure in development logs.
+
+## 3. Record the selected file metadata
+
+Before upload, record sanitized metadata:
+
+* File size in bytes and MB
+* Duration
+* MIME type
+* Filename extension
+* Local URI scheme
+* Whether the copied cache file exists
+* Copied cache file size
+* Width and height if available
+
+Confirm the selected 53-second file is actually below the application’s configured upload limit.
+
+Do not rely only on duration. A short high-resolution iPhone video may still be large.
+
+## 4. Test three file sizes
+
+Run separate upload tests using:
+
+1. A 3–5 second video under 5 MB
+2. A 15–20 second video
+3. The current 53-second video
+
+Interpret the results:
+
+* If all three fail with 502, the upload route, authentication, deployment, or storage configuration is broken.
+* If only larger videos fail, investigate request-size limits, memory buffering, gateway timeouts, and storage upload duration.
+* If a small video uploads but remains at 0%, the progress UI is broken separately from the upload itself.
+
+Report the file size and result for each test.
+
+## 5. Verify App Storage independently
+
+Before debugging the mobile upload, test the App Storage integration from the running production API server.
+
+Perform:
+
+1. Initialize the official Replit App Storage client.
+2. Upload a small text file.
+3. Upload a small binary test file.
+4. Upload a small readable stream.
+5. Confirm each object appears in the correct bucket.
+6. Download or verify the object.
+7. Delete the test objects.
+
+Confirm:
+
+* Correct bucket is selected
+* Published app has bucket access
+* SDK initialization works in production
+* Storage errors are checked correctly
+* The upload result is inspected rather than assumed successful
+
+If App Storage cannot upload a small server-generated test file, fix storage configuration before continuing with mobile video uploads.
+
+## 6. Stop buffering the complete video in memory
+
+Inspect the upload route for patterns such as:
+
+* `memoryStorage`
+* Full file stored in a Buffer
+* Reading the entire request before writing
+* Converting the video to Base64
+* Converting the file to a large array
+* Calling `uploadFromBytes` with the full video
+* Parsing multipart data through a JSON body parser
+
+These approaches may cause memory pressure or timeouts.
+
+Use a streaming upload pipeline where practical:
+
+* Mobile sends multipart binary video.
+* Server parses multipart as a stream or temporary file.
+* Server uploads to App Storage using a stream or file path.
+* Server does not hold the complete video in JavaScript memory.
+
+Use the official App Storage SDK’s stream/file upload method supported by the installed version.
+
+Ensure the stream is not consumed twice.
+
+Handle errors from:
+
+* Incoming request stream
+* Multipart parser
+* Temporary file
+* App Storage upload stream
+* Client disconnect
+* Server shutdown
+
+## 7. Inspect middleware order and body limits
+
+Review the upload route and global Express middleware.
+
+Ensure:
+
+* Multipart requests are not parsed by `express.json()`.
+* Multipart boundary is preserved.
+* The mobile client does not manually set an incomplete `Content-Type`.
+* The multipart parser owns the upload request.
+* File-size limit matches the intended StageOne limit.
+* Field name used by mobile matches the server.
+* Only one video file is accepted.
+* Unsupported MIME types return 415.
+* Oversized videos return 413.
+* Missing authentication returns 401.
+* Invalid form data returns 400.
+* Storage failures return a controlled 500 or 503 response.
+
+Do not allow expected upload errors to become a 502 by crashing the server.
+
+## 8. Do not manually set the multipart boundary
+
+Inspect the mobile request.
+
+When using FormData, do not manually set:
+
+`Content-Type: multipart/form-data`
+
+unless the selected upload library explicitly generates and includes the correct boundary.
+
+The request must contain:
+
+* Correct file field name
+* Local copied cache URI
+* Filename
+* MIME type
+* Authentication header
+* Any required metadata fields
+
+Confirm the server receives the same field name expected by the multipart parser.
+
+## 9. Verify authentication for long uploads
+
+Check that:
+
+* A valid Clerk token is retrieved immediately before upload.
+* The Authorization header reaches the backend.
+* The upload does not begin using an expired cached token.
+* Authentication middleware supports multipart routes.
+* The route does not attempt to read the multipart body before authentication is complete.
+* A failed token returns 401 rather than causing a backend exception.
+
+Log only:
+
+* Whether a token was present
+* Whether validation passed
+* Authenticated user ID
+
+Never log the token.
+
+## 10. Separate upload from post creation
+
+Use two controlled stages:
+
+### Stage A — Upload video
+
+Returns:
+
+* Storage object key
+* Permanent media URL or application media route
+* MIME type
+* File size
+
+### Stage B — Create Music Minute
+
+Sends:
+
+* Uploaded object key or media URL
+* Title
+* Performance type
+* Genre
+* Language
+* Musixmatch track reference
+* Lyric section reference
+* Rights confirmation
+
+Do not create the post record until the video upload succeeds.
+
+If video upload succeeds but post creation fails:
+
+* Preserve the uploaded video reference temporarily.
+* Allow Retry without uploading the full video again.
+* Clean up abandoned objects later.
+
+## 11. Fix upload progress
+
+Determine what upload mechanism the mobile app currently uses.
+
+If the mechanism does not expose upload progress, do not display a permanently frozen `0%`.
+
+Choose one of these:
+
+### Real percentage available
+
+Display:
+
+* Bytes sent
+* Total bytes
+* Percentage
+
+Update smoothly and prevent values from moving backward.
+
+### Real percentage unavailable
+
+Use an indeterminate progress UI:
+
+* “Preparing video…”
+* “Uploading video…”
+* “Saving your Music Minute…”
+
+Do not display a false numeric percentage.
+
+Add a timeout warning without immediately canceling:
+
+**This upload is taking longer than expected. Keep StageOne open while it finishes.**
+
+## 12. Add timeout and cancellation behavior
+
+The upload should:
+
+* Have a reasonable client timeout
+* Detect network disconnection
+* Detect app backgrounding
+* Allow cancellation
+* Avoid starting duplicate uploads when Retry is tapped
+* Abort the previous request before retrying
+* Reset progress state correctly
+
+Retry must not create:
+
+* Duplicate storage objects
+* Duplicate database posts
+* Multiple concurrent uploads
+
+Use an idempotency or upload-session ID when possible.
+
+## 13. Improve server error responses
+
+Return structured errors:
+
+```text
+{
+  "error": {
+    "code": "UPLOAD_STORAGE_FAILED",
+    "message": "The video could not be saved.",
+    "requestId": "sanitized-request-id",
+    "retryable": true
+  }
+}
+```
+
+Define distinct error codes for:
+
+* Authentication failure
+* Missing video
+* Unsupported type
+* File too large
+* Multipart parsing failure
+* Client disconnected
+* Storage initialization failure
+* Storage upload failure
+* Database creation failure
+* Request timeout
+
+The mobile user should see a friendly message.
+
+Development logs should retain the technical cause.
+
+## 14. Verify the permanent media URL
+
+After a successful storage upload:
+
+* Confirm the object exists.
+* Confirm the authenticated app can retrieve it.
+* Confirm the feed can play it.
+* Confirm another user account can play it.
+* Confirm it still works after server restart and app restart.
+
+Do not return a local server file path.
+
+Do not return a temporary device URI.
+
+## 15. Required physical-iPhone test
+
+Complete this exact test:
+
+1. Log into a real StageOne account.
+2. Select a local 5-second video.
+3. Upload it.
+4. Confirm progress or indeterminate state works.
+5. Confirm no 502.
+6. Confirm App Storage contains the object.
+7. Confirm a Music Minute database record exists.
+8. Confirm it appears in Home.
+9. Confirm it appears on the creator profile.
+10. Confirm it plays.
+
+Repeat with:
+
+* 20-second video
+* 53-second video
+* `.mov`
+* `.mp4`
+* Wi-Fi
+* Mobile data if available
+* Interrupted network
+* Retry after failure
+
+## 16. Acceptance criteria
+
+The upload fix is complete only when:
+
+* The API route receives video bytes from the physical iPhone.
+* The server does not crash or return 502.
+* App Storage upload succeeds.
+* Upload progress is truthful.
+* The post record is created only after storage succeeds.
+* The post appears in the feed and profile.
+* The uploaded video plays from a persistent remote source.
+* Retrying does not create duplicates.
+* The server returns controlled error responses.
+* Mobile and API typechecks pass.
+* A real 53-second iPhone video completes the full cycle.
+
+## 17. Completion report
+
+Report:
+
+1. Exact root cause of the 502.
+2. Last successful upload stage before the fix.
+3. Whether the server crashed, timed out, or storage failed.
+4. Selected video file size and MIME type.
+5. Mobile upload method before and after.
+6. Server multipart method before and after.
+7. App Storage upload method before and after.
+8. Whether full-file buffering was removed.
+9. How progress is calculated.
+10. Files changed.
+11. Production logs for the successful request, sanitized.
+12. Test results for small, medium, and 53-second videos.
+13. Typecheck results.
+14. Remaining limitations.
+
+Do not mark this fixed after only testing a small mock file or simulator. Complete a real physical-iPhone upload through the published backend.

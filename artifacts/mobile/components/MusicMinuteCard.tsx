@@ -385,6 +385,13 @@ export function MusicMinuteCard({ item, isActive, onCommentPress, onGoldenMicPre
         </View>
       )}
 
+      {/* Persistent pause indicator — visible while manually paused */}
+      {isManuallyPaused && (
+        <View style={styles.pauseIndicator} pointerEvents="none">
+          <Ionicons name="play" size={14} color="#fff" />
+        </View>
+      )}
+
       {item.videoUri && (
         <TouchableOpacity
           style={styles.muteBtn}
@@ -699,6 +706,20 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "700",
     letterSpacing: 0.5,
+  },
+  pauseIndicator: {
+    position: "absolute",
+    top: Platform.OS === "web" ? 114 : 94,
+    left: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: "rgba(5,2,10,0.55)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.2)",
   },
   muteBtn: {
     position: "absolute",

@@ -1,11 +1,14 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
-import { router, useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams, useFocusEffect } from "expo-router";
 import { useAuth } from "@clerk/expo";
-import React, { useEffect, useState } from "react";
+import { Video, ResizeMode } from "expo-av";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -46,6 +49,13 @@ export default function PostDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
+  // Video player state
+  const videoRef = useRef<Video>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [videoError, setVideoError] = useState(false);
+  const tapIconOpacity = useRef(new Animated.Value(0)).current;
+  const [tapIcon, setTapIcon] = useState<"play" | "pause">("play");
+
   useEffect(() => {
     const postId = parseInt(id ?? "", 10);
     if (isNaN(postId)) {
@@ -70,6 +80,40 @@ export default function PostDetailScreen() {
       }
     })();
   }, [id]);
+
+  // Pause video when user navigates away
+  useFocusEffect(
+    useCallback(() => {
+      return () => {
+        videoRef.current?.pauseAsync().catch(() => {});
+        setIsPlaying(false);
+      };
+    }, [])
+  );
+
+  const handleVideoTap = useCallback(() => {
+    if (!post?.videoUrl || videoError) return;
+
+    const willBePaused = isPlaying;
+    setIsPlaying(!isPlaying);
+
+    if (videoRef.current) {
+      if (willBePaused) {
+        videoRef.current.pauseAsync().catch(() => {});
+      } else {
+        videoRef.current.playAsync().catch(() => {});
+      }
+    }
+
+    setTapIcon(willBePaused ? "play" : "pause");
+    tapIconOpacity.stopAnimation();
+    tapIconOpacity.setValue(0.85);
+    Animated.timing(tapIconOpacity, {
+      toValue: 0,
+      duration: 700,
+      useNativeDriver: true,
+    }).start();
+  }, [isPlaying, post?.videoUrl, videoError, tapIconOpacity]);
 
   const isLiked = post ? likedIds.has(String(post.id)) : false;
   const isSaved = post ? savedIds.has(String(post.id)) : false;
@@ -100,15 +144,87 @@ export default function PostDetailScreen() {
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.thumbnailWrapper}>
-            <Image
-              source={post.thumbnailUrl ? { uri: post.thumbnailUrl } : placeholderImg}
-              style={styles.thumbnail}
-              contentFit="cover"
-            />
-            <LinearGradient
-              colors={["transparent", "rgba(5,2,10,0.85)"]}
-              style={StyleSheet.absoluteFill}
-            />
+            {post.videoUrl && !videoError ? (
+              <>
+                <Video
+                  ref={videoRef}
+                  source={{ uri: post.videoUrl }}
+                  style={StyleSheet.absoluteFill}
+                  resizeMode={ResizeMode.COVER}
+                  shouldPlay={false}
+                  isLooping
+                  isMuted={false}
+                  onPlaybackStatusUpdate={(status) => {
+                    if (status.isLoaded) {
+                      setIsPlaying(status.isPlaying);
+                    }
+                  }}
+                  onError={() => setVideoError(true)}
+                />
+                <LinearGradient
+                  colors={["transparent", "rgba(5,2,10,0.75)"]}
+                  style={StyleSheet.absoluteFill}
+                  pointerEvents="none"
+                />
+                <Pressable style={StyleSheet.absoluteFill} onPress={handleVideoTap} />
+                {/* Animated tap icon */}
+                <Animated.View
+                  style={[styles.tapIconOverlay, { opacity: tapIconOpacity }]}
+                  pointerEvents="none"
+                >
+                  <View style={styles.tapIconCircle}>
+                    <Ionicons
+                      name={tapIcon === "play" ? "play" : "pause"}
+                      size={36}
+                      color="#fff"
+                    />
+                  </View>
+                </Animated.View>
+                {/* Static play button shown when paused */}
+                {!isPlaying && (
+                  <Pressable style={styles.playBtnOverlay} onPress={handleVideoTap}>
+                    <View style={styles.playBtn}>
+                      <Ionicons name="play" size={32} color="#fff" style={{ marginLeft: 4 }} />
+                    </View>
+                  </Pressable>
+                )}
+              </>
+            ) : post.videoUrl && videoError ? (
+              <>
+                <Image
+                  source={placeholderImg}
+                  style={StyleSheet.absoluteFill}
+                  contentFit="cover"
+                />
+                <LinearGradient
+                  colors={["transparent", "rgba(5,2,10,0.85)"]}
+                  style={StyleSheet.absoluteFill}
+                />
+                <View style={styles.videoErrorOverlay}>
+                  <Ionicons name="alert-circle-outline" size={36} color="rgba(255,255,255,0.7)" />
+                  <Text style={styles.videoErrorText}>Video failed to load</Text>
+                  <TouchableOpacity
+                    style={styles.retryBtn}
+                    onPress={() => setVideoError(false)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.retryBtnText}>Retry</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              <>
+                <Image
+                  source={placeholderImg}
+                  style={StyleSheet.absoluteFill}
+                  contentFit="cover"
+                />
+                <LinearGradient
+                  colors={["transparent", "rgba(5,2,10,0.85)"]}
+                  style={StyleSheet.absoluteFill}
+                />
+              </>
+            )}
             <View style={styles.thumbnailBadge}>
               <Ionicons name="musical-notes" size={14} color="#fff" />
               <Text style={styles.thumbnailBadgeText}>Music Minute</Text>
@@ -224,12 +340,12 @@ const styles = StyleSheet.create({
   content: { paddingBottom: 32 },
   thumbnailWrapper: {
     width: "100%",
-    height: 260,
+    height: 320,
     backgroundColor: "#1a0f2e",
     position: "relative",
     justifyContent: "flex-end",
+    overflow: "hidden",
   },
-  thumbnail: { ...StyleSheet.absoluteFillObject },
   thumbnailBadge: {
     flexDirection: "row",
     alignItems: "center",
@@ -243,6 +359,54 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   thumbnailBadgeText: { color: "#fff", fontSize: 12, fontWeight: "600" },
+  playBtnOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  playBtn: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 2,
+    borderColor: "rgba(255,255,255,0.6)",
+  },
+  tapIconOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  tapIconCircle: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  videoErrorOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: "rgba(5,2,10,0.5)",
+  },
+  videoErrorText: {
+    color: "rgba(255,255,255,0.8)",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  retryBtn: {
+    marginTop: 4,
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: "rgba(168,85,247,0.8)",
+  },
+  retryBtnText: { color: "#fff", fontSize: 14, fontWeight: "600" },
   body: { padding: 20, gap: 16 },
   title: { fontSize: 22, fontWeight: "800", lineHeight: 28 },
   caption: { fontSize: 14, lineHeight: 20 },

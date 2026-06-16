@@ -1,0 +1,249 @@
+You are in Plan Mode.
+
+Do not change any code, files, database schemas, environment variables, or project settings.
+
+Please inspect the entire current StageOne project and give me a simple, honest status report of what has already been accomplished compared with the full app vision.
+
+I want the report written in clear language that a non-technical founder can understand.
+
+Please answer these sections:
+
+## 1. Simple explanation of StageOne
+
+Explain StageOne to a first-time user in one short paragraph.
+
+Describe:
+
+* What the app does
+* Who it is for
+* What a user can do inside it
+* What makes it different from TikTok, Instagram Reels, or a normal music app
+
+## 2. Current user experience
+
+Describe the exact experience a new user would have today, from opening the app to using its main features.
+
+Walk through:
+
+1. Creating an account
+2. Completing a profile
+3. Opening the Home feed
+4. Watching Music Minutes
+5. Liking, commenting, saving, and sharing
+6. Following another singer
+7. Giving a Golden Mic
+8. Uploading a Music Minute
+9. Tagging a cover song with Musixmatch
+10. Finding the uploaded post on the profile
+11. Using Discover and the Rise Chart
+12. Using LyricStage features
+13. Using StageOne Live
+14. Messaging or sharing posts with other users
+
+For each step, say whether it is:
+
+* Fully working
+* Partially working
+* Demo or mock only
+* Not implemented
+* Implemented but currently broken
+
+## 3. Features currently working
+
+List all features that are working now.
+
+Group them under:
+
+* Authentication and accounts
+* Profiles
+* Home feed and video playback
+* Music Minute creation and upload
+* Social interactions
+* Following and user discovery
+* Golden Mics
+* Musixmatch integration
+* Lyrics and LyricStage
+* Challenges and mood discovery
+* Rise Chart
+* StageOne Live
+* Messaging and direct sharing
+* Notifications
+* Backend, database, and storage
+* Admin and moderation
+
+For every feature, briefly explain what currently works.
+
+## 4. Features that are incomplete or broken
+
+List every known missing, incomplete, mocked, or broken feature.
+
+For each issue, explain:
+
+* What the user currently experiences
+* The likely cause
+* Whether it blocks the main demo
+* How important it is to fix
+
+Use these priority labels:
+
+* Critical
+* High
+* Medium
+* Low
+
+Pay special attention to:
+
+* Videos continuing to play after scrolling away
+* Tap-to-pause and resume
+* Uploaded Music Minutes not appearing on the creator profile
+* Musixmatch search not returning results
+* Lyrics, segments, translations, and mood data
+* Follow relationships
+* Sharing Music Minutes with another user
+* Direct text messaging
+* Multi-device testing
+* Genre text being clipped
+* Feed header overlap
+* Persistence after restarting the app
+
+## 5. Real features versus demo data
+
+Clearly separate what currently uses:
+
+* Real user data
+* Real backend/database data
+* Real uploaded videos
+* Real Musixmatch API responses
+* Mock Musixmatch responses
+* Seeded users and posts
+* Simulated Golden Mic activity
+* Simulated StageOne Live content
+
+Do not describe mock or seed data as real functionality.
+
+For Musixmatch, tell me:
+
+* Whether the API key is configured
+* Whether the mobile app can reach the API server
+* Which endpoints work
+* Which endpoints use fallback data
+* Whether full lyrics are being stored
+* Whether the app visibly identifies real versus demo data
+
+Do not reveal any secret keys.
+
+## 6. Multi-user readiness
+
+Explain whether the app is currently ready for this test:
+
+* I create an account on my phone
+* My brother creates another account on his phone
+* My sister creates another account on her phone
+* We follow one another
+* We upload separate Music Minutes
+* We see one another’s posts
+* We comment and send Golden Mics
+* We share Music Minutes privately
+* We send text messages
+* We close and reopen the app without losing data
+
+For each item, answer:
+
+* Ready
+* Partially ready
+* Not ready
+
+Explain why.
+
+## 7. What has been completed from the full vision
+
+Compare the current app against the intended StageOne vision:
+
+**A mobile-first singing discovery social app where anyone can scroll Music Minutes, post their own talent, gain followers, receive Golden Mics, use Musixmatch-powered lyrics, join LyricStage challenges, rise through the charts, and progress toward StageOne Live.**
+
+Estimate the current completion level as a percentage, but also explain what that percentage means.
+
+Separate the estimate into:
+
+* Visual/UI completion
+* Core social app completion
+* Creator upload flow completion
+* Musixmatch/LyricStage completion
+* Multi-user/backend completion
+* Hackathon demo readiness
+
+## 8. Current strongest demo flow
+
+Based only on features that actually work, describe the best demo we can show today.
+
+Write it as a short sequence:
+
+1. Open the app
+2. …
+3. …
+4. …
+
+Do not include features that are not working.
+
+## 9. Intended final demo flow
+
+Describe the ideal finished Musicathon demo flow and identify which steps still need work.
+
+The ideal flow should include:
+
+* Real account
+* Music Minute feed
+* Cover upload
+* Musixmatch song search
+* Lyric section selection
+* Published post
+* Synced lyric overlay
+* Translation
+* Golden Mic
+* Sing This Part
+* LyricStage challenge
+* Creator profile
+* Rise Chart
+
+## 10. Recommended next priorities
+
+Give me the five most important next tasks in order.
+
+Focus first on features required for a stable, convincing Musicathon demo.
+
+Do not recommend unnecessary features.
+
+For each task, explain:
+
+* Why it matters
+* What user problem it solves
+* What judging category it improves:
+
+  * Originality
+  * Craft
+  * Musixmatch API usage
+  * Impact
+
+## 11. First-time user explanation
+
+End with a simple explanation I could say to someone who has never heard of StageOne.
+
+Use no more than 100 words.
+
+It should explain:
+
+* What StageOne is
+* What Music Minutes are
+* What Golden Mics do
+* How Musixmatch is used
+* What creators are trying to achieve
+
+## Final rules
+
+* Do not modify the project.
+* Do not write implementation code.
+* Do not guess.
+* Inspect the existing files and current implementation first.
+* Be honest about what is real, mocked, incomplete, or broken.
+* Use plain language.
+* Keep the report organized and concise.

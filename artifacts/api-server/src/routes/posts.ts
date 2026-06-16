@@ -156,7 +156,7 @@ router.delete("/posts/:id", requireAuth, async (req, res): Promise<void> => {
   res.sendStatus(204);
 });
 
-router.get("/posts/:id", requireAuth, async (req, res): Promise<void> => {
+router.get("/posts/:id", optionalAuth, async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const postId = parseInt(raw, 10);
 
@@ -165,7 +165,7 @@ router.get("/posts/:id", requireAuth, async (req, res): Promise<void> => {
     return;
   }
 
-  const viewerId = req.userId;
+  const viewerId = req.userIdOptional;
 
   const rows = await db
     .select({
@@ -194,9 +194,15 @@ router.get("/posts/:id", requireAuth, async (req, res): Promise<void> => {
       likesCount: sql<number>`(SELECT COUNT(*) FROM likes WHERE likes.post_id = ${postsTable.id})`,
       commentsCount: sql<number>`(SELECT COUNT(*) FROM comments WHERE comments.post_id = ${postsTable.id} AND comments.deleted_at IS NULL)`,
       savesCount: sql<number>`(SELECT COUNT(*) FROM saves WHERE saves.post_id = ${postsTable.id})`,
-      viewerHasLiked: sql<boolean>`EXISTS(SELECT 1 FROM likes WHERE likes.post_id = ${postsTable.id} AND likes.user_id = ${viewerId})`,
-      viewerHasSaved: sql<boolean>`EXISTS(SELECT 1 FROM saves WHERE saves.post_id = ${postsTable.id} AND saves.user_id = ${viewerId})`,
-      viewerIsFollowing: sql<boolean>`EXISTS(SELECT 1 FROM follows WHERE follows.follower_id = ${viewerId} AND follows.following_id = ${postsTable.userId})`,
+      viewerHasLiked: viewerId !== undefined
+        ? sql<boolean>`EXISTS(SELECT 1 FROM likes WHERE likes.post_id = ${postsTable.id} AND likes.user_id = ${viewerId})`
+        : sql<boolean>`false`,
+      viewerHasSaved: viewerId !== undefined
+        ? sql<boolean>`EXISTS(SELECT 1 FROM saves WHERE saves.post_id = ${postsTable.id} AND saves.user_id = ${viewerId})`
+        : sql<boolean>`false`,
+      viewerIsFollowing: viewerId !== undefined
+        ? sql<boolean>`EXISTS(SELECT 1 FROM follows WHERE follows.follower_id = ${viewerId} AND follows.following_id = ${postsTable.userId})`
+        : sql<boolean>`false`,
     })
     .from(postsTable)
     .innerJoin(usersTable, eq(postsTable.userId, usersTable.id))

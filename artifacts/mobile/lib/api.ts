@@ -264,7 +264,7 @@ export const markConversationRead = (token: string, convId: number) =>
 // Notifications
 // ---------------------------------------------------------------------------
 
-export const getPost = (token: string, postId: number): Promise<ApiPost> =>
+export const getPost = (token: string | null, postId: number): Promise<ApiPost> =>
   apiFetch<ApiPost>(`/posts/${postId}`, token);
 
 export const getNotifications = (token: string, cursor?: number) =>

@@ -42,14 +42,13 @@ export default function PostDetailScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { getToken } = useAuth();
+  const { getToken, isSignedIn } = useAuth();
   const { likedIds, savedIds } = useApp();
 
   const [post, setPost] = useState<ApiPost | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
-  // Video player state
   const videoRef = useRef<Video>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [videoError, setVideoError] = useState(false);
@@ -64,12 +63,7 @@ export default function PostDetailScreen() {
       return;
     }
     (async () => {
-      const token = await getToken();
-      if (!token) {
-        setError(true);
-        setLoading(false);
-        return;
-      }
+      const token = isSignedIn ? (await getToken()) : null;
       try {
         const p = await getPost(token, postId);
         setPost(p);
@@ -79,9 +73,8 @@ export default function PostDetailScreen() {
         setLoading(false);
       }
     })();
-  }, [id]);
+  }, [id, isSignedIn]);
 
-  // Pause video when user navigates away
   useFocusEffect(
     useCallback(() => {
       return () => {
@@ -167,7 +160,6 @@ export default function PostDetailScreen() {
                   pointerEvents="none"
                 />
                 <Pressable style={StyleSheet.absoluteFill} onPress={handleVideoTap} />
-                {/* Animated tap icon */}
                 <Animated.View
                   style={[styles.tapIconOverlay, { opacity: tapIconOpacity }]}
                   pointerEvents="none"
@@ -180,7 +172,6 @@ export default function PostDetailScreen() {
                     />
                   </View>
                 </Animated.View>
-                {/* Static play button shown when paused */}
                 {!isPlaying && (
                   <Pressable style={styles.playBtnOverlay} onPress={handleVideoTap}>
                     <View style={styles.playBtn}>
@@ -343,8 +334,8 @@ const styles = StyleSheet.create({
     height: 320,
     backgroundColor: "#1a0f2e",
     position: "relative",
-    justifyContent: "flex-end",
     overflow: "hidden",
+    justifyContent: "flex-end",
   },
   thumbnailBadge: {
     flexDirection: "row",

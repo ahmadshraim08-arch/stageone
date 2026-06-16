@@ -356,8 +356,20 @@ export default function CreatorProfileScreen() {
           </View>
         ) : (
           <View style={styles.mmGrid}>
-            {userMMs.map((mm) => (
-              <View key={mm.id} style={[styles.mmTile, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            {userMMs.map((mm) => {
+              const numericId = parseInt(mm.id, 10);
+              const isApiPost = !isNaN(numericId);
+              return (
+              <TouchableOpacity
+                key={mm.id}
+                style={[styles.mmTile, { backgroundColor: colors.card, borderColor: colors.border }]}
+                activeOpacity={isApiPost ? 0.85 : 1}
+                onPress={() => {
+                  if (!isApiPost) return;
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  router.push(`/post/${numericId}`);
+                }}
+              >
                 <Image
                   source={SINGER_IMAGES[mm.imageIndex % 3]}
                   style={StyleSheet.absoluteFill}
@@ -396,8 +408,9 @@ export default function CreatorProfileScreen() {
                     <Text style={[styles.mmTileStatText, { color: "rgba(255,255,255,0.6)" }]}>{formatCount(mm.likesCount)}</Text>
                   </View>
                 </View>
-              </View>
-            ))}
+              </TouchableOpacity>
+              );
+            })}
           </View>
         )}
       </View>

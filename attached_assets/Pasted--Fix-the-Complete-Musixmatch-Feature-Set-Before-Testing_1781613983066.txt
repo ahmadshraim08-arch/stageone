@@ -1,0 +1,649 @@
+# Fix the Complete Musixmatch Feature Set Before Testing
+
+Do not add unrelated features.
+
+The Musixmatch API key is now authenticating correctly. Real track search, track metadata, and lyric translation are working.
+
+The remaining broken behavior is:
+
+* Synced subtitles return an empty body for some real tracks.
+* The lyrics route returns `lines: []`.
+* Section selection shows an invalid `Selected Section 0–0`.
+* “Sing This Part” is blocked for real songs.
+* RichSync is unavailable for the tested track or API access level.
+* Mood analysis currently falls back to locally derived genre data.
+
+The objective is to make the complete StageOne Musixmatch flow usable before physical-device testing:
+
+**Search real song → load usable lyrics → select a real section → publish → display lyrics → translate → tap Sing This Part.**
+
+Do not pretend unsupported Musixmatch features are available. Use honest fallbacks and clearly label the source.
+
+---
+
+# 1. Diagnose every Musixmatch response first
+
+Test at least five real tracks with different characteristics:
+
+* A popular English song
+* A song known to have synced subtitles
+* A song with translations
+* A recent song
+* A song from another language
+
+For each track test:
+
+1. `track.get`
+2. `track.lyrics.get`
+3. `track.subtitle.get`
+4. `track.richsync.get`
+5. Translation endpoint
+6. Lyrics analysis or mood endpoint
+
+Record:
+
+* HTTP status
+* Musixmatch status code
+* Whether the body exists
+* Whether the body is empty
+* Number of lines
+* Number of timed lines
+* Number of timed words
+* Available translations
+* Whether the endpoint appears restricted by the API plan
+
+Do not expose the API key.
+
+Do not assume that metadata such as `has_subtitles: 1` guarantees a non-empty subtitle body.
+
+---
+
+# 2. Repair the lyrics fallback chain
+
+Update the server-side lyrics resolver to use this exact order:
+
+## First: RichSync
+
+Attempt RichSync.
+
+Use it only when:
+
+* The request succeeds
+* The response body exists
+* Parsed lines exist
+* Parsed words contain valid timing data
+
+If RichSync returns an error, restricted access, an empty body, malformed JSON, or zero usable words, continue to subtitles.
+
+## Second: synced subtitles
+
+Attempt synced subtitles.
+
+Use them only when:
+
+* The subtitle body exists
+* Parsing produces at least one non-empty lyric line
+* Valid timestamps exist
+
+Do not return:
+
+* `hasSync: true` with `lines: []`
+* `source: "musixmatch"` merely because metadata says subtitles exist
+
+If subtitle parsing produces no lines, continue to plain lyrics.
+
+## Third: plain lyrics
+
+Call the plain lyrics endpoint.
+
+Parse the lyric body into non-empty lines.
+
+Return:
+
+* `hasSync: false`
+* `hasRichsync: false`
+* Real lyric lines
+* Correct Musixmatch attribution
+* `source: "musixmatch"`
+
+Remove Musixmatch footer markers or legal boilerplate only when permitted and while preserving the required copyright text separately.
+
+## Fourth: demo fallback
+
+Use demo lyrics only when all real Musixmatch lyric methods fail.
+
+Return:
+
+* `source: "demo"`
+* `hasSync: false` unless real demo timing exists
+* A visible Demo Content label in the mobile app
+
+Never label demo lyrics as Musixmatch data.
+
+---
+
+# 3. Normalize the lyrics API response
+
+Return one stable response shape regardless of source:
+
+```text
+{
+  trackId,
+  source,
+  mode,
+  hasSync,
+  hasRichsync,
+  language,
+  copyright,
+  lines: [
+    {
+      index,
+      text,
+      startMs,
+      endMs,
+      words
+    }
+  ]
+}
+```
+
+Use `mode` values such as:
+
+* `richsync`
+* `subtitle`
+* `plain`
+* `demo`
+
+For plain lyrics:
+
+* `startMs` and `endMs` should be `null`
+* `words` may be empty
+* `hasSync` must be false
+
+Do not create fake timestamps for plain lyrics.
+
+The mobile app must not crash when timing values are null.
+
+---
+
+# 4. Fix section selection for plain and synced lyrics
+
+The section picker must work even when RichSync and subtitles are unavailable.
+
+## When timed lyrics exist
+
+Create sections from real timing data.
+
+Allow the creator to choose:
+
+* A group of lyric lines
+* A start time
+* An end time
+
+Do not return zero-length sections.
+
+## When only plain lyrics exist
+
+Allow manual line-based section selection.
+
+The user should be able to choose a contiguous group of lines.
+
+Store:
+
+* Start line index
+* End line index
+* Section label
+* `startMs: null`
+* `endMs: null`
+* `timingMode: "manual"`
+
+Use labels such as:
+
+* Selected Section
+* Opening Lines
+* Middle Section
+* Closing Section
+
+Do not show:
+
+* `0–0`
+* Empty section
+* Invalid timestamps
+* A section containing no lyric text
+
+Require at least one selected line before continuing.
+
+## When no lyrics exist
+
+Disable lyric-section selection and show:
+
+**Lyrics are unavailable for this track. Choose another song or continue without LyricStage lyrics.**
+
+Do not silently create a broken section.
+
+---
+
+# 5. Fix the segment endpoint
+
+The segment endpoint must never return an invalid placeholder.
+
+Required behavior:
+
+* RichSync available → timed segments
+* Subtitles available → timed line-based segments
+* Plain lyrics available → line-index segments without timestamps
+* No lyrics available → empty segments array plus a clear reason
+
+Return metadata such as:
+
+```text
+{
+  source,
+  timingMode,
+  segments,
+  reason
+}
+```
+
+Do not return a segment with start and end both equal to zero unless it is genuinely valid.
+
+---
+
+# 6. Fix the mobile section picker
+
+Update the creator flow to support all three modes:
+
+## RichSync mode
+
+* Show timed words or lines
+* Show section duration
+* Allow preview using timing
+
+## Subtitle mode
+
+* Show timed lines
+* Show section duration
+* Allow preview using timing
+
+## Plain lyrics mode
+
+* Show selectable lyric lines
+* Allow selecting a consecutive group
+* Clearly display:
+
+**Timing unavailable — lyrics will display without automatic synchronization.**
+
+Do not block the creator from continuing just because timing is unavailable.
+
+The Continue button should work when a valid line range is selected.
+
+---
+
+# 7. Fix the lyric overlay
+
+The viewer overlay must handle each mode honestly.
+
+## RichSync
+
+* Highlight active word
+* Show current line
+* Use real word timestamps
+
+## Subtitles
+
+* Highlight active line
+* Use real line timestamps
+
+## Plain lyrics
+
+* Show the selected lyric section
+* Do not claim it is synchronized
+* Allow the viewer to scroll the lyrics manually
+* Show a label such as:
+
+**Lyrics provided by Musixmatch — timing unavailable**
+
+Do not animate fake lyric synchronization.
+
+## Demo
+
+Show:
+
+**Demo content**
+
+Do not show Powered by Musixmatch for locally written demo lyrics.
+
+---
+
+# 8. Fix translation alignment
+
+Translations are already returning real Musixmatch data.
+
+Make translation work for all lyric modes.
+
+## RichSync and subtitles
+
+Align translated lines by:
+
+1. Official line order when available
+2. Line index
+3. Nearest matching text structure as a fallback
+
+Do not attach fake word timestamps to translated text unless the API provides them.
+
+## Plain lyrics
+
+Display the translated section using line order or matching line indexes.
+
+If the translation has a different number of lines:
+
+* Show the translated text as a separate scrollable section
+* Do not crash
+* Do not force incorrect one-to-one alignment
+
+Hide unavailable language options.
+
+Always report the translation source honestly.
+
+---
+
+# 9. Fix “Sing This Part”
+
+“Sing This Part” must work for real tracks regardless of lyric timing mode.
+
+Pass only references and selection metadata:
+
+* Musixmatch track ID
+* Track title
+* Artist
+* Album artwork reference if available
+* Original language
+* Selected start line index
+* Selected end line index
+* Start timestamp if available
+* End timestamp if available
+* Timing mode
+* Timing offset
+* Challenge or source post ID
+
+Do not pass full lyric arrays through navigation.
+
+When the post flow opens:
+
+* Search must not be required again
+* The same track must already be selected
+* The same lyric lines must be restored
+* The same section label must appear
+* The creator must be able to choose or record a video immediately
+
+If the original post used plain lyrics, restore the same manual line range.
+
+---
+
+# 10. Repair challenge reuse
+
+A LyricStage challenge created from “Sing This Part” must preserve:
+
+* Track ID
+* Artist
+* Song title
+* Lyric line range
+* Timing mode
+* Timestamps when available
+* Original post reference
+
+Challenge reuse must not depend on RichSync.
+
+The flow must work using:
+
+* RichSync
+* Subtitles
+* Plain lyrics
+
+---
+
+# 11. Handle RichSync honestly
+
+Do not try to fabricate RichSync.
+
+Determine whether failures are caused by:
+
+* Track has no RichSync data
+* Current API plan does not allow access
+* Incorrect endpoint parameters
+* Incorrect track ID namespace
+* Empty response
+* Parser failure
+
+If RichSync is unavailable:
+
+* Fall back to subtitles
+* Then plain lyrics
+* Keep `hasRichsync: false`
+* Do not block section selection, publishing, translation, or Sing This Part
+
+RichSync is an enhancement, not a blocker for the judge-ready flow.
+
+Report exactly whether RichSync worked on any of the tested tracks.
+
+---
+
+# 12. Handle mood analysis honestly
+
+Test the real Musixmatch lyrics-analysis endpoint.
+
+If it returns real moods:
+
+* Parse the real mood values
+* Return `source: "musixmatch"`
+* Map the result to StageOne-owned UI colors
+* Preserve raw canonical mood labels in the API response
+
+If it returns a plan restriction, empty body, or unsupported response:
+
+* Return `source: "derived"`
+* Derive mood only from available metadata or lyrics
+* Clearly label it in code and diagnostics as derived
+* Do not describe it in the UI as Musixmatch Analysis
+
+The fallback should not block posting or viewing.
+
+Do not fabricate a successful Musixmatch analysis response.
+
+---
+
+# 13. Correct source labeling
+
+Every endpoint must return one of:
+
+* `musixmatch`
+* `derived`
+* `demo`
+* `unavailable`
+
+Rules:
+
+* Real API body parsed successfully → `musixmatch`
+* Locally calculated result → `derived`
+* Local sample content → `demo`
+* No usable result → `unavailable`
+
+Never infer the source from track metadata alone.
+
+Base the source on the actual content returned.
+
+---
+
+# 14. Prevent empty successful responses
+
+Do not return HTTP 200 success objects that falsely imply usable data when:
+
+* `lines` is empty
+* `segments` contains no usable section
+* Translation body is empty
+* RichSync contains no words
+* Mood analysis contains no moods
+
+Return a clear controlled state such as:
+
+```text
+{
+  source: "unavailable",
+  available: false,
+  reason: "No usable lyric body was returned for this track."
+}
+```
+
+The mobile app must display a helpful message and allow choosing another track.
+
+---
+
+# 15. Required API tests
+
+Test the following against at least five real tracks:
+
+* Search
+* Track details
+* RichSync
+* Subtitles
+* Plain lyrics
+* Segments
+* Translation
+* Mood analysis
+
+For each result report:
+
+* Track name and artist
+* Track ID
+* Real source
+* Mode selected
+* Number of lyric lines
+* Number of timed lines
+* Number of timed words
+* Number of generated sections
+* Translation result
+* Mood result
+* Any plan restriction
+
+Do not reveal the API key.
+
+---
+
+# 16. Required mobile flow tests
+
+Complete these flows:
+
+## Flow A — Track with RichSync
+
+If available:
+
+1. Search
+2. Select track
+3. Select timed section
+4. Preview word-level lyrics
+5. Publish
+6. View word highlighting
+7. Translate
+8. Tap Sing This Part
+
+## Flow B — Track with subtitles but no RichSync
+
+1. Search
+2. Select track
+3. Select timed lines
+4. Publish
+5. View line-level sync
+6. Translate
+7. Tap Sing This Part
+
+## Flow C — Track with only plain lyrics
+
+1. Search
+2. Select track
+3. Manually select lyric lines
+4. Continue without timestamps
+5. Publish
+6. View unsynced lyrics
+7. Translate
+8. Tap Sing This Part
+9. Confirm the same manual section is restored
+
+## Flow D — Track with no usable lyrics
+
+1. Search
+2. Select track
+3. Receive a clear unavailable message
+4. Choose another track or continue without lyrics
+5. No crash or invalid `0–0` section
+
+---
+
+# 17. Data-storage rules
+
+Do not permanently store complete Musixmatch lyric or translation bodies.
+
+Persist only:
+
+* Track ID
+* Track title
+* Artist
+* Lyric language
+* Selected line indexes
+* Section label
+* Start/end timestamps when available
+* Timing mode
+* Timing offset
+* Musixmatch source reference
+
+Fetch lyric content at runtime.
+
+Do not expose the Musixmatch API key to the mobile client.
+
+---
+
+# 18. Acceptance criteria
+
+This task is complete only when:
+
+* Real Musixmatch search works.
+* A real track with plain lyrics returns non-empty lines.
+* The lyrics endpoint never reports `hasSync: true` with `lines: []`.
+* Empty subtitle bodies automatically fall back to plain lyrics.
+* Section selection never shows an invalid `0–0` placeholder.
+* A creator can select a section from plain lyrics.
+* A creator can continue and publish without synced timing.
+* The lyric overlay displays usable real lyrics.
+* Translation works with real lyrics.
+* “Sing This Part” restores the same real track and section.
+* Challenge reuse works without requiring RichSync.
+* RichSync falls back safely when unavailable.
+* Mood analysis reports either `musixmatch` or `derived` honestly.
+* Demo data is never labeled as Musixmatch.
+* API-server and mobile typechecks pass.
+* No empty response causes a crash or blocked post flow.
+
+---
+
+# 19. Completion report
+
+After implementation, report:
+
+1. Why subtitles were returning an empty body.
+2. Whether the cause was track availability, plan access, or parsing.
+3. The final fallback order.
+4. Tracks tested.
+5. Which tracks returned RichSync.
+6. Which tracks returned subtitles.
+7. Which tracks used plain lyrics.
+8. Whether mood analysis returned real data.
+9. Files changed.
+10. Typecheck results.
+11. API test results.
+12. Mobile flow results.
+13. Any remaining API-plan limitation.
+
+Do not mark this complete only because plain lyrics load in an API response.
+
+Verify the full user journey:
+
+**Real search → usable lyrics → section selection → lyric display → translation → Sing This Part.**

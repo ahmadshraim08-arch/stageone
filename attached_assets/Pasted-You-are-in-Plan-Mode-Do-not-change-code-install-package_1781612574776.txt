@@ -1,0 +1,421 @@
+You are in Plan Mode.
+
+Do not change code, install packages, edit files, modify database records, update secrets, run migrations, or add features.
+
+I have corrected the Musixmatch API key in Replit Secrets. Before we begin full manual testing, inspect the complete current StageOne project and provide an honest status report.
+
+You may inspect the codebase, schemas, routes, configuration, existing logs, and current deployment status. You may run safe read-only health checks, typechecks, and non-destructive API requests, but do not create, delete, or modify user data.
+
+# Purpose
+
+I need to understand:
+
+* What has been completed
+* What is fully working
+* What is partially working
+* What still uses demo or seeded data
+* What is broken
+* What has not been implemented
+* Whether the corrected Musixmatch key is now producing real data
+* Whether the app is ready for multi-user testing on physical phones
+
+Use plain language suitable for a non-technical founder.
+
+# Status labels
+
+Assign exactly one status to every feature:
+
+* **Fully working**
+* **Partially working**
+* **Demo or seeded only**
+* **Implemented but currently broken**
+* **Not implemented**
+* **Unable to verify without manual testing**
+
+Do not call something fully working based only on the existence of code.
+
+# 1. Simple explanation of StageOne
+
+Explain StageOne to a first-time user in one short paragraph.
+
+Include:
+
+* What Music Minutes are
+* What fans can do
+* What Golden Mics do
+* How Musixmatch improves the experience
+* What creators are trying to achieve
+* What StageOne Live represents
+
+# 2. Current app journey
+
+Describe what a new user can currently experience from beginning to end:
+
+1. Open the app
+2. Browse as a guest
+3. Create an account
+4. Complete a profile
+5. Scroll Music Minutes
+6. Pause, resume, mute, and swipe between videos
+7. Like, comment, save, and share
+8. Follow another user
+9. Send a Golden Mic
+10. Upload a Music Minute
+11. Tag a song through Musixmatch
+12. Choose a lyric section
+13. Review and publish
+14. Find the post in the feed
+15. Find and play the post from the creator profile
+16. View synced lyrics
+17. Translate lyrics
+18. Tap “Sing This Part”
+19. Join a LyricStage challenge
+20. Use Discover and mood filters
+21. Appear on the Rise Chart
+22. Send direct messages
+23. Share Music Minutes privately
+24. Receive notifications
+25. View StageOne Live
+
+For every step, give:
+
+* Current status
+* What actually happens today
+* Whether it uses real or demo data
+* Any limitation or known bug
+
+# 3. Feature-by-feature audit
+
+Audit these areas separately:
+
+## Authentication and accounts
+
+* Real signup
+* Login
+* Logout
+* Email verification
+* Session persistence
+* Multiple separate accounts
+* Guest mode
+* Duplicate email and username handling
+
+## Profiles
+
+* Own profile
+* Other user profiles
+* Edit profile
+* Post count
+* Followers and following
+* Golden Mic totals
+* Rise Score
+* Profile Music Minute grid
+* Playing a post from the profile grid
+
+## Home feed and video playback
+
+* Backend-driven feed
+* Autoplay
+* Only one video playing at a time
+* Pause and resume
+* Mute
+* Stopping audio when leaving the tab
+* Error recovery
+* Pull to refresh
+* Newly uploaded posts appearing
+
+## Music Minute creation and upload
+
+* Picking a video
+* Reading and previewing an iPhone video
+* Duration and file-size validation
+* Upload progress
+* Uploading to Replit App Storage
+* Creating the database record
+* Retry behavior
+* Post appearing in Home and Profile
+* Persistent playback after restarting
+
+Pay special attention to the recent problems:
+
+* `Failed to read picked video`
+* Upload stuck at 0%
+* `Upload failed (HTTP 502)`
+
+Explain whether these are fixed, still present, or waiting for physical-device verification.
+
+## Social interactions
+
+* Likes
+* Comments
+* Saves
+* Follow and unfollow
+* Follower/following counts
+* Golden Mics
+* Sharing
+* Direct messages
+* Unread messages
+* Notifications
+
+## Discover and rankings
+
+* Search
+* Genre filters
+* Genre text readability
+* Trending singers
+* Challenges
+* LyricStage carousel
+* Mood filters
+* Rise Chart
+* Real users appearing in rankings
+
+## StageOne Live
+
+Separate:
+
+* Real functionality
+* Simulated functionality
+* Hardcoded content
+* Eligibility tracking
+* Golden Mic support
+* Chat
+* Video streaming
+* Viewer counts
+* Countdown
+
+# 4. Musixmatch status after the corrected key
+
+The Musixmatch key has been corrected.
+
+Without revealing the key, inspect and report:
+
+* Whether the API server sees the key
+* Whether direct Musixmatch requests now authenticate
+* Whether responses return `source: "musixmatch"`
+* Whether any endpoint still returns 401
+* Whether any endpoint returns 403 due to plan restrictions
+* Whether the mobile app can reach the API proxy
+* Whether demo fallback is still being used
+* Whether real and demo sources are labeled correctly
+
+Audit these capabilities:
+
+1. Track search
+2. Track metadata
+3. Plain lyrics
+4. Synced subtitles
+5. RichSync word-level timing
+6. Lyric translations
+7. Lyrics analysis and mood
+8. Segment selection
+9. “Sing This Part”
+10. Challenge reuse of the selected track and section
+
+For each capability, report:
+
+* Status
+* Endpoint used
+* Real Musixmatch or fallback
+* Mobile UI support
+* Current limitation
+
+Do not assume the corrected key works. Verify it from sanitized responses.
+
+# 5. Real data versus demo data
+
+Create a clear table separating:
+
+* Real Clerk accounts
+* Real PostgreSQL users
+* Real uploaded videos
+* Real feed posts
+* Real likes
+* Real comments
+* Real follows
+* Real Golden Mics
+* Real conversations
+* Real notifications
+* Real Musixmatch search
+* Real lyrics
+* Real RichSync
+* Real translations
+* Real mood analysis
+* Seeded creators
+* Seeded challenges
+* Seeded Rise Chart entries
+* Mock StageOne Live content
+* Simulated Golden Mic purchases
+
+Do not describe seeded or fallback content as real.
+
+# 6. Backend and infrastructure status
+
+Explain the current state of:
+
+* Mobile framework
+* API server
+* Authentication
+* PostgreSQL database
+* Replit App Storage
+* Video delivery
+* Musixmatch proxy
+* Messaging architecture
+* Notification architecture
+* Deployment URL configuration
+* Environment variables
+* Typecheck status
+
+Identify any differences between:
+
+* Development environment
+* Published deployment
+* Physical-phone environment
+
+# 7. Multi-user readiness
+
+Assess whether I can now test with three physical phones:
+
+* My account on my phone
+* My brother’s account on his phone
+* My sister’s account on her phone
+
+Evaluate these scenarios:
+
+* Create separate accounts
+* Log in independently
+* Find one another
+* Follow one another
+* View one another’s profiles
+* Upload separate Music Minutes
+* See the posts in the shared feed
+* Like and comment
+* Send Golden Mics
+* Share a Music Minute privately
+* Send text messages
+* Receive unread indicators
+* View notifications
+* Close and reopen without losing data
+* Use Musixmatch features on real uploaded posts
+* Appear on the real Rise Chart
+
+For each scenario, mark:
+
+* Ready
+* Partially ready
+* Not ready
+* Requires physical-device verification
+
+# 8. Known bugs and risks
+
+List all known problems.
+
+For each problem, include:
+
+* Priority: Critical, High, Medium, or Low
+* User-facing symptom
+* Likely technical cause
+* Whether it blocks testing
+* Whether it blocks the Musicathon demo
+* Whether a fix is already in progress
+
+Include any concerns involving:
+
+* Video upload 502 errors
+* App Storage
+* Upload progress
+* Profile video playback
+* Musixmatch authentication
+* Search reliability
+* RichSync availability
+* Translation availability
+* Real mood analysis
+* Rise Chart using seeded users
+* Discover using seeded creators
+* StageOne Live being simulated
+* Notification behavior when the app is closed
+
+# 9. Completion estimates
+
+Estimate current completion percentages for:
+
+* Visual design and UI
+* Authentication
+* Core social features
+* Video feed
+* Creator upload flow
+* Multi-user functionality
+* Messaging and sharing
+* Musixmatch integration
+* LyricStage experience
+* Discover and challenges
+* Rise Chart
+* StageOne Live
+* Backend and persistence
+* Physical-device readiness
+* Musicathon demo readiness
+* Full long-term StageOne vision
+
+Explain what each percentage means. Do not inflate the estimates.
+
+# 10. What can be demonstrated today
+
+Describe the strongest demonstration that can be performed now using only verified working features.
+
+Write it as a numbered sequence.
+
+Do not include anything that is broken, unverified, seeded without disclosure, or dependent on an unavailable API endpoint.
+
+# 11. What still needs testing
+
+Create a testing checklist divided into:
+
+## Single-device tests
+
+## Three-phone multi-user tests
+
+## Video upload tests
+
+## Musixmatch tests
+
+## Messaging and sharing tests
+
+## Persistence tests
+
+## Failure and retry tests
+
+Do not run these tests or change data yet. Only provide the checklist.
+
+# 12. Recommended next action
+
+Based on the audit, recommend one of these:
+
+* Begin full testing now
+* Fix one or more blockers before testing
+* Test only selected flows first
+
+List the exact blockers, if any, in priority order.
+
+# 13. Final founder summary
+
+End with a concise summary containing:
+
+* What StageOne currently is
+* What is genuinely working
+* What is still simulated
+* The biggest blocker
+* Whether we are ready to begin physical multi-user testing
+
+Keep this final summary under 200 words.
+
+# Final rules
+
+* Plan Mode only
+* No code changes
+* No package installation
+* No database changes
+* No secret changes
+* No migrations
+* No new features
+* Do not guess
+* Clearly distinguish code existence from proven functionality
+* Clearly distinguish real Musixmatch data from fallback data
+* Be direct and honest

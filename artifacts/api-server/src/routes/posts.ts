@@ -1,10 +1,215 @@
 import { Router, type IRouter } from "express";
-import { db, postsTable, usersTable, likesTable, followsTable, goldenMicTransactionsTable } from "@workspace/db";
+import { db, postsTable, usersTable, likesTable, followsTable, goldenMicTransactionsTable, postViewsTable } from "@workspace/db";
 import { eq, desc, isNull, and, lt, inArray, sql, gte } from "drizzle-orm";
 import { requireAuth, optionalAuth } from "../middleware/auth";
 import { createNotification } from "../lib/notifications";
 
 const router: IRouter = Router();
+
+// ---------------------------------------------------------------------------
+// Cursor helpers
+// ---------------------------------------------------------------------------
+
+function encodeCursor(score: number, id: number): string {
+  return `${score.toFixed(8)}:${id}`;
+}
+
+function decodeCursor(raw: string): { score: number; id: number } | null {
+  if (raw.includes(":")) {
+    const colonIdx = raw.lastIndexOf(":");
+    const scoreStr = raw.slice(0, colonIdx);
+    const idStr = raw.slice(colonIdx + 1);
+    const score = parseFloat(scoreStr);
+    const id = parseInt(idStr, 10);
+    if (!isNaN(score) && !isNaN(id)) return { score, id };
+  }
+  const id = parseInt(raw, 10);
+  if (!isNaN(id)) return { score: 1.0, id };
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Personalized ranked feed via raw SQL (for-you feed, signed-in or guest)
+// ---------------------------------------------------------------------------
+
+type FeedRow = {
+  id: number;
+  userId: number;
+  videoUrl: string;
+  thumbnailUrl: string | null;
+  title: string;
+  caption: string | null;
+  performanceType: string;
+  genre: string | null;
+  language: string | null;
+  musixmatchTrackId: string | null;
+  trackTitle: string | null;
+  trackArtist: string | null;
+  lyricSectionId: string | null;
+  rightsConfirmed: boolean;
+  goldenMicCount: number;
+  createdAt: Date;
+  creator: {
+    id: number;
+    username: string;
+    displayName: string;
+    avatarUrl: string | null;
+  };
+  likesCount: number;
+  commentsCount: number;
+  savesCount: number;
+  viewerHasLiked: boolean;
+  viewerHasSaved: boolean;
+  viewerIsFollowing: boolean;
+  score: number;
+};
+
+async function fetchPersonalizedFeed(
+  viewerId: number | undefined,
+  limit: number,
+  cursor: { score: number; id: number } | null,
+): Promise<FeedRow[]> {
+  const viewerIdSql = viewerId !== undefined ? sql`${viewerId}` : sql`NULL::int`;
+
+  const cursorCondition = cursor
+    ? sql`WHERE f.score < ${cursor.score} OR (f.score = ${cursor.score} AND f.id < ${cursor.id})`
+    : sql``;
+
+  const viewerHasLikedExpr = viewerId !== undefined
+    ? sql`EXISTS(SELECT 1 FROM likes WHERE likes.post_id = p.id AND likes.user_id = ${viewerId})`
+    : sql`false`;
+
+  const viewerHasSavedExpr = viewerId !== undefined
+    ? sql`EXISTS(SELECT 1 FROM saves WHERE saves.post_id = p.id AND saves.user_id = ${viewerId})`
+    : sql`false`;
+
+  const viewerIsFollowingExpr = viewerId !== undefined
+    ? sql`EXISTS(SELECT 1 FROM follows WHERE follows.follower_id = ${viewerId} AND follows.following_id = p.user_id)`
+    : sql`false`;
+
+  const result = await db.execute(sql`
+    WITH
+    user_views AS (
+      SELECT
+        genre,
+        watch_duration_ms * EXP(
+          -GREATEST(EXTRACT(EPOCH FROM (NOW() - created_at)), 0) / 86400.0
+        ) AS decayed_ms
+      FROM post_views
+      WHERE user_id = ${viewerIdSql}
+      ORDER BY created_at DESC
+      LIMIT 500
+    ),
+    genre_totals AS (
+      SELECT genre, SUM(decayed_ms) AS genre_ms
+      FROM user_views
+      WHERE genre IS NOT NULL
+      GROUP BY genre
+    ),
+    total_watch AS (
+      SELECT
+        COALESCE(SUM(genre_ms), 0) AS total_ms,
+        COUNT(DISTINCT genre)        AS genre_count
+      FROM genre_totals
+    ),
+    genre_affinity AS (
+      SELECT
+        gt.genre,
+        gt.genre_ms / NULLIF(tw.total_ms, 0) AS affinity
+      FROM genre_totals gt
+      CROSS JOIN total_watch tw
+    ),
+    f AS (
+      SELECT
+        p.id,
+        p.user_id,
+        p.video_url,
+        p.thumbnail_url,
+        p.title,
+        p.caption,
+        p.performance_type,
+        p.genre,
+        p.language,
+        p.musixmatch_track_id,
+        p.track_title,
+        p.track_artist,
+        p.lyric_section_id,
+        p.rights_confirmed,
+        p.golden_mic_count,
+        p.created_at,
+        u.id              AS creator_id,
+        u.username        AS creator_username,
+        u.display_name    AS creator_display_name,
+        u.avatar_url      AS creator_avatar_url,
+        (SELECT COUNT(*) FROM likes    WHERE likes.post_id    = p.id)::int                                           AS likes_count,
+        (SELECT COUNT(*) FROM comments WHERE comments.post_id = p.id AND comments.deleted_at IS NULL)::int          AS comments_count,
+        (SELECT COUNT(*) FROM saves    WHERE saves.post_id    = p.id)::int                                           AS saves_count,
+        (${viewerHasLikedExpr})      AS viewer_has_liked,
+        (${viewerHasSavedExpr})      AS viewer_has_saved,
+        (${viewerIsFollowingExpr})   AS viewer_is_following,
+        (
+          COALESCE(
+            ga.affinity,
+            CASE
+              WHEN (SELECT total_ms FROM total_watch) > 0
+                THEN LEAST(1.0, 1.0 / NULLIF((SELECT genre_count FROM total_watch)::float, 0))
+              ELSE 1.0
+            END
+          ) * 0.5
+          + (1.0 / (1.0 + GREATEST(EXTRACT(EPOCH FROM (NOW() - p.created_at)) / 604800.0, 0))) * 0.3
+          + LEAST(1.0, (
+              (SELECT COUNT(*) FROM likes WHERE likes.post_id = p.id) +
+              (SELECT COUNT(*) FROM saves WHERE saves.post_id = p.id) +
+              p.golden_mic_count * 2
+            )::float / 50.0) * 0.2
+        ) AS score
+      FROM posts p
+      JOIN users u ON u.id = p.user_id
+      LEFT JOIN genre_affinity ga ON p.genre = ga.genre
+      WHERE p.deleted_at IS NULL
+    )
+    SELECT * FROM f
+    ${cursorCondition}
+    ORDER BY f.score DESC, f.id DESC
+    LIMIT ${limit + 1}
+  `);
+
+  return (result.rows as Record<string, unknown>[]).map((r) => ({
+    id: Number(r["id"]),
+    userId: Number(r["user_id"]),
+    videoUrl: r["video_url"] as string,
+    thumbnailUrl: (r["thumbnail_url"] as string | null) ?? null,
+    title: r["title"] as string,
+    caption: (r["caption"] as string | null) ?? null,
+    performanceType: r["performance_type"] as string,
+    genre: (r["genre"] as string | null) ?? null,
+    language: (r["language"] as string | null) ?? null,
+    musixmatchTrackId: (r["musixmatch_track_id"] as string | null) ?? null,
+    trackTitle: (r["track_title"] as string | null) ?? null,
+    trackArtist: (r["track_artist"] as string | null) ?? null,
+    lyricSectionId: (r["lyric_section_id"] as string | null) ?? null,
+    rightsConfirmed: Boolean(r["rights_confirmed"]),
+    goldenMicCount: Number(r["golden_mic_count"]),
+    createdAt: r["created_at"] as Date,
+    creator: {
+      id: Number(r["creator_id"]),
+      username: r["creator_username"] as string,
+      displayName: r["creator_display_name"] as string,
+      avatarUrl: (r["creator_avatar_url"] as string | null) ?? null,
+    },
+    likesCount: Number(r["likes_count"]),
+    commentsCount: Number(r["comments_count"]),
+    savesCount: Number(r["saves_count"]),
+    viewerHasLiked: Boolean(r["viewer_has_liked"]),
+    viewerHasSaved: Boolean(r["viewer_has_saved"]),
+    viewerIsFollowing: Boolean(r["viewer_is_following"]),
+    score: Number(r["score"]),
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// Routes
+// ---------------------------------------------------------------------------
 
 router.get("/posts", optionalAuth, async (req, res): Promise<void> => {
   const limitRaw = req.query.limit as string | undefined;
@@ -13,9 +218,27 @@ router.get("/posts", optionalAuth, async (req, res): Promise<void> => {
   const feed = req.query.feed as string | undefined;
 
   const limit = Math.min(parseInt(limitRaw ?? "20", 10) || 20, 100);
-  const cursor = cursorRaw ? parseInt(cursorRaw, 10) : undefined;
   const filterUserId = userIdRaw ? parseInt(userIdRaw, 10) : undefined;
   const viewerId = req.userIdOptional;
+
+  const usePersonalized = !filterUserId && feed !== "following";
+
+  if (usePersonalized) {
+    const cursor = cursorRaw ? decodeCursor(cursorRaw) : null;
+
+    const rows = await fetchPersonalizedFeed(viewerId, limit, cursor);
+
+    const hasMore = rows.length > limit;
+    const items = hasMore ? rows.slice(0, limit) : rows;
+    const lastItem = items[items.length - 1];
+    const nextCursor = hasMore && lastItem ? encodeCursor(lastItem.score, lastItem.id) : null;
+
+    res.json({ items, nextCursor });
+    return;
+  }
+
+  // Chronological path: following feed or user-specific feed
+  const cursor = cursorRaw ? parseInt(cursorRaw, 10) : undefined;
 
   const conditions = [isNull(postsTable.deletedAt)];
   if (filterUserId && !isNaN(filterUserId)) conditions.push(eq(postsTable.userId, filterUserId));
@@ -75,7 +298,7 @@ router.get("/posts", optionalAuth, async (req, res): Promise<void> => {
 
   const hasMore = rows.length > limit;
   const items = hasMore ? rows.slice(0, limit) : rows;
-  const nextCursor = hasMore ? items[items.length - 1].id : null;
+  const nextCursor = hasMore ? String(items[items.length - 1].id) : null;
 
   res.json({ items, nextCursor });
 });
@@ -217,6 +440,56 @@ router.get("/posts/:id", optionalAuth, async (req, res): Promise<void> => {
   res.json(rows[0]);
 });
 
+// ---------------------------------------------------------------------------
+// View tracking
+// ---------------------------------------------------------------------------
+
+const MAX_WATCH_DURATION_MS = 65_000;
+
+router.post("/posts/:id/view", requireAuth, async (req, res): Promise<void> => {
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const postId = parseInt(raw, 10);
+
+  if (isNaN(postId)) {
+    res.status(400).json({ error: "Invalid post id" });
+    return;
+  }
+
+  const body = req.body as { watchDurationMs?: unknown };
+  const rawMs = typeof body.watchDurationMs === "number" ? body.watchDurationMs : 0;
+  const watchDurationMs = Math.max(0, Math.min(Math.round(rawMs), MAX_WATCH_DURATION_MS));
+
+  const [post] = await db
+    .select({ id: postsTable.id, genre: postsTable.genre })
+    .from(postsTable)
+    .where(and(eq(postsTable.id, postId), isNull(postsTable.deletedAt)))
+    .limit(1);
+
+  if (!post) {
+    res.status(404).json({ error: "Post not found" });
+    return;
+  }
+
+  await Promise.all([
+    db.insert(postViewsTable).values({
+      userId: req.userId,
+      postId,
+      watchDurationMs,
+      genre: post.genre,
+    }),
+    db
+      .update(postsTable)
+      .set({ viewCount: sql`view_count + 1` })
+      .where(eq(postsTable.id, postId)),
+  ]);
+
+  res.sendStatus(204);
+});
+
+// ---------------------------------------------------------------------------
+// Likes
+// ---------------------------------------------------------------------------
+
 router.post("/posts/:id/like", requireAuth, async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const postId = parseInt(raw, 10);
@@ -243,7 +516,6 @@ router.post("/posts/:id/like", requireAuth, async (req, res): Promise<void> => {
     .onConflictDoNothing()
     .returning();
 
-  // Only notify on a new like (skip if already liked / conflict)
   if (result.length > 0) {
     void createNotification("like", post.userId, req.userId, postId);
   }

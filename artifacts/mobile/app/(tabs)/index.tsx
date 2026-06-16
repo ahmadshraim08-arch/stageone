@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import { router, useFocusEffect } from "expo-router";
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   AppState,
@@ -30,11 +30,13 @@ import { useColors } from "@/hooks/useColors";
 
 type FeedTab = "forYou" | "following";
 
+const MIN_VIEW_DURATION_MS = 500;
+
 export default function HomeScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { height: screenHeight } = useWindowDimensions();
-  const { musicMinutes, followingFeed, followingLoading, fetchFollowingFeed, currentUser, isLoaded, feedLoading, refreshFeed, unreadNotifications } = useApp();
+  const { musicMinutes, followingFeed, followingLoading, fetchFollowingFeed, currentUser, isLoaded, feedLoading, refreshFeed, unreadNotifications, recordView } = useApp();
 
   const [activeTab, setActiveTab] = useState<FeedTab>("forYou");
   const [commentsMmId, setCommentsMmId] = useState<string | null>(null);
@@ -45,13 +47,56 @@ export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   const flatListRef = useRef<FlatList>(null);
-
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 70 }).current;
+
+  // Refs for view-event tracking (stable across renders)
+  const viewStartRef = useRef<{ id: string; startMs: number } | null>(null);
+  const currentUserRef = useRef(currentUser);
+  const recordViewRef = useRef(recordView);
+
+  useEffect(() => { currentUserRef.current = currentUser; }, [currentUser]);
+  useEffect(() => { recordViewRef.current = recordView; }, [recordView]);
+
+  const fireViewEvent = useCallback((postId: string, startMs: number) => {
+    const user = currentUserRef.current;
+    if (!user || user.isGuest) return;
+    const watchDurationMs = Date.now() - startMs;
+    if (watchDurationMs < MIN_VIEW_DURATION_MS) return;
+    const numericId = parseInt(postId, 10);
+    if (!isNaN(numericId)) {
+      recordViewRef.current(numericId, watchDurationMs);
+    }
+  }, []);
 
   const onViewableItemsChanged = useRef(
     ({ viewableItems }: { viewableItems: ViewToken[] }) => {
-      if (viewableItems.length > 0) {
-        setActiveId((viewableItems[0].item as { id: string }).id);
+      const incoming = viewableItems.length > 0
+        ? (viewableItems[0].item as { id: string }).id
+        : null;
+
+      // Fire event for the post that just scrolled away
+      const prev = viewStartRef.current;
+      if (prev && prev.id !== incoming) {
+        const user = currentUserRef.current;
+        if (user && !user.isGuest) {
+          const watchDurationMs = Date.now() - prev.startMs;
+          if (watchDurationMs >= MIN_VIEW_DURATION_MS) {
+            const numericId = parseInt(prev.id, 10);
+            if (!isNaN(numericId)) {
+              recordViewRef.current(numericId, watchDurationMs);
+            }
+          }
+        }
+        viewStartRef.current = null;
+      }
+
+      if (incoming) {
+        setActiveId(incoming);
+        if (!viewStartRef.current || viewStartRef.current.id !== incoming) {
+          viewStartRef.current = { id: incoming, startMs: Date.now() };
+        }
+      } else {
+        setActiveId(null);
       }
     }
   ).current;
@@ -59,17 +104,43 @@ export default function HomeScreen() {
   useFocusEffect(
     useCallback(() => {
       setIsScreenActive(true);
+      // Reset watch start time when screen regains focus
+      if (viewStartRef.current) {
+        viewStartRef.current = { ...viewStartRef.current, startMs: Date.now() };
+      }
+
       const subscription = AppState.addEventListener(
         "change",
         (state: AppStateStatus) => {
+          if (state !== "active") {
+            // App backgrounded — fire view event for the current post
+            const prev = viewStartRef.current;
+            if (prev) {
+              fireViewEvent(prev.id, prev.startMs);
+              // Reset so we don't double-count when app comes back
+              viewStartRef.current = null;
+            }
+          } else {
+            // App foregrounded — restart watch timer for the active post
+            if (viewStartRef.current) {
+              viewStartRef.current = { ...viewStartRef.current, startMs: Date.now() };
+            }
+          }
           setIsScreenActive(state === "active");
         }
       );
+
       return () => {
+        // Screen lost focus — fire view event for the current post
+        const prev = viewStartRef.current;
+        if (prev) {
+          fireViewEvent(prev.id, prev.startMs);
+        }
+        viewStartRef.current = null;
         setIsScreenActive(false);
         subscription.remove();
       };
-    }, [])
+    }, [fireViewEvent])
   );
 
   const handleRefresh = useCallback(async () => {

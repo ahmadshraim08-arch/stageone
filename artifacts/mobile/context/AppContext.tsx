@@ -38,6 +38,7 @@ import {
   upsertMe,
   patchMe,
   registerPushToken,
+  recordPostView,
 } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
@@ -127,6 +128,7 @@ interface AppContextType {
   refreshFeed: () => Promise<void>;
   fetchFollowingFeed: () => Promise<void>;
   resetUnreadNotifications: () => void;
+  recordView: (postId: number, watchDurationMs: number) => void;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -805,6 +807,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setUnreadNotifications(0);
   }, []);
 
+  const recordView = useCallback(
+    (postId: number, watchDurationMs: number) => {
+      getToken().then((token) => {
+        if (!token) return;
+        recordPostView(token, postId, watchDurationMs).catch(() => {});
+      });
+    },
+    [getToken],
+  );
+
   return (
     <AppContext.Provider
       value={{
@@ -843,6 +855,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         refreshFeed,
         fetchFollowingFeed,
         resetUnreadNotifications,
+        recordView,
       }}
     >
       {children}

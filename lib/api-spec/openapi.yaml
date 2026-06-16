@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: posts
+    description: Post operations
 paths:
   /healthz:
     get:
@@ -24,6 +26,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /posts/{id}/view:
+    post:
+      operationId: recordPostView
+      tags: [posts]
+      summary: Record a post view
+      description: Records how long a signed-in user watched a post. Increments view_count and appends a post_views row for personalized feed ranking.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecordViewBody"
+      responses:
+        "204":
+          description: View recorded
+        "400":
+          description: Invalid post id or body
+        "401":
+          description: Unauthorized
+        "404":
+          description: Post not found
 components:
   schemas:
     HealthStatus:
@@ -33,4 +64,17 @@ components:
           type: string
       required:
         - status
-
+    RecordViewBody:
+      type: object
+      properties:
+        watchDurationMs:
+          type: integer
+          minimum: 0
+          description: How many milliseconds the user watched the video
+      required:
+        - watchDurationMs
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

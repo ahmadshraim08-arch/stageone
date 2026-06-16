@@ -173,16 +173,26 @@ export const getMe = (token: string): Promise<ApiUser> =>
 
 export const getPosts = (
   token: string | null,
-  params: { feed?: string; userId?: number; cursor?: number; limit?: number } = {},
-): Promise<{ items: ApiPost[]; nextCursor: number | null }> => {
+  params: { feed?: string; userId?: number; cursor?: string; limit?: number } = {},
+): Promise<{ items: ApiPost[]; nextCursor: string | null }> => {
   const q = new URLSearchParams();
   if (params.feed) q.set("feed", params.feed);
   if (params.userId !== undefined) q.set("userId", String(params.userId));
-  if (params.cursor !== undefined) q.set("cursor", String(params.cursor));
+  if (params.cursor !== undefined) q.set("cursor", params.cursor);
   if (params.limit !== undefined) q.set("limit", String(params.limit));
   const qs = q.toString();
   return apiFetch(`/posts${qs ? `?${qs}` : ""}`, token);
 };
+
+export const recordPostView = (
+  token: string,
+  postId: number,
+  watchDurationMs: number,
+): Promise<void> =>
+  apiFetch<void>(`/posts/${postId}/view`, token, {
+    method: "POST",
+    body: JSON.stringify({ watchDurationMs }),
+  });
 
 // ---------------------------------------------------------------------------
 // Likes / Saves / Comments / Golden Mic

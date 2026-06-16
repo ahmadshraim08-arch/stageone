@@ -1,5 +1,6 @@
 export * from "./users";
 export * from "./posts";
+export * from "./post_views";
 export * from "./likes";
 export * from "./comments";
 export * from "./saves";

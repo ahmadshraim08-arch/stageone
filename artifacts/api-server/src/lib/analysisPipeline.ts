@@ -149,7 +149,11 @@ export async function runPipeline(
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       stageErrors["preparing"] = msg;
-      await markFailed(jobId, result, "Audio extraction failed: " + msg.slice(0, 200));
+      await markFailed(
+        jobId,
+        result,
+        "We couldn't analyze the audio. Please retry or search for your song manually.",
+      );
       return;
     }
     await setStage(jobId, "preparing", 12, { perStageErrors: stageErrors });
@@ -303,7 +307,12 @@ export async function runPipeline(
       .where(eq(analysisJobsTable.id, jobId));
   } catch (outerErr) {
     const msg = outerErr instanceof Error ? outerErr.message : String(outerErr);
-    await markFailed(jobId, result, msg);
+    result.stageErrors["pipeline"] = msg.slice(0, 300);
+    await markFailed(
+      jobId,
+      result,
+      "We couldn't complete the analysis. Please retry or search for your song manually.",
+    );
   } finally {
     await audioCleanup?.().catch(() => {});
     await stemCleanup?.().catch(() => {});

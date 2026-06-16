@@ -98,7 +98,8 @@ function mapMusixmatchGenre(raw: string): string | null {
   return null;
 }
 
-/** Map an ElevenLabs language code or name to the nearest LANGUAGES chip. */
+/** Map an ElevenLabs language code or name to the nearest LANGUAGES chip.
+ *  Returns null for unrecognised codes so we never override the default. */
 function mapDetectedLanguage(lang: string): string | null {
   const lower = lang.toLowerCase().trim();
   const map: Record<string, string> = {
@@ -110,7 +111,7 @@ function mapDetectedLanguage(lang: string): string | null {
     hi: "Hindi", hindi: "Hindi",
     sw: "Swahili", swahili: "Swahili",
   };
-  return map[lower] ?? "Other";
+  return map[lower] ?? null;
 }
 
 const STAGE_LABELS: Record<string, string> = {
@@ -586,13 +587,21 @@ export default function PostScreen() {
   useEffect(() => {
     if (step !== 7 || prefillStep7AppliedRef.current) return;
     prefillStep7AppliedRef.current = true;
-    if (analysisResult?.musixmatchGenre) {
+
+    // Only apply detected genre when the currently-selected song matches the AI-detected
+    // track (i.e. the user has not manually overridden the song in Step 4).
+    const songMatchesDetected =
+      !selectedSong || selectedSong.track_id === analysisResult?.detectedTrackId;
+
+    if (analysisResult?.musixmatchGenre && songMatchesDetected) {
       const mapped = mapMusixmatchGenre(analysisResult.musixmatchGenre);
       if (mapped && GENRES.includes(mapped)) {
         setGenre(mapped);
         setDetectedGenre(mapped);
       }
     }
+
+    // Only apply detected language when we have a confident, known mapping.
     if (analysisResult?.detectedLanguage) {
       const mapped = mapDetectedLanguage(analysisResult.detectedLanguage);
       if (mapped && LANGUAGES.includes(mapped)) {
@@ -826,10 +835,9 @@ export default function PostScreen() {
         } else {
           // failed or canceled
           setAnalysisError(
-            job.result?.fatalError ??
-              (job.status === "canceled"
-                ? "Analysis was canceled."
-                : "Analysis could not complete. You can search for the song manually."),
+            job.status === "canceled"
+              ? "Analysis was canceled."
+              : "We couldn't analyze the audio. You can retry or search for the song manually.",
           );
           setAnalysisPhase("failed");
         }
@@ -985,8 +993,10 @@ export default function PostScreen() {
           cyaniteMoods: cyaniteMoodsAccepted ? (analysisResult?.cyaniteMoods ?? undefined) : undefined,
           cyaniteEnergy: cyaniteMoodsAccepted ? (analysisResult?.cyaniteEnergy ?? undefined) : undefined,
           audioAnalysisSource: (cyaniteGenreAccepted || cyaniteMoodsAccepted) ? "cyanite" : undefined,
-          genreDetectionSource: detectedGenre ? "musixmatch" : undefined,
-          languageDetectionSource: detectedLanguage ? "elevenlabs" : undefined,
+          genreDetectionSource: detectedGenre ? "musixmatch_metadata" : undefined,
+          languageDetectionSource: detectedLanguage ? "transcription" : undefined,
+          genreConfidence: detectedGenre ? (analysisResult?.songMatchConfidence ?? undefined) : undefined,
+          languageConfidence: undefined,
           creatorOverrodeGenre: detectedGenre ? genre !== detectedGenre : undefined,
           creatorOverrodeLanguage: detectedLanguage ? language !== detectedLanguage : undefined,
         },

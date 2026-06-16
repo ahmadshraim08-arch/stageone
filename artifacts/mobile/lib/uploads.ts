@@ -320,7 +320,9 @@ export async function createPost(
     cyaniteEnergy?: string;
     audioAnalysisSource?: string;
     genreDetectionSource?: string;
+    genreConfidence?: number;
     languageDetectionSource?: string;
+    languageConfidence?: number;
     creatorOverrodeGenre?: boolean;
     creatorOverrodeLanguage?: boolean;
   },

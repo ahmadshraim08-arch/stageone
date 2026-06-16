@@ -373,7 +373,9 @@ router.post("/posts", requireAuth, async (req, res): Promise<void> => {
     cyaniteEnergy?: string;
     audioAnalysisSource?: string;
     genreDetectionSource?: string;
+    genreConfidence?: number;
     languageDetectionSource?: string;
+    languageConfidence?: number;
     creatorOverrodeGenre?: boolean;
     creatorOverrodeLanguage?: boolean;
   };
@@ -420,7 +422,9 @@ router.post("/posts", requireAuth, async (req, res): Promise<void> => {
       cyaniteEnergy: body.cyaniteEnergy ?? null,
       audioAnalysisSource: body.audioAnalysisSource ?? null,
       genreDetectionSource: body.genreDetectionSource ?? null,
+      genreConfidence: body.genreConfidence ?? null,
       languageDetectionSource: body.languageDetectionSource ?? null,
+      languageConfidence: body.languageConfidence ?? null,
       creatorOverrodeGenre: body.creatorOverrodeGenre ?? null,
       creatorOverrodeLanguage: body.creatorOverrodeLanguage ?? null,
     })

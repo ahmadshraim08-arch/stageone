@@ -397,8 +397,8 @@ export const patchPost = (
     trackTitle?: string;
     trackArtist?: string;
   },
-): Promise<void> =>
-  apiFetch<void>(`/posts/${postId}`, token, { method: "PATCH", body: JSON.stringify(body) });
+): Promise<ApiPost> =>
+  apiFetch<ApiPost>(`/posts/${postId}`, token, { method: "PATCH", body: JSON.stringify(body) });
 
 export const deletePost = (token: string, postId: number): Promise<void> =>
   apiFetch<void>(`/posts/${postId}`, token, { method: "DELETE" });

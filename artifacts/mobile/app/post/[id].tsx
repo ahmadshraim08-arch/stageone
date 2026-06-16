@@ -148,19 +148,13 @@ export default function PostDetailScreen() {
     try {
       const token = await getToken();
       if (!token) throw new Error("Not authenticated");
-      await patchPost(token, post.id, {
+      const serverPost = await patchPost(token, post.id, {
         title: editTitle.trim(),
         caption: editCaption.trim() || undefined,
         genre: editGenre.trim() || undefined,
         language: editLanguage.trim() || undefined,
       });
-      const updated: ApiPost = {
-        ...post,
-        title: editTitle.trim(),
-        caption: editCaption.trim() || null,
-        genre: editGenre.trim() || null,
-        language: editLanguage.trim() || null,
-      };
+      const updated: ApiPost = serverPost;
       setPost(updated);
       patchInFeed(String(post.id), {
         title: updated.title,
@@ -180,7 +174,7 @@ export default function PostDetailScreen() {
     if (!post) return;
     Alert.alert(
       "Delete post?",
-      "This will permanently remove your Music Minute. This cannot be undone.",
+      "Delete this Music Minute? This action cannot be undone.",
       [
         { text: "Cancel", style: "cancel" },
         {

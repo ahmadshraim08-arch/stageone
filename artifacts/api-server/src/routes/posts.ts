@@ -536,7 +536,45 @@ router.patch("/posts/:id", requireAuth, async (req, res): Promise<void> => {
 
   await db.update(postsTable).set(updates).where(eq(postsTable.id, postId));
 
-  res.sendStatus(204);
+  // Return the updated post so clients can apply server-confirmed values
+  const [updated] = await db
+    .select({
+      id: postsTable.id,
+      userId: postsTable.userId,
+      videoUrl: postsTable.videoUrl,
+      videoObjectKey: postsTable.videoObjectKey,
+      thumbnailUrl: postsTable.thumbnailUrl,
+      title: postsTable.title,
+      caption: postsTable.caption,
+      performanceType: postsTable.performanceType,
+      genre: postsTable.genre,
+      language: postsTable.language,
+      musixmatchTrackId: postsTable.musixmatchTrackId,
+      trackTitle: postsTable.trackTitle,
+      trackArtist: postsTable.trackArtist,
+      lyricSectionId: postsTable.lyricSectionId,
+      rightsConfirmed: postsTable.rightsConfirmed,
+      goldenMicCount: postsTable.goldenMicCount,
+      createdAt: postsTable.createdAt,
+      creator: {
+        id: usersTable.id,
+        username: usersTable.username,
+        displayName: usersTable.displayName,
+        avatarUrl: usersTable.avatarUrl,
+      },
+      likesCount: sql<number>`(SELECT COUNT(*) FROM likes WHERE likes.post_id = ${postsTable.id})`,
+      commentsCount: sql<number>`(SELECT COUNT(*) FROM comments WHERE comments.post_id = ${postsTable.id} AND comments.deleted_at IS NULL)`,
+      savesCount: sql<number>`(SELECT COUNT(*) FROM saves WHERE saves.post_id = ${postsTable.id})`,
+      viewerHasLiked: sql<boolean>`EXISTS(SELECT 1 FROM likes WHERE likes.post_id = ${postsTable.id} AND likes.user_id = ${req.userId})`,
+      viewerHasSaved: sql<boolean>`EXISTS(SELECT 1 FROM saves WHERE saves.post_id = ${postsTable.id} AND saves.user_id = ${req.userId})`,
+      viewerIsFollowing: sql<boolean>`false`,
+    })
+    .from(postsTable)
+    .innerJoin(usersTable, eq(postsTable.userId, usersTable.id))
+    .where(eq(postsTable.id, postId))
+    .limit(1);
+
+  res.json(updated);
 });
 
 router.delete("/posts/:id", requireAuth, async (req, res): Promise<void> => {
@@ -549,7 +587,7 @@ router.delete("/posts/:id", requireAuth, async (req, res): Promise<void> => {
   }
 
   const [existing] = await db
-    .select({ userId: postsTable.userId, deletedAt: postsTable.deletedAt })
+    .select({ userId: postsTable.userId, deletedAt: postsTable.deletedAt, videoObjectKey: postsTable.videoObjectKey })
     .from(postsTable)
     .where(eq(postsTable.id, postId))
     .limit(1);
@@ -568,6 +606,23 @@ router.delete("/posts/:id", requireAuth, async (req, res): Promise<void> => {
     .update(postsTable)
     .set({ deletedAt: new Date() })
     .where(eq(postsTable.id, postId));
+
+  // Best-effort GCS cleanup — does not block the response
+  if (existing.videoObjectKey) {
+    void (async () => {
+      try {
+        const slash = existing.videoObjectKey!.indexOf("/");
+        if (slash !== -1) {
+          const { objectStorageClient } = await import("../lib/objectStorage");
+          const bucketName = existing.videoObjectKey!.slice(0, slash);
+          const objectName = existing.videoObjectKey!.slice(slash + 1);
+          await objectStorageClient.bucket(bucketName).file(objectName).delete();
+        }
+      } catch {
+        // Non-fatal: object may already be gone or sidecar unavailable
+      }
+    })();
+  }
 
   res.sendStatus(204);
 });

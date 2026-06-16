@@ -3,8 +3,8 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
-import { router } from "expo-router";
-import React, { useEffect, useState } from "react";
+import { router, useFocusEffect } from "expo-router";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -42,6 +42,8 @@ export default function ProfileScreen() {
   const [myApiPosts, setMyApiPosts] = useState<MusicMinute[]>([]);
 
   const [postsLoading, setPostsLoading] = useState(false);
+  const [postsError, setPostsError] = useState(false);
+  const fetchedOnceRef = useRef(false);
 
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editDisplayName, setEditDisplayName] = useState("");
@@ -70,23 +72,38 @@ export default function ProfileScreen() {
     }
   };
 
-  // Fetch the signed-in user's own posts via server-side identity resolution
-  useEffect(() => {
+  const fetchMyPosts = useCallback(async () => {
     if (!currentUser || currentUser.isGuest) return;
-    let cancelled = false;
-    (async () => {
-      setPostsLoading(true);
-      try {
-        const token = await getToken();
-        if (!token || cancelled) return;
-        const result = await getMyPosts(token);
-        if (!cancelled) setMyApiPosts(result.items.map(apiPostToMusicMinute));
-      } catch {} finally {
-        if (!cancelled) setPostsLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
+    setPostsLoading(true);
+    setPostsError(false);
+    try {
+      const token = await getToken();
+      if (!token) return;
+      const result = await getMyPosts(token);
+      setMyApiPosts(result.items.map(apiPostToMusicMinute));
+    } catch {
+      setPostsError(true);
+    } finally {
+      setPostsLoading(false);
+    }
+  }, [currentUser?.id, getToken]);
+
+  // Initial fetch on mount
+  useEffect(() => {
+    if (!fetchedOnceRef.current && currentUser && !currentUser.isGuest) {
+      fetchedOnceRef.current = true;
+      fetchMyPosts();
+    }
   }, [currentUser?.id]);
+
+  // Refresh on focus so edits/deletes from post detail are reflected immediately
+  useFocusEffect(
+    useCallback(() => {
+      if (fetchedOnceRef.current && currentUser && !currentUser.isGuest) {
+        fetchMyPosts();
+      }
+    }, [fetchMyPosts]),
+  );
 
   const handleAvatarUpload = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -268,7 +285,7 @@ export default function ProfileScreen() {
 
         <View style={styles.statsGrid}>
           {[
-            { label: "Posts", value: currentUser.postCount },
+            { label: "Posts", value: fetchedOnceRef.current ? myApiPosts.length : currentUser.postCount },
             { label: "Followers", value: currentUser.followerCount },
             { label: "Following", value: currentUser.followingCount },
             { label: "Liked", value: likedIds.size },
@@ -292,7 +309,7 @@ export default function ProfileScreen() {
         </TouchableOpacity>
       </LinearGradient>
 
-      {(myMMs.length > 0 || postsLoading) && (
+      {(myMMs.length > 0 || postsLoading || postsError) && (
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: colors.foreground, paddingHorizontal: 16 }]}>
             My Music Minutes
@@ -300,6 +317,15 @@ export default function ProfileScreen() {
           {postsLoading ? (
             <View style={styles.postsLoadingRow}>
               <ActivityIndicator color="#A855F7" size="small" />
+            </View>
+          ) : postsError ? (
+            <View style={styles.postsLoadingRow}>
+              <Text style={[styles.errorText, { color: colors.mutedForeground }]}>
+                Could not load your posts.
+              </Text>
+              <TouchableOpacity onPress={fetchMyPosts} activeOpacity={0.7} style={styles.retryBtn}>
+                <Text style={styles.retryBtnText}>Retry</Text>
+              </TouchableOpacity>
             </View>
           ) : (
             <View style={styles.mmGrid}>
@@ -345,7 +371,7 @@ export default function ProfileScreen() {
         </View>
       )}
 
-      {myMMs.length === 0 && !postsLoading && (
+      {myMMs.length === 0 && !postsLoading && !postsError && (
         <View style={styles.emptyMMs}>
           <MaterialCommunityIcons name="microphone-outline" size={48} color={colors.mutedForeground} />
           <Text style={[styles.emptyMMsTitle, { color: colors.foreground }]}>Your stage is waiting…</Text>
@@ -633,7 +659,16 @@ const styles = StyleSheet.create({
     paddingVertical: 32,
     alignItems: "center",
     justifyContent: "center",
+    gap: 12,
   },
+  errorText: { fontSize: 14, textAlign: "center" },
+  retryBtn: {
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: "rgba(168,85,247,0.15)",
+  },
+  retryBtnText: { color: "#A855F7", fontSize: 14, fontWeight: "600" },
   loadingView: {
     flex: 1,
     alignItems: "center",

@@ -175,6 +175,7 @@ export default function CreatorProfileScreen() {
     riseScore: user.riseScore,
     badges: user.badges as string[],
     genre: user.genre,
+    genres: apiUser?.genres?.length ? apiUser.genres : user.genre ? [user.genre] : [] as string[],
     location: user.location as string | null,
   } : {
     id: followUserId,
@@ -191,6 +192,7 @@ export default function CreatorProfileScreen() {
     riseScore: 0,
     badges: [] as string[],
     genre: (apiUser!.genres ?? [])[0] ?? "Singer",
+    genres: apiUser!.genres ?? [] as string[],
     location: null as string | null,
   };
 
@@ -273,9 +275,13 @@ export default function CreatorProfileScreen() {
             </Text>
           ) : null}
           <View style={styles.tagsRow}>
-            <View style={[styles.tag, { backgroundColor: `${colors.primary}20`, borderColor: `${colors.primary}40` }]}>
-              <Text style={[styles.tagText, { color: colors.primary }]}>{displayProfile.genre}</Text>
-            </View>
+            {displayProfile.genres.length > 0
+              ? displayProfile.genres.map((g) => (
+                  <View key={g} style={[styles.tag, { backgroundColor: `${colors.primary}20`, borderColor: `${colors.primary}40` }]}>
+                    <Text style={[styles.tagText, { color: colors.primary }]}>{g}</Text>
+                  </View>
+                ))
+              : null}
             {displayProfile.location ? (
               <View style={[styles.tag, { backgroundColor: "rgba(255,255,255,0.08)", borderColor: "rgba(255,255,255,0.15)" }]}>
                 <Ionicons name="location-outline" size={11} color={colors.mutedForeground} />

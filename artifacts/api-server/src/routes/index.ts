@@ -8,6 +8,9 @@ import uploadsRouter from "./uploads";
 import followsRouter from "./follows";
 import commentsRouter from "./comments";
 import savesRouter from "./saves";
+import conversationsRouter from "./conversations";
+import notificationsRouter from "./notifications";
+import goldenMicRouter from "./golden_mic";
 
 const router: IRouter = Router();
 
@@ -20,5 +23,8 @@ router.use(savesRouter);
 router.use(usersRouter);
 router.use(postsRouter);
 router.use(uploadsRouter);
+router.use(conversationsRouter);
+router.use(notificationsRouter);
+router.use(goldenMicRouter);
 
 export default router;

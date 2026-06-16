@@ -1,6 +1,15 @@
 import { Router, type IRouter } from "express";
-import { db, usersTable, postsTable, followsTable } from "@workspace/db";
-import { eq, count, isNull, and } from "drizzle-orm";
+import {
+  db,
+  usersTable,
+  postsTable,
+  followsTable,
+  messagesTable,
+  notificationsTable,
+  conversationParticipantsTable,
+} from "@workspace/db";
+import { eq, count, isNull, and, ne } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { requireAuth } from "../middleware/auth";
 
 const router: IRouter = Router();
@@ -119,6 +128,33 @@ router.patch("/users/me", requireAuth, async (req, res): Promise<void> => {
     followingCount: followingCount?.value ?? 0,
     goldenMicsReceived: updated.goldenMicBalance,
     viewerIsFollowing: false,
+  });
+});
+
+router.get("/users/me/unread", requireAuth, async (req, res): Promise<void> => {
+  const unreadMessagesResult = await db.execute(sql`
+    SELECT COUNT(*)::int AS cnt
+    FROM messages m
+    JOIN conversation_participants cp
+      ON cp.conversation_id = m.conversation_id AND cp.user_id = ${req.userId}
+    WHERE m.sender_id != ${req.userId}
+      AND m.read_at IS NULL
+  `);
+  const unreadMessages = (unreadMessagesResult.rows as unknown as Array<{ cnt: number }>)[0];
+
+  const [unreadNotifications] = await db
+    .select({ cnt: count() })
+    .from(notificationsTable)
+    .where(
+      and(
+        eq(notificationsTable.userId, req.userId),
+        isNull(notificationsTable.readAt),
+      ),
+    );
+
+  res.json({
+    messages: unreadMessages?.cnt ?? 0,
+    notifications: unreadNotifications?.cnt ?? 0,
   });
 });
 

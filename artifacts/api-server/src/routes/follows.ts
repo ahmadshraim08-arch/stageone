@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { db, usersTable, followsTable } from "@workspace/db";
 import { eq, and, lt, desc } from "drizzle-orm";
 import { requireAuth } from "../middleware/auth";
+import { createNotification } from "../lib/notifications";
 
 const router: IRouter = Router();
 
@@ -36,8 +37,12 @@ router.post("/follows/:userId", requireAuth, async (req, res): Promise<void> => 
     .onConflictDoNothing()
     .returning({ id: followsTable.id });
 
-  const statusCode = result.length > 0 ? 201 : 409;
-  res.status(statusCode).json({ following: true });
+  if (result.length > 0) {
+    await createNotification("follow", targetId, req.userId, null);
+    res.status(201).json({ following: true });
+  } else {
+    res.status(409).json({ following: true });
+  }
 });
 
 router.delete("/follows/:userId", requireAuth, async (req, res): Promise<void> => {
@@ -49,9 +54,15 @@ router.delete("/follows/:userId", requireAuth, async (req, res): Promise<void> =
     return;
   }
 
-  await db
+  const deleted = await db
     .delete(followsTable)
-    .where(and(eq(followsTable.followerId, req.userId), eq(followsTable.followingId, targetId)));
+    .where(and(eq(followsTable.followerId, req.userId), eq(followsTable.followingId, targetId)))
+    .returning({ id: followsTable.id });
+
+  if (deleted.length === 0) {
+    res.status(404).json({ error: "Follow not found" });
+    return;
+  }
 
   res.status(200).json({ following: false });
 });

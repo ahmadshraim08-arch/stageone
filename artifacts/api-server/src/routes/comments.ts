@@ -1,12 +1,15 @@
 import { Router, type IRouter } from "express";
 import { db, postsTable, commentsTable, usersTable } from "@workspace/db";
-import { eq, and, isNull, desc } from "drizzle-orm";
+import { eq, and, isNull, desc, lt } from "drizzle-orm";
 import { requireAuth } from "../middleware/auth";
+import { createNotification } from "../lib/notifications";
 
 const router: IRouter = Router();
 
-router.get("/posts/:id/comments", requireAuth, async (req, res): Promise<void> => {
-  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+router.get("/posts/:postId/comments", requireAuth, async (req, res): Promise<void> => {
+  const raw = Array.isArray(req.params.postId)
+    ? req.params.postId[0]
+    : req.params.postId;
   const postId = parseInt(raw, 10);
 
   if (isNaN(postId)) {
@@ -23,11 +26,7 @@ router.get("/posts/:id/comments", requireAuth, async (req, res): Promise<void> =
     eq(commentsTable.postId, postId),
     isNull(commentsTable.deletedAt),
   ];
-
-  if (cursor && !isNaN(cursor)) {
-    const { lt } = await import("drizzle-orm");
-    conditions.push(lt(commentsTable.id, cursor));
-  }
+  if (cursor && !isNaN(cursor)) conditions.push(lt(commentsTable.id, cursor));
 
   const rows = await db
     .select({
@@ -55,8 +54,10 @@ router.get("/posts/:id/comments", requireAuth, async (req, res): Promise<void> =
   res.json({ items, nextCursor });
 });
 
-router.post("/posts/:id/comments", requireAuth, async (req, res): Promise<void> => {
-  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+router.post("/posts/:postId/comments", requireAuth, async (req, res): Promise<void> => {
+  const raw = Array.isArray(req.params.postId)
+    ? req.params.postId[0]
+    : req.params.postId;
   const postId = parseInt(raw, 10);
 
   if (isNaN(postId)) {
@@ -77,12 +78,12 @@ router.post("/posts/:id/comments", requireAuth, async (req, res): Promise<void> 
   }
 
   const [post] = await db
-    .select({ id: postsTable.id })
+    .select({ id: postsTable.id, userId: postsTable.userId, deletedAt: postsTable.deletedAt })
     .from(postsTable)
-    .where(and(eq(postsTable.id, postId), isNull(postsTable.deletedAt)))
+    .where(eq(postsTable.id, postId))
     .limit(1);
 
-  if (!post) {
+  if (!post || post.deletedAt !== null) {
     res.status(404).json({ error: "Post not found" });
     return;
   }
@@ -103,22 +104,31 @@ router.post("/posts/:id/comments", requireAuth, async (req, res): Promise<void> 
     .where(eq(usersTable.id, req.userId))
     .limit(1);
 
+  await createNotification("comment", post.userId, req.userId, postId);
+
   res.status(201).json({ ...comment, creator });
 });
 
-router.delete("/comments/:id", requireAuth, async (req, res): Promise<void> => {
-  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-  const commentId = parseInt(raw, 10);
+router.delete("/posts/:postId/comments/:id", requireAuth, async (req, res): Promise<void> => {
+  const rawPost = Array.isArray(req.params.postId)
+    ? req.params.postId[0]
+    : req.params.postId;
+  const rawComment = Array.isArray(req.params.id)
+    ? req.params.id[0]
+    : req.params.id;
 
-  if (isNaN(commentId)) {
-    res.status(400).json({ error: "Invalid comment id" });
+  const postId = parseInt(rawPost, 10);
+  const commentId = parseInt(rawComment, 10);
+
+  if (isNaN(postId) || isNaN(commentId)) {
+    res.status(400).json({ error: "Invalid id" });
     return;
   }
 
   const [existing] = await db
     .select({ userId: commentsTable.userId, deletedAt: commentsTable.deletedAt })
     .from(commentsTable)
-    .where(eq(commentsTable.id, commentId))
+    .where(and(eq(commentsTable.id, commentId), eq(commentsTable.postId, postId)))
     .limit(1);
 
   if (!existing || existing.deletedAt !== null) {

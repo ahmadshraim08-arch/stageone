@@ -173,10 +173,20 @@ export default function ProfileScreen() {
       {myMMs.length === 0 && (
         <View style={styles.emptyMMs}>
           <MaterialCommunityIcons name="microphone-off" size={40} color={colors.mutedForeground} />
-          <Text style={[styles.emptyMMsTitle, { color: colors.foreground }]}>No Music Minutes yet</Text>
+          <Text style={[styles.emptyMMsTitle, { color: colors.foreground }]}>Your stage is waiting.</Text>
           <Text style={[styles.emptyMMsSub, { color: colors.mutedForeground }]}>
-            Post your first 60-second performance to start your journey.
+            Post your first Music Minute.
           </Text>
+          <TouchableOpacity
+            onPress={() => router.push("/(tabs)/post")}
+            activeOpacity={0.85}
+            style={styles.emptyMMsCTA}
+          >
+            <LinearGradient colors={["#A855F7", "#EC4899"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.emptyMMsCTAGradient}>
+              <MaterialCommunityIcons name="microphone" size={16} color="#fff" />
+              <Text style={styles.emptyMMsCTAText}>Post a Music Minute</Text>
+            </LinearGradient>
+          </TouchableOpacity>
         </View>
       )}
 
@@ -310,4 +320,7 @@ const styles = StyleSheet.create({
   emptyMMs: { alignItems: "center", paddingVertical: 48, gap: 10, paddingHorizontal: 32 },
   emptyMMsTitle: { fontSize: 17, fontWeight: "700" },
   emptyMMsSub: { fontSize: 13, textAlign: "center", lineHeight: 18 },
+  emptyMMsCTA: { borderRadius: 14, overflow: "hidden", marginTop: 6 },
+  emptyMMsCTAGradient: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 12, paddingHorizontal: 24 },
+  emptyMMsCTAText: { color: "#fff", fontSize: 14, fontWeight: "700" },
 });

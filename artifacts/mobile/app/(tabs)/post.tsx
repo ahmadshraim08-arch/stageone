@@ -92,6 +92,9 @@ export default function PostScreen() {
   const [songResults, setSongResults] = useState<MusixmatchResult[]>([]);
   const [selectedSong, setSelectedSong] = useState<MusixmatchResult | null>(null);
   const [isSongSearching, setIsSongSearching] = useState(false);
+  const [songSearchError, setSongSearchError] = useState(false);
+  const [songSearchSource, setSongSearchSource] = useState<string | null>(null);
+  const [hasSearched, setHasSearched] = useState(false);
 
   // Lyric section (step 4)
   const [sections, setSections] = useState<Segment[]>([]);
@@ -397,27 +400,21 @@ export default function PostScreen() {
 
   const handleSongSearch = async () => {
     const query = songQuery.trim();
-    if (!query) return;
+    if (!query || isSongSearching) return;
     setIsSongSearching(true);
+    setSongSearchError(false);
+    setSongSearchSource(null);
+    setHasSearched(false);
     try {
-      const tracks = await searchTracks(query);
-      setSongResults(
-        tracks.length > 0
-          ? tracks
-          : MOCK_TRACKS.filter(
-              (t) =>
-                t.track_name.toLowerCase().includes(query.toLowerCase()) ||
-                t.artist_name.toLowerCase().includes(query.toLowerCase()),
-            ),
-      );
+      const { tracks, source } = await searchTracks(query);
+      setSongSearchSource(source);
+      setSongResults(tracks);
+      setHasSearched(true);
+      setSongSearchError(false);
     } catch {
-      setSongResults(
-        MOCK_TRACKS.filter(
-          (t) =>
-            t.track_name.toLowerCase().includes(query.toLowerCase()) ||
-            t.artist_name.toLowerCase().includes(query.toLowerCase()),
-        ),
-      );
+      setSongSearchError(true);
+      setSongResults([]);
+      setHasSearched(false);
     }
     setIsSongSearching(false);
   };
@@ -758,21 +755,67 @@ export default function PostScreen() {
                 <Ionicons name="search" size={16} color={colors.mutedForeground} />
                 <TextInput
                   value={songQuery}
-                  onChangeText={setSongQuery}
+                  onChangeText={(text) => {
+                    setSongQuery(text);
+                    if (!text.trim()) {
+                      setSongResults([]);
+                      setSongSearchError(false);
+                      setHasSearched(false);
+                      setSongSearchSource(null);
+                    }
+                  }}
                   placeholder="Search song title or artist"
                   placeholderTextColor={colors.mutedForeground}
                   style={[styles.songSearchInput, { color: colors.foreground }]}
                   returnKeyType="search"
                   onSubmitEditing={handleSongSearch}
                 />
-                <TouchableOpacity onPress={handleSongSearch} activeOpacity={0.7}>
+                <TouchableOpacity
+                  onPress={handleSongSearch}
+                  activeOpacity={0.7}
+                  disabled={isSongSearching}
+                >
                   {isSongSearching ? (
                     <ActivityIndicator size="small" color={colors.primary} />
                   ) : (
-                    <Text style={[styles.searchBtn, { color: colors.primary }]}>Search</Text>
+                    <Text style={[styles.searchBtn, { color: isSongSearching ? colors.mutedForeground : colors.primary }]}>Search</Text>
                   )}
                 </TouchableOpacity>
               </View>
+
+              {/* Error state */}
+              {songSearchError && !selectedSong && (
+                <View style={[styles.searchStateBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                  <Ionicons name="alert-circle-outline" size={28} color="#EF4444" />
+                  <Text style={[styles.searchStateTitle, { color: colors.foreground }]}>
+                    Song search is temporarily unavailable.
+                  </Text>
+                  <Text style={[styles.searchStateSub, { color: colors.mutedForeground }]}>
+                    You can retry or continue without tagging a song.
+                  </Text>
+                  <View style={styles.searchStateActions}>
+                    <TouchableOpacity
+                      onPress={handleSongSearch}
+                      style={[styles.searchStateBtn, { borderColor: colors.primary }]}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.searchStateBtnText, { color: colors.primary }]}>Retry</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setSongSearchError(false);
+                        if (performanceType === "cover") setStep(4);
+                        else setStep(6);
+                      }}
+                      style={[styles.searchStateBtn, { borderColor: colors.border }]}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.searchStateBtnText, { color: colors.mutedForeground }]}>Skip</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+
               {selectedSong && (
                 <View
                   style={[
@@ -806,8 +849,29 @@ export default function PostScreen() {
                   </TouchableOpacity>
                 </View>
               )}
-              {songResults.length > 0 && !selectedSong && (
+
+              {/* Results list */}
+              {songResults.length > 0 && !selectedSong && !songSearchError && (
                 <View style={{ position: "relative" }}>
+                  {/* Source badge */}
+                  <View style={styles.sourceBadgeRow}>
+                    <View style={[
+                      styles.sourceBadge,
+                      {
+                        backgroundColor: songSearchSource === "musixmatch" ? "rgba(255,191,0,0.12)" : "rgba(168,85,247,0.12)",
+                        borderColor: songSearchSource === "musixmatch" ? "rgba(255,191,0,0.35)" : "rgba(168,85,247,0.35)",
+                      },
+                    ]}>
+                      <MaterialCommunityIcons
+                        name={songSearchSource === "musixmatch" ? "music-note" : "database"}
+                        size={11}
+                        color={songSearchSource === "musixmatch" ? "#CC9A00" : "#A855F7"}
+                      />
+                      <Text style={[styles.sourceBadgeText, { color: songSearchSource === "musixmatch" ? "#CC9A00" : "#A855F7" }]}>
+                        {songSearchSource === "musixmatch" ? "Musixmatch" : "Demo"}
+                      </Text>
+                    </View>
+                  </View>
                   <View
                     style={[
                       styles.songResultsList,
@@ -840,6 +904,7 @@ export default function PostScreen() {
                             numberOfLines={1}
                           >
                             {track.artist_name}
+                            {track.album_name ? ` · ${track.album_name}` : ""}
                           </Text>
                         </View>
                         <Ionicons name="add-circle-outline" size={20} color={colors.primary} />
@@ -851,6 +916,19 @@ export default function PostScreen() {
                       <ActivityIndicator size="small" color={colors.primary} />
                     </View>
                   )}
+                </View>
+              )}
+
+              {/* Empty results state */}
+              {hasSearched && songResults.length === 0 && !selectedSong && !songSearchError && !isSongSearching && (
+                <View style={[styles.searchStateBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                  <Ionicons name="search-outline" size={28} color={colors.mutedForeground} />
+                  <Text style={[styles.searchStateTitle, { color: colors.foreground }]}>
+                    No matching tracks found.
+                  </Text>
+                  <Text style={[styles.searchStateSub, { color: colors.mutedForeground }]}>
+                    Try a song title or artist name.
+                  </Text>
                 </View>
               )}
               <TouchableOpacity
@@ -1591,6 +1669,34 @@ const styles = StyleSheet.create({
   songResultInfo: { flex: 1 },
   songResultTitle: { fontSize: 14, fontWeight: "600" },
   songResultArtist: { fontSize: 12, marginTop: 2 },
+  sourceBadgeRow: { flexDirection: "row", marginBottom: 6 },
+  sourceBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  sourceBadgeText: { fontSize: 11, fontWeight: "600" },
+  searchStateBox: {
+    alignItems: "center",
+    padding: 20,
+    borderRadius: 14,
+    borderWidth: 1,
+    gap: 8,
+  },
+  searchStateTitle: { fontSize: 14, fontWeight: "700", textAlign: "center" },
+  searchStateSub: { fontSize: 12, textAlign: "center", lineHeight: 17 },
+  searchStateActions: { flexDirection: "row", gap: 10, marginTop: 4 },
+  searchStateBtn: {
+    paddingHorizontal: 20,
+    paddingVertical: 9,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  searchStateBtnText: { fontSize: 13, fontWeight: "700" },
   // Section selection (step 4)
   songRefCard: {
     flexDirection: "row",

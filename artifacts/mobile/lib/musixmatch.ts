@@ -66,10 +66,10 @@ export interface TrackResult {
 // Base URL
 // ---------------------------------------------------------------------------
 
-function apiBase(): string | null {
+function apiBase(): string {
   const domain = process.env.EXPO_PUBLIC_DOMAIN;
   if (domain) return `https://${domain}/api/musixmatch`;
-  return null;
+  return `/api/musixmatch`;
 }
 
 // ---------------------------------------------------------------------------
@@ -80,7 +80,7 @@ const lyricsCache = new Map<string, LyricsResponse>();
 const segmentsCache = new Map<string, SegmentsResponse>();
 const translationCache = new Map<string, TranslationResponse | null>();
 const moodCache = new Map<string, MoodResponse>();
-const searchCache = new Map<string, TrackResult[]>();
+const searchCache = new Map<string, { tracks: TrackResult[]; source: string }>();
 
 const SEARCH_CACHE_MAX = 50;
 
@@ -90,7 +90,6 @@ const SEARCH_CACHE_MAX = 50;
 
 async function apiFetch<T>(path: string): Promise<T> {
   const base = apiBase();
-  if (!base) throw new Error("EXPO_PUBLIC_DOMAIN not set");
   const res = await fetch(`${base}${path}`);
   if (!res.ok) throw new Error(`API ${path} → ${res.status}`);
   return res.json() as Promise<T>;
@@ -179,26 +178,29 @@ export async function probeAvailableTranslations(
 /**
  * Search for tracks by query string. Results are cached per trimmed query for
  * the lifetime of the session (up to SEARCH_CACHE_MAX entries, LRU-evicted).
+ * Returns tracks plus source ("musixmatch" | "demo") so callers can label results.
  */
-export async function searchTracks(query: string): Promise<TrackResult[]> {
+export async function searchTracks(
+  query: string,
+): Promise<{ tracks: TrackResult[]; source: string }> {
   const key = query.trim().toLowerCase();
-  if (!key) return [];
+  if (!key) return { tracks: [], source: "demo" };
   if (searchCache.has(key)) {
     const cached = searchCache.get(key)!;
     searchCache.delete(key);
     searchCache.set(key, cached);
     return cached;
   }
-  const data = await apiFetch<{ tracks: TrackResult[] }>(
+  const data = await apiFetch<{ tracks: TrackResult[]; source: string }>(
     `/search?q=${encodeURIComponent(key)}`,
   );
   if (searchCache.size >= SEARCH_CACHE_MAX) {
     const oldest = searchCache.keys().next().value;
     if (oldest !== undefined) searchCache.delete(oldest);
   }
-  const tracks = data.tracks ?? [];
-  searchCache.set(key, tracks);
-  return tracks;
+  const result = { tracks: data.tracks ?? [], source: data.source ?? "musixmatch" };
+  searchCache.set(key, result);
+  return result;
 }
 
 /** Clear all caches (useful for testing). */

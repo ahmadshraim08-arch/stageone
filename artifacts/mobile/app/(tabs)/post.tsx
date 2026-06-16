@@ -801,37 +801,50 @@ export default function PostScreen() {
                 </View>
               )}
               {songResults.length > 0 && !selectedSong && (
-                <View style={[styles.songResultsList, { borderColor: colors.border }]}>
-                  {songResults.map((track) => (
-                    <TouchableOpacity
-                      key={track.track_id}
-                      onPress={() => {
-                        setSelectedSong(track);
-                        setSongResults([]);
-                        setSelectedSection(null);
-                        setSections([]);
-                      }}
-                      style={[styles.songResultRow, { borderBottomColor: colors.border }]}
-                      activeOpacity={0.8}
-                    >
-                      <Ionicons name="musical-notes" size={16} color={colors.primary} />
-                      <View style={styles.songResultInfo}>
-                        <Text
-                          style={[styles.songResultTitle, { color: colors.foreground }]}
-                          numberOfLines={1}
-                        >
-                          {track.track_name}
-                        </Text>
-                        <Text
-                          style={[styles.songResultArtist, { color: colors.mutedForeground }]}
-                          numberOfLines={1}
-                        >
-                          {track.artist_name}
-                        </Text>
-                      </View>
-                      <Ionicons name="add-circle-outline" size={20} color={colors.primary} />
-                    </TouchableOpacity>
-                  ))}
+                <View style={{ position: "relative" }}>
+                  <View
+                    style={[
+                      styles.songResultsList,
+                      { borderColor: colors.border, opacity: isSongSearching ? 0.45 : 1 },
+                    ]}
+                  >
+                    {songResults.map((track) => (
+                      <TouchableOpacity
+                        key={track.track_id}
+                        onPress={() => {
+                          setSelectedSong(track);
+                          setSongResults([]);
+                          setSelectedSection(null);
+                          setSections([]);
+                        }}
+                        style={[styles.songResultRow, { borderBottomColor: colors.border }]}
+                        activeOpacity={0.8}
+                        disabled={isSongSearching}
+                      >
+                        <Ionicons name="musical-notes" size={16} color={colors.primary} />
+                        <View style={styles.songResultInfo}>
+                          <Text
+                            style={[styles.songResultTitle, { color: colors.foreground }]}
+                            numberOfLines={1}
+                          >
+                            {track.track_name}
+                          </Text>
+                          <Text
+                            style={[styles.songResultArtist, { color: colors.mutedForeground }]}
+                            numberOfLines={1}
+                          >
+                            {track.artist_name}
+                          </Text>
+                        </View>
+                        <Ionicons name="add-circle-outline" size={20} color={colors.primary} />
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  {isSongSearching && (
+                    <View style={styles.songResultsLoadingOverlay}>
+                      <ActivityIndicator size="small" color={colors.primary} />
+                    </View>
+                  )}
                 </View>
               )}
               <TouchableOpacity
@@ -1543,6 +1556,15 @@ const styles = StyleSheet.create({
   selectedSongTitle: { fontSize: 14, fontWeight: "700" },
   selectedSongArtist: { fontSize: 12, marginTop: 2 },
   songResultsList: { borderRadius: 12, borderWidth: 1, overflow: "hidden" },
+  songResultsLoadingOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: "center",
+    alignItems: "center",
+  },
   songResultRow: {
     flexDirection: "row",
     alignItems: "center",

@@ -46,11 +46,12 @@ function timeAgo(isoDate: string): string {
 
 function notificationLabel(n: ApiNotification): string {
   const actor = n.actor?.displayName ?? "Someone";
+  const postSuffix = n.postTitle ? ` "${n.postTitle}"` : "";
   switch (n.type) {
-    case "like": return `${actor} liked your Music Minute`;
-    case "comment": return `${actor} commented on your Music Minute`;
+    case "like": return `${actor} liked your Music Minute${postSuffix}`;
+    case "comment": return `${actor} commented on your Music Minute${postSuffix}`;
     case "follow": return `${actor} started following you`;
-    case "golden_mic": return `${actor} gave you a Golden Mic 🎤`;
+    case "golden_mic": return `${actor} gave you a Golden Mic 🎤${postSuffix}`;
     default: return `${actor} interacted with you`;
   }
 }

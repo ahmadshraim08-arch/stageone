@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, notificationsTable, usersTable } from "@workspace/db";
+import { db, notificationsTable, usersTable, postsTable } from "@workspace/db";
 import { eq, desc, isNull, and, lt } from "drizzle-orm";
 import { requireAuth } from "../middleware/auth";
 
@@ -14,22 +14,25 @@ router.get("/notifications", requireAuth, async (req, res): Promise<void> => {
   const conditions = [eq(notificationsTable.userId, req.userId)];
   if (cursor && !isNaN(cursor)) conditions.push(lt(notificationsTable.id, cursor));
 
+  const actorsTable = usersTable;
   const rows = await db
     .select({
       id: notificationsTable.id,
       type: notificationsTable.type,
       postId: notificationsTable.postId,
+      postTitle: postsTable.title,
       createdAt: notificationsTable.createdAt,
       readAt: notificationsTable.readAt,
       actor: {
-        id: usersTable.id,
-        username: usersTable.username,
-        displayName: usersTable.displayName,
-        avatarUrl: usersTable.avatarUrl,
+        id: actorsTable.id,
+        username: actorsTable.username,
+        displayName: actorsTable.displayName,
+        avatarUrl: actorsTable.avatarUrl,
       },
     })
     .from(notificationsTable)
-    .leftJoin(usersTable, eq(notificationsTable.actorId, usersTable.id))
+    .leftJoin(actorsTable, eq(notificationsTable.actorId, actorsTable.id))
+    .leftJoin(postsTable, eq(notificationsTable.postId, postsTable.id))
     .where(and(...conditions))
     .orderBy(desc(notificationsTable.id))
     .limit(limit + 1);

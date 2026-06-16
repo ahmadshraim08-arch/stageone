@@ -136,6 +136,7 @@ export interface ApiNotification {
   id: number;
   type: string;
   postId: number | null;
+  postTitle: string | null;
   createdAt: string;
   readAt: string | null;
   actor: {

@@ -70,6 +70,7 @@ type AnalysisPhase = "idle" | "upload" | "polling" | "confirming" | "done" | "sk
 const GENRES = [
   "Pop", "R&B", "Soul", "Rap", "Acoustic", "Indie",
   "Latin Pop", "Arabic Pop", "Singer-Songwriter", "Jazz", "Country", "Gospel",
+  "EDM", "Classical", "Reggae", "Rock", "Metal", "Blues", "Afrobeats", "K-Pop",
 ];
 const LANGUAGES = [
   "English", "Arabic", "Spanish", "French", "Portuguese", "Hindi", "Swahili", "Other",
@@ -90,6 +91,15 @@ function mapMusixmatchGenre(raw: string): string | null {
     [/singer.?songwriter/, "Singer-Songwriter"],
     [/indie|alternative/, "Indie"],
     [/acoustic|folk/, "Acoustic"],
+    // New genres — checked before the broad "pop" catch-all
+    [/classical|orchestral|opera|baroque|chamber/, "Classical"],
+    [/reggae|dancehall|ska/, "Reggae"],
+    [/afrobeat|afrobeats|afropop|afro pop/, "Afrobeats"],
+    [/k.?pop|korean pop/, "K-Pop"],
+    [/\bedm\b|\belectronic\b(?! pop)|\belectro\b|electronic dance|house music|techno|trance|dubstep|drum.and.bass|\bdance\b(?! pop)/, "EDM"],
+    [/metal|metalcore|heavy/, "Metal"],
+    [/rock/, "Rock"],
+    [/blues/, "Blues"],
     [/pop/, "Pop"],
   ];
   for (const [pattern, genre] of tests) {

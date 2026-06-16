@@ -10,11 +10,11 @@ import {
 } from "@workspace/db";
 import { eq, count, isNull, and, ne } from "drizzle-orm";
 import { sql } from "drizzle-orm";
-import { requireAuth } from "../middleware/auth";
+import { requireAuth, optionalAuth } from "../middleware/auth";
 
 const router: IRouter = Router();
 
-router.get("/users/:username", requireAuth, async (req, res): Promise<void> => {
+router.get("/users/:username", optionalAuth, async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.username)
     ? req.params.username[0]
     : req.params.username;
@@ -30,7 +30,7 @@ router.get("/users/:username", requireAuth, async (req, res): Promise<void> => {
     return;
   }
 
-  const viewerId = req.userId;
+  const viewerId = req.userIdOptional;
 
   const [postCount] = await db
     .select({ value: count() })
@@ -48,7 +48,7 @@ router.get("/users/:username", requireAuth, async (req, res): Promise<void> => {
     .where(eq(followsTable.followerId, user.id));
 
   let viewerIsFollowing = false;
-  if (viewerId !== user.id) {
+  if (viewerId !== undefined && viewerId !== user.id) {
     const [followRow] = await db
       .select({ id: followsTable.id })
       .from(followsTable)

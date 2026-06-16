@@ -170,7 +170,7 @@ export const getMe = (token: string): Promise<ApiUser> =>
 // ---------------------------------------------------------------------------
 
 export const getPosts = (
-  token: string,
+  token: string | null,
   params: { feed?: string; userId?: number; cursor?: number; limit?: number } = {},
 ): Promise<{ items: ApiPost[]; nextCursor: number | null }> => {
   const q = new URLSearchParams();
@@ -278,7 +278,7 @@ export const markNotificationsRead = (token: string) =>
 // Users
 // ---------------------------------------------------------------------------
 
-export const getUserByUsername = (token: string, username: string): Promise<ApiUser> =>
+export const getUserByUsername = (token: string | null, username: string): Promise<ApiUser> =>
   apiFetch<ApiUser>(`/users/${encodeURIComponent(username)}`, token);
 
 export const patchMe = (

@@ -1,11 +1,11 @@
 import { Router, type IRouter } from "express";
 import { db, postsTable, usersTable, likesTable, followsTable, goldenMicTransactionsTable } from "@workspace/db";
 import { eq, desc, isNull, and, lt, inArray, sql, gte } from "drizzle-orm";
-import { requireAuth } from "../middleware/auth";
+import { requireAuth, optionalAuth } from "../middleware/auth";
 
 const router: IRouter = Router();
 
-router.get("/posts", requireAuth, async (req, res): Promise<void> => {
+router.get("/posts", optionalAuth, async (req, res): Promise<void> => {
   const limitRaw = req.query.limit as string | undefined;
   const cursorRaw = req.query.cursor as string | undefined;
   const userIdRaw = req.query.userId as string | undefined;
@@ -14,13 +14,13 @@ router.get("/posts", requireAuth, async (req, res): Promise<void> => {
   const limit = Math.min(parseInt(limitRaw ?? "20", 10) || 20, 100);
   const cursor = cursorRaw ? parseInt(cursorRaw, 10) : undefined;
   const filterUserId = userIdRaw ? parseInt(userIdRaw, 10) : undefined;
-  const viewerId = req.userId;
+  const viewerId = req.userIdOptional;
 
   const conditions = [isNull(postsTable.deletedAt)];
   if (filterUserId && !isNaN(filterUserId)) conditions.push(eq(postsTable.userId, filterUserId));
   if (cursor && !isNaN(cursor)) conditions.push(lt(postsTable.id, cursor));
 
-  if (feed === "following") {
+  if (feed === "following" && viewerId !== undefined) {
     conditions.push(
       inArray(
         postsTable.userId,
@@ -56,9 +56,15 @@ router.get("/posts", requireAuth, async (req, res): Promise<void> => {
       likesCount: sql<number>`(SELECT COUNT(*) FROM likes WHERE likes.post_id = ${postsTable.id})`,
       commentsCount: sql<number>`(SELECT COUNT(*) FROM comments WHERE comments.post_id = ${postsTable.id} AND comments.deleted_at IS NULL)`,
       savesCount: sql<number>`(SELECT COUNT(*) FROM saves WHERE saves.post_id = ${postsTable.id})`,
-      viewerHasLiked: sql<boolean>`EXISTS(SELECT 1 FROM likes WHERE likes.post_id = ${postsTable.id} AND likes.user_id = ${viewerId})`,
-      viewerHasSaved: sql<boolean>`EXISTS(SELECT 1 FROM saves WHERE saves.post_id = ${postsTable.id} AND saves.user_id = ${viewerId})`,
-      viewerIsFollowing: sql<boolean>`EXISTS(SELECT 1 FROM follows WHERE follows.follower_id = ${viewerId} AND follows.following_id = ${postsTable.userId})`,
+      viewerHasLiked: viewerId !== undefined
+        ? sql<boolean>`EXISTS(SELECT 1 FROM likes WHERE likes.post_id = ${postsTable.id} AND likes.user_id = ${viewerId})`
+        : sql<boolean>`false`,
+      viewerHasSaved: viewerId !== undefined
+        ? sql<boolean>`EXISTS(SELECT 1 FROM saves WHERE saves.post_id = ${postsTable.id} AND saves.user_id = ${viewerId})`
+        : sql<boolean>`false`,
+      viewerIsFollowing: viewerId !== undefined
+        ? sql<boolean>`EXISTS(SELECT 1 FROM follows WHERE follows.follower_id = ${viewerId} AND follows.following_id = ${postsTable.userId})`
+        : sql<boolean>`false`,
     })
     .from(postsTable)
     .innerJoin(usersTable, eq(postsTable.userId, usersTable.id))

@@ -6,6 +6,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Platform,
   ScrollView,
   StyleSheet,
@@ -54,13 +55,12 @@ export default function CreatorProfileScreen() {
   const [apiPosts, setApiPosts] = useState<MusicMinute[] | null>(null);
   const [postsLoading, setPostsLoading] = useState(false);
 
-  // Try to load real API user data; seed data serves as fallback for demo creators
+  // Load real API user data for both guests and signed-in users
   useEffect(() => {
-    if (!isSignedIn || !username) return;
+    if (!username) return;
     (async () => {
       try {
-        const token = await getToken();
-        if (!token) return;
+        const token = isSignedIn ? (await getToken()) : null;
         const u = await getApiUserByUsername(token, username);
         setApiUser(u);
         // Fetch the creator's real posts using their DB id
@@ -117,6 +117,36 @@ export default function CreatorProfileScreen() {
     (apiUser ? currentUser?.dbId === apiUser.id : false) ||
     currentUser?.username === user?.username;
   const topPad = Platform.OS === "web" ? 67 : insets.top;
+
+  function promptSignUp() {
+    Alert.alert(
+      "Sign up to interact",
+      "Create a free account to follow creators and send Golden Mics.",
+      [
+        { text: "Not now", style: "cancel" },
+        {
+          text: "Sign up",
+          onPress: () => router.push("/(auth)/sign-up" as never),
+        },
+      ],
+    );
+  }
+
+  function handleFollowPress() {
+    if (!isSignedIn) {
+      promptSignUp();
+      return;
+    }
+    toggleFollow(followUserId);
+  }
+
+  function handleGoldenMicPress() {
+    if (!isSignedIn) {
+      promptSignUp();
+      return;
+    }
+    setGmVisible(true);
+  }
 
   if (!user && !apiUser) {
     return (
@@ -207,9 +237,9 @@ export default function CreatorProfileScreen() {
             )}
           </View>
           <View style={styles.heroActions}>
-            {currentUser && !isOwnProfile && (
+            {!isOwnProfile && (
               <TouchableOpacity
-                onPress={() => toggleFollow(displayProfile.id)}
+                onPress={handleFollowPress}
                 style={[
                   styles.followBtn,
                   {
@@ -225,7 +255,7 @@ export default function CreatorProfileScreen() {
               </TouchableOpacity>
             )}
             <TouchableOpacity
-              onPress={() => setGmVisible(true)}
+              onPress={handleGoldenMicPress}
               style={[styles.gmBtn, { backgroundColor: `${colors.gold}15`, borderColor: `${colors.gold}40` }]}
               activeOpacity={0.8}
             >

@@ -1,5 +1,11 @@
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
+import {
+  cacheDirectory as fsCacheDirectory,
+  copyAsync as fsCopyAsync,
+  getInfoAsync as fsGetInfoAsync,
+  deleteAsync as fsDeleteAsync,
+} from "expo-file-system/legacy";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import { router, useLocalSearchParams } from "expo-router";
@@ -38,6 +44,37 @@ import { uploadVideo, createPost } from "@/lib/uploads";
 import { TimingSlider } from "@/components/TimingSlider";
 
 type PerformanceType = "original" | "cover" | "freestyle";
+
+function detectVideoMime(asset: ImagePicker.ImagePickerAsset): { mimeType: string; ext: string } {
+  if (asset.mimeType) {
+    const mt = asset.mimeType.toLowerCase();
+    if (mt === "video/quicktime") return { mimeType: mt, ext: ".mov" };
+    if (mt === "video/x-m4v") return { mimeType: mt, ext: ".m4v" };
+    if (mt === "video/mp4") return { mimeType: mt, ext: ".mp4" };
+  }
+  const match = (asset.uri ?? "").match(/\.([a-zA-Z0-9]+)(?:\?|$)/);
+  const rawExt = match?.[1]?.toLowerCase();
+  if (rawExt === "mov") return { mimeType: "video/quicktime", ext: ".mov" };
+  if (rawExt === "m4v") return { mimeType: "video/x-m4v", ext: ".m4v" };
+  if (rawExt === "mp4") return { mimeType: "video/mp4", ext: ".mp4" };
+  return { mimeType: "video/mp4", ext: ".mp4" };
+}
+
+async function stabiliseVideoUri(
+  asset: ImagePicker.ImagePickerAsset,
+): Promise<{ uri: string; mimeType: string }> {
+  const { mimeType, ext } = detectVideoMime(asset);
+  const rand = Math.random().toString(36).slice(2, 8);
+  const dest = `${fsCacheDirectory ?? ""}music-minute-${Date.now()}-${rand}${ext}`;
+  await fsCopyAsync({ from: asset.uri, to: dest });
+  const info = await fsGetInfoAsync(dest);
+  if (!info.exists || info.size === 0) {
+    throw new Error(
+      "The video could not be prepared for upload. If it is stored in iCloud, try downloading it to your device first.",
+    );
+  }
+  return { uri: dest, mimeType };
+}
 
 const GENRES = [
   "Pop", "R&B", "Soul", "Rap", "Acoustic", "Indie",
@@ -89,6 +126,9 @@ export default function PostScreen() {
 
   const [step, setStep] = useState(1);
   const [videoUri, setVideoUri] = useState<string | null>(null);
+  const [videoMimeType, setVideoMimeType] = useState<string>("video/mp4");
+  const [cachedVideoUri, setCachedVideoUri] = useState<string | null>(null);
+  const [isPicking, setIsPicking] = useState(false);
   const [videoDurationSec, setVideoDurationSec] = useState(0);
   const [performanceType, setPerformanceType] = useState<PerformanceType>("original");
 
@@ -373,48 +413,85 @@ export default function PostScreen() {
   // ----- Media helpers -----
 
   const handlePickVideo = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== "granted") {
-      Alert.alert("Permission needed", "Please allow access to your photo library to upload a video.");
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Videos,
-      allowsEditing: true,
-      videoMaxDuration: 60,
-      quality: 0.8,
-    });
-    if (!result.canceled && result.assets[0]) {
+    if (isPicking) return;
+    setIsPicking(true);
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (perm.status !== "granted") {
+        Alert.alert(
+          "Photo Library Access Required",
+          "StageOne needs access to your photo library to upload a Music Minute.",
+        );
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+        allowsEditing: false,
+        videoMaxDuration: 60,
+        base64: false,
+      });
+      if (result.canceled || !result.assets[0]) return;
       const asset = result.assets[0];
       if ((asset.duration ?? 0) > 61000) {
-        Alert.alert("Too long", "Please select a video under 60 seconds.");
+        Alert.alert("Too Long", "Music Minutes can be up to 60 seconds.");
         return;
       }
       const MAX_BYTES = 100 * 1024 * 1024;
       if (asset.fileSize && asset.fileSize > MAX_BYTES) {
-        Alert.alert("File too large", "Please select a video under 100 MB.");
+        Alert.alert("File Too Large", "Please select a video under 100 MB.");
         return;
       }
-      setVideoUri(asset.uri);
+      if (cachedVideoUri) {
+        fsDeleteAsync(cachedVideoUri, { idempotent: true }).catch(() => {});
+      }
+      const { uri: stableUri, mimeType } = await stabiliseVideoUri(asset);
+      setVideoUri(stableUri);
+      setCachedVideoUri(stableUri);
+      setVideoMimeType(mimeType);
       setVideoDurationSec(Math.round((asset.duration ?? 0) / 1000));
+    } catch (err) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : "The selected video could not be read. Please try another file.";
+      Alert.alert("Video Error", msg);
+    } finally {
+      setIsPicking(false);
     }
   };
 
   const handleRecordVideo = async () => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== "granted") {
-      Alert.alert("Permission needed", "Please allow camera access to record a video.");
-      return;
-    }
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Videos,
-      videoMaxDuration: 60,
-      quality: 0.8,
-    });
-    if (!result.canceled && result.assets[0]) {
+    if (isPicking) return;
+    setIsPicking(true);
+    try {
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (perm.status !== "granted") {
+        Alert.alert("Camera Access Required", "Please allow camera access to record a video.");
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+        videoMaxDuration: 60,
+        base64: false,
+      });
+      if (result.canceled || !result.assets[0]) return;
       const asset = result.assets[0];
-      setVideoUri(asset.uri);
+      if (cachedVideoUri) {
+        fsDeleteAsync(cachedVideoUri, { idempotent: true }).catch(() => {});
+      }
+      const { uri: stableUri, mimeType } = await stabiliseVideoUri(asset);
+      setVideoUri(stableUri);
+      setCachedVideoUri(stableUri);
+      setVideoMimeType(mimeType);
       setVideoDurationSec(Math.round((asset.duration ?? 0) / 1000));
+    } catch (err) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : "The recorded video could not be prepared. Please try again.";
+      Alert.alert("Video Error", msg);
+    } finally {
+      setIsPicking(false);
     }
   };
 
@@ -468,8 +545,7 @@ export default function PostScreen() {
 
     let cloudVideoUrl: string;
     try {
-      const mimeType = videoUri.endsWith(".mov") ? "video/quicktime" : "video/mp4";
-      const result = await uploadVideo(videoUri, mimeType, token, (pct) => {
+      const result = await uploadVideo(videoUri, videoMimeType, token, (pct) => {
         setUploadProgress(pct);
       });
       cloudVideoUrl = result.videoUrl;

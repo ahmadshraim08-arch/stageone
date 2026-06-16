@@ -131,6 +131,19 @@ router.patch("/users/me", requireAuth, async (req, res): Promise<void> => {
   });
 });
 
+router.post("/users/me/push-token", requireAuth, async (req, res): Promise<void> => {
+  const { token } = req.body as { token?: string };
+  if (!token || typeof token !== "string") {
+    res.status(400).json({ error: "token is required" });
+    return;
+  }
+  await db
+    .update(usersTable)
+    .set({ expoPushToken: token })
+    .where(eq(usersTable.id, req.userId));
+  res.sendStatus(204);
+});
+
 router.get("/users/me/unread", requireAuth, async (req, res): Promise<void> => {
   const unreadMessagesResult = await db.execute(sql`
     SELECT COUNT(*)::int AS cnt

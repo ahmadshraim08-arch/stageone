@@ -1,4 +1,5 @@
 import { useAuth, useUser } from "@clerk/expo";
+import * as Notifications from "expo-notifications";
 import React, {
   createContext,
   useCallback,
@@ -8,6 +9,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { AppState, Platform } from "react-native";
 
 import {
   MusicMinute,
@@ -35,6 +37,7 @@ import {
   sendMessage as apiSendMessage,
   upsertMe,
   patchMe,
+  registerPushToken,
 } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
@@ -346,12 +349,68 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           fetchFeedInternal(token),
           fetchUnreadCounts(token),
         ]);
+
+        // Register Expo push token best-effort (native only; no-op on web)
+        if (Platform.OS !== "web") {
+          void (async () => {
+            try {
+              type PermStatus = { granted: boolean; canAskAgain: boolean };
+              const existing = await Notifications.getPermissionsAsync() as unknown as PermStatus;
+              let granted = existing.granted;
+              if (!granted && existing.canAskAgain) {
+                const result = await Notifications.requestPermissionsAsync() as unknown as PermStatus;
+                granted = result.granted;
+              }
+              if (!granted) return;
+
+              if (Platform.OS === "android") {
+                await Notifications.setNotificationChannelAsync("default", {
+                  name: "StageOne",
+                  importance: Notifications.AndroidImportance.MAX,
+                  vibrationPattern: [0, 250, 250, 250],
+                  lightColor: "#A855F7",
+                });
+              }
+
+              const pushToken = await Notifications.getExpoPushTokenAsync();
+              await registerPushToken(token, pushToken.data).catch(() => {});
+            } catch {
+              // best-effort; don't block sign-in flow
+            }
+          })();
+        }
       } catch {
       } finally {
         setIsLoaded(true);
       }
     })();
   }, [authLoaded, isSignedIn, clerkUser?.id]);
+
+  // ------------------------------------------------------------------
+  // Keep unread count fresh: refetch on foreground resume + increment
+  // when a push notification arrives while the app is in the foreground.
+  // ------------------------------------------------------------------
+  useEffect(() => {
+    if (!isSignedIn || Platform.OS === "web") return;
+
+    const handleAppStateChange = (nextState: string) => {
+      if (nextState === "active") {
+        getToken().then((t) => {
+          if (t) fetchUnreadCounts(t);
+        });
+      }
+    };
+    const appStateSub = AppState.addEventListener("change", handleAppStateChange);
+
+    const notifSub = Notifications.addNotificationReceivedListener(() => {
+      setUnreadNotifications((n) => n + 1);
+    });
+
+    return () => {
+      appStateSub.remove();
+      notifSub.remove();
+    };
+  }, [isSignedIn, getToken, fetchUnreadCounts]);
 
   // ------------------------------------------------------------------
   // Exposed actions

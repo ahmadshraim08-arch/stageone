@@ -292,6 +292,12 @@ export const patchMe = (
 export const getUnreadCounts = (token: string) =>
   apiFetch<{ messages: number; notifications: number }>("/users/me/unread", token);
 
+export const registerPushToken = (token: string, pushToken: string) =>
+  apiFetch<void>("/users/me/push-token", token, {
+    method: "POST",
+    body: JSON.stringify({ token: pushToken }),
+  });
+
 // ---------------------------------------------------------------------------
 // Health
 // ---------------------------------------------------------------------------

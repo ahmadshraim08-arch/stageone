@@ -97,6 +97,7 @@
   },
   "dependencies": {
     "expo-av": "^16.0.8",
-    "expo-clipboard": "^56.0.4"
+    "expo-clipboard": "^56.0.4",
+    "expo-notifications": "^56.0.17"
   }
 }

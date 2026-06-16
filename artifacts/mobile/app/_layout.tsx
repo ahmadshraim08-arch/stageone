@@ -8,9 +8,10 @@ import {
 import { ClerkLoaded, ClerkProvider } from "@clerk/expo";
 import { tokenCache } from "@clerk/expo/token-cache";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Stack } from "expo-router";
+import * as Notifications from "expo-notifications";
+import { router, Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
-import React, { useEffect } from "react";
+import React, { useEffect, useRef } from "react";
 import { Platform } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
@@ -18,6 +19,18 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AppProvider } from "@/context/AppContext";
+
+if (Platform.OS !== "web") {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    }),
+  });
+}
 
 SplashScreen.preventAutoHideAsync();
 
@@ -29,6 +42,27 @@ const proxyUrl = process.env.EXPO_PUBLIC_CLERK_PROXY_URL || undefined;
 const cache = Platform.OS !== "web" ? tokenCache : undefined;
 
 function RootLayoutNav() {
+  const notificationResponseListener = useRef<Notifications.Subscription | null>(null);
+
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+
+    // Cold-start: if the app was launched by tapping a notification,
+    // getLastNotificationResponseAsync captures that intent.
+    Notifications.getLastNotificationResponseAsync().then((response) => {
+      if (response) {
+        setTimeout(() => router.push("/notifications"), 0);
+      }
+    });
+
+    notificationResponseListener.current = Notifications.addNotificationResponseReceivedListener(() => {
+      router.push("/notifications");
+    });
+    return () => {
+      notificationResponseListener.current?.remove();
+    };
+  }, []);
+
   return (
     <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#05020A" } }}>
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />

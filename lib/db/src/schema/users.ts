@@ -12,6 +12,7 @@ export const usersTable = pgTable("users", {
   genres: text("genres").array().notNull().default([]),
   languages: text("languages").array().notNull().default([]),
   goldenMicBalance: integer("golden_mic_balance").notNull().default(0),
+  expoPushToken: text("expo_push_token"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

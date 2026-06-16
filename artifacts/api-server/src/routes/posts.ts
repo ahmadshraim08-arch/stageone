@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { db, postsTable, usersTable, likesTable, followsTable, goldenMicTransactionsTable } from "@workspace/db";
 import { eq, desc, isNull, and, lt, inArray, sql, gte } from "drizzle-orm";
 import { requireAuth, optionalAuth } from "../middleware/auth";
+import { createNotification } from "../lib/notifications";
 
 const router: IRouter = Router();
 
@@ -220,7 +221,7 @@ router.post("/posts/:id/like", requireAuth, async (req, res): Promise<void> => {
   }
 
   const [post] = await db
-    .select({ id: postsTable.id })
+    .select({ id: postsTable.id, userId: postsTable.userId })
     .from(postsTable)
     .where(and(eq(postsTable.id, postId), isNull(postsTable.deletedAt)))
     .limit(1);
@@ -230,10 +231,16 @@ router.post("/posts/:id/like", requireAuth, async (req, res): Promise<void> => {
     return;
   }
 
-  await db
+  const result = await db
     .insert(likesTable)
     .values({ userId: req.userId, postId })
-    .onConflictDoNothing();
+    .onConflictDoNothing()
+    .returning();
+
+  // Only notify on a new like (skip if already liked / conflict)
+  if (result.length > 0) {
+    void createNotification("like", post.userId, req.userId, postId);
+  }
 
   const [{ likesCount }] = await db
     .select({ likesCount: sql<number>`COUNT(*)` })

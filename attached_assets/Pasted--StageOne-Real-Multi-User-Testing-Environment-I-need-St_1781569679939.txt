@@ -1,0 +1,705 @@
+# StageOne — Real Multi-User Testing Environment
+
+I need StageOne to support real testing across multiple physical phones.
+
+Do not treat this as a single-device demo anymore.
+
+I want to create real accounts on my phone, my brother’s phone, and my sister’s phone so we can test the app as separate users at the same time.
+
+The purpose is to verify that StageOne behaves like a real social network with shared backend data, persistent accounts, following, direct sharing, messaging, uploads, Golden Mics, and Musixmatch-powered features.
+
+Before coding, inspect the current authentication, backend, database, storage, API routes, and app state.
+
+Do not create another isolated mock-data system if a real backend can be used.
+
+---
+
+# Main Goal
+
+Create a stable test environment where at least three real users can:
+
+1. Create separate accounts from different phones.
+2. Log in and log out independently.
+3. Create and edit profiles.
+4. Follow one another.
+5. See follower and following updates on both sides.
+6. Upload Music Minutes.
+7. See each other’s Music Minutes in the feed and on profiles.
+8. Like, comment, save, and give Golden Mics.
+9. Share Music Minutes directly with one another.
+10. Send and receive text messages.
+11. See unread message indicators.
+12. Test Musixmatch search, lyrics, sections, translations, mood, and “Sing This Part.”
+13. Confirm all data remains after closing and reopening the app.
+
+The app must use one shared backend and database so actions performed on one phone appear on the other phones.
+
+---
+
+# 1. Real Authentication
+
+Implement or stabilize real authentication.
+
+Use the project’s existing authentication provider if one already exists.
+
+If authentication is currently mocked or stored only in local state, replace it with a real backend authentication system that works across devices.
+
+Acceptable options include:
+
+* Supabase Auth
+* Firebase Auth
+* Clerk
+* Replit-compatible email/password authentication
+* The existing backend auth system if already implemented correctly
+
+Required account features:
+
+* Sign up with email and password
+* Log in with email and password
+* Log out
+* Persistent session
+* Unique user ID
+* Unique username
+* Duplicate-email protection
+* Duplicate-username protection
+* Password validation
+* Clear authentication errors
+* Session restoration after app restart
+
+Optional if easy:
+
+* Email verification
+* Password reset
+
+Do not use one shared demo user for all phones.
+
+Each person must have an independent account and user ID.
+
+---
+
+# 2. Shared Test Environment
+
+The backend must be reachable from multiple physical phones.
+
+Do not use:
+
+```text
+localhost
+127.0.0.1
+```
+
+as the mobile API address.
+
+Use a deployed or externally reachable Replit backend URL.
+
+Create a clear environment configuration such as:
+
+```env
+EXPO_PUBLIC_API_URL=https://your-stageone-api.replit.app
+MUSIXMATCH_API_KEY=server-side-only
+```
+
+The Musixmatch key must remain on the backend.
+
+The mobile app should use the public API base URL.
+
+Required:
+
+* HTTPS endpoint
+* Shared database
+* Shared file/video storage
+* No device-specific local database as the source of truth
+* Clear handling when the backend is offline
+
+Before completion, verify that three separate phones can connect to the same backend.
+
+---
+
+# 3. Real User Profiles
+
+Each account should have:
+
+* User ID
+* Display name
+* Username
+* Avatar
+* Bio
+* Genres
+* Languages
+* City/country optional
+* Golden Mic balance
+* Posts count
+* Followers count
+* Following count
+* Joined date
+
+The current user should see their own profile.
+
+Other users should see a public profile with:
+
+* Follow or Following button
+* Message button
+* Music Minutes
+* Follower and following counts
+* Total Golden Mics received
+* Rise Score if available
+
+Do not display a Follow button on the user’s own profile.
+
+Profile information must come from the backend, not only local state.
+
+---
+
+# 4. Following and Mutual Connections
+
+Implement real follow relationships between accounts.
+
+Required behavior:
+
+* User A can follow User B.
+* User B receives a notification.
+* User A’s following count increases.
+* User B’s follower count increases.
+* The relationship remains after restarting both apps.
+* User A can unfollow User B.
+* Counts update correctly.
+* Following feed shows posts from followed users.
+
+Suggested database model:
+
+```ts
+type Follow = {
+  id: string;
+  followerId: string;
+  followingId: string;
+  createdAt: string;
+};
+```
+
+Prevent duplicate follow records.
+
+Prevent a user from following themselves.
+
+If User A follows User B and User B follows User A, label the relationship as:
+
+**Friends**
+
+This mutual-follow state can be used in the share and messaging UI.
+
+---
+
+# 5. Real Music Minute Uploads
+
+Users must be able to upload Music Minutes from different phones.
+
+Required upload behavior:
+
+* Select a video from device gallery
+* Optional recording support if already implemented
+* Upload video to shared storage
+* Create backend Music Minute record
+* Attach current user ID
+* Add title/caption
+* Select Original, Cover, or Freestyle
+* Add genre and language
+* Attach Musixmatch track ID for covers
+* Attach lyric section references when selected
+* Confirm rights checkbox
+* Publish
+
+After publishing:
+
+* Post appears on the creator’s profile
+* Post appears in the Home feed
+* Followers can see it
+* Other users can like, comment, save, share, and give Golden Mics
+* Counts update for all devices
+* Post remains after app restart
+
+Do not store uploaded videos only inside one phone.
+
+Use shared storage and save a remote video URL in the database.
+
+Add upload states:
+
+* Selecting
+* Uploading
+* Processing
+* Publishing
+* Success
+* Failed with Retry
+
+Show upload progress when possible.
+
+---
+
+# 6. Feed Synchronization
+
+The Home and Following feeds must use backend data.
+
+Required:
+
+* New Music Minutes from another user can be loaded without rebuilding the app
+* Pull to refresh
+* Refresh after publishing
+* Refresh after following someone
+* Correct creator profile information
+* Correct engagement counts
+* Only one video plays at a time
+* Video stops when leaving the feed
+* Tap video to pause/resume
+
+For MVP testing, normal refresh is acceptable.
+
+Real-time feed updates are optional, but direct messages should ideally use real-time updates.
+
+---
+
+# 7. Likes, Comments, Saves, and Golden Mics
+
+All interactions must be associated with real user IDs.
+
+## Likes
+
+* One like per user per Music Minute
+* User can unlike
+* Count updates consistently
+
+## Comments
+
+* User can add comment
+* Comments show creator identity
+* Comments persist
+* User can delete their own comment
+* Other devices can see new comments after refresh or in real time
+
+## Saves
+
+* User can save and unsave a Music Minute
+* Saved posts appear on the user profile
+* Saves are private to that user
+
+## Golden Mics
+
+* Each new account receives the configured free Golden Mic balance
+* User can send Golden Mics to another creator’s Music Minute
+* Cannot send more than available balance
+* Sender balance decreases
+* Receiver/post Golden Mic count increases
+* Transaction is stored
+* The same transaction is visible consistently across devices
+
+Golden Mic purchases remain simulated for Musicathon.
+
+No real payment collection.
+
+---
+
+# 8. Direct Sharing Between Users
+
+The Share button on a Music Minute should open a real StageOne sharing sheet.
+
+Sections:
+
+## Send on StageOne
+
+* Search users
+* Friends
+* Following
+* Recent conversations
+* Select recipient
+* Optional message
+* Send button
+
+## External sharing
+
+* Copy link
+* Native device share sheet
+
+When User A shares a Music Minute with User B:
+
+* A direct message is created
+* The shared post appears in the conversation
+* User B receives an unread message indicator
+* User B can tap the shared Music Minute and open it
+* The post creator, caption, video, and engagement data load correctly
+
+Suggested message types:
+
+```ts
+type MessageType =
+  | "text"
+  | "music_minute_share";
+```
+
+Suggested message model:
+
+```ts
+type DirectMessage = {
+  id: string;
+  conversationId: string;
+  senderId: string;
+  type: "text" | "music_minute_share";
+  text?: string;
+  musicMinuteId?: string;
+  createdAt: string;
+  readAt?: string;
+};
+```
+
+---
+
+# 9. One-to-One Text Messaging
+
+Add a basic direct messaging system so users can text one another.
+
+Required screens:
+
+* Inbox / Messages list
+* Conversation screen
+* New message / user search
+* Unread badge
+
+Required messaging behavior:
+
+* User A sends text to User B
+* User B receives it
+* Messages appear in correct order
+* Sender and recipient are clearly distinguished
+* Timestamp is shown
+* Conversation persists after restart
+* Unread messages are counted
+* Opening conversation marks messages as read
+* User can share a Music Minute inside the conversation
+
+Preferred:
+
+* Real-time delivery using Supabase Realtime, Firebase listeners, WebSockets, or the current backend’s real-time system
+
+Fallback:
+
+* Poll messages periodically and refresh on screen focus
+
+Do not implement group messaging yet.
+
+One-to-one messaging is enough for MVP testing.
+
+Suggested models:
+
+```ts
+type Conversation = {
+  id: string;
+  participantIds: string[];
+  lastMessageAt: string;
+  createdAt: string;
+};
+```
+
+```ts
+type Message = {
+  id: string;
+  conversationId: string;
+  senderId: string;
+  type: "text" | "music_minute_share";
+  text?: string;
+  musicMinuteId?: string;
+  createdAt: string;
+  readAt?: string;
+};
+```
+
+Prevent duplicate one-to-one conversations between the same two users.
+
+---
+
+# 10. Notifications
+
+Add basic notifications inside the app.
+
+Notification types:
+
+* New follower
+* New comment
+* New Golden Mic
+* Music Minute shared with you
+* New direct message
+* Challenge activity optional
+
+Create a Notifications or Inbox entry accessible from the app.
+
+A basic database-backed notification list is enough.
+
+Required:
+
+* Unread count
+* Mark as read
+* Tap notification to open the correct destination
+
+Push notifications are optional for this hackathon stage.
+
+---
+
+# 11. Musixmatch End-to-End Testing
+
+I need to verify that the Musixmatch integration is actually working with real accounts and real posts.
+
+The backend must clearly distinguish:
+
+```ts
+source: "musixmatch" | "demo"
+```
+
+Do not silently use mock data while making it appear to be live Musixmatch data.
+
+## Test flow
+
+A creator should be able to:
+
+1. Start posting a Cover.
+2. Search by song title.
+3. Search by artist.
+4. Search by lyric phrase if supported.
+5. View track results.
+6. Select a canonical Musixmatch track.
+7. Fetch lyrics.
+8. Fetch available synced lyric timing.
+9. View/select a lyric section.
+10. Fetch translation.
+11. Fetch mood/theme data if supported.
+12. Publish the Music Minute with references attached.
+
+A viewer on another phone should be able to:
+
+1. Open the post.
+2. Toggle lyric overlay.
+3. See line-level progression.
+4. Change translation language.
+5. See mood tags.
+6. Tap Sing This Part.
+7. Open the posting flow with the same track and section pre-filled.
+8. Upload their own response.
+
+## API health screen
+
+Add a hidden developer/testing screen or admin section showing:
+
+* Backend reachable
+* Database reachable
+* Storage reachable
+* Musixmatch key configured
+* Musixmatch search status
+* Lyrics endpoint status
+* Segments endpoint status
+* Translation endpoint status
+* Mood endpoint status
+* Current source: Musixmatch or demo
+* Last error without exposing secrets
+
+This will help diagnose failures during testing.
+
+Never display or log the actual API key.
+
+---
+
+# 12. Test Accounts
+
+Allow normal signup, but also support optional seeded test accounts if useful.
+
+Example:
+
+```text
+ahmad@test.stageone
+brother@test.stageone
+sister@test.stageone
+```
+
+Do not hardcode passwords in the public repository.
+
+A better approach is to create the accounts manually through the app.
+
+Seed creators may remain for visual demo purposes, but real accounts must use the same backend data model.
+
+Clearly distinguish:
+
+* Seed demo users
+* Real registered users
+
+Real users must not lose data when seed data is refreshed.
+
+---
+
+# 13. Privacy and Access Rules
+
+Add backend authorization rules.
+
+A user may:
+
+* Edit only their own profile
+* Delete only their own Music Minutes
+* Delete only their own comments
+* Read public Music Minutes
+* Read messages only from conversations they participate in
+* Send messages only as themselves
+* View their own saved posts
+* View their own Golden Mic balance
+* Follow/unfollow as themselves
+
+No user should be able to modify another user’s profile or messages by changing an ID in a request.
+
+Validate authorization on the backend, not only in the UI.
+
+---
+
+# 14. Test Mode
+
+Add a visible or developer-only Test Mode section.
+
+It should allow:
+
+* View current user ID
+* View API base URL
+* Verify backend connection
+* Refresh current account data
+* Refresh feed
+* Refresh messages
+* View Musixmatch data source
+* Copy diagnostic summary
+* Log out
+
+Do not include secrets.
+
+A simple diagnostic screen will make multi-device testing much easier.
+
+---
+
+# 15. Required Manual Test Scenario
+
+After implementation, test this exact scenario using three separate accounts.
+
+## Account A — Ahmad
+
+1. Create account.
+2. Complete profile.
+3. Upload a Cover Music Minute.
+4. Search and tag a song through Musixmatch.
+5. Select a lyric section.
+6. Publish.
+
+## Account B — Brother
+
+1. Create a separate account on another phone.
+2. Find Ahmad in Discover.
+3. Follow Ahmad.
+4. Open Ahmad’s Music Minute.
+5. Like it.
+6. Comment on it.
+7. Give a Golden Mic.
+8. Save it.
+9. Share it with Account C.
+10. Send Ahmad a text message.
+
+## Account C — Sister
+
+1. Create a separate account on a third phone.
+2. Receive the shared Music Minute.
+3. Open it from the conversation.
+4. Follow Ahmad.
+5. Reply with a text.
+6. View lyrics.
+7. Change translation.
+8. Tap Sing This Part.
+9. Upload a response Music Minute.
+
+## Final verification
+
+On Ahmad’s phone:
+
+* Follower count increases
+* Comments appear
+* Golden Mic count increases
+* Message from Brother appears
+* Sister’s response post can be opened
+
+On Brother’s phone:
+
+* Following relationship remains
+* Sent share appears in conversation
+* Saved Music Minute appears in Saved section
+
+On Sister’s phone:
+
+* Shared Music Minute remains in conversation
+* Reply message persists
+* Response Music Minute appears on profile
+
+Restart all three apps and confirm all data remains.
+
+---
+
+# 16. Error States
+
+Add clear errors for:
+
+* Backend unavailable
+* Login failure
+* Duplicate username
+* Upload failure
+* Storage failure
+* Message send failure
+* User search failure
+* Musixmatch unavailable
+* No lyrics available
+* No translation available
+* No synced lyrics available
+* Golden Mic balance too low
+
+Each error should offer a retry or safe alternative.
+
+Do not leave blank screens.
+
+---
+
+# 17. Acceptance Criteria
+
+The task is complete only when:
+
+* Three physical devices can use separate accounts.
+* All devices connect to the same backend.
+* Sessions persist.
+* Follow relationships work on both sides.
+* Uploaded Music Minutes appear for all relevant users.
+* Profile post lists are correct.
+* Likes, comments, saves, and Golden Mics persist.
+* Direct Music Minute sharing works.
+* One-to-one text messaging works.
+* Unread counts work.
+* Musixmatch search and lyric features can be tested.
+* The app clearly reports real Musixmatch versus demo fallback.
+* Closing and reopening the app does not erase data.
+* No API key is exposed in the mobile app.
+* Typecheck passes.
+* The exact three-account test scenario has been completed.
+
+---
+
+# 18. Completion Report
+
+After implementation, provide:
+
+1. Authentication provider used.
+2. Database used.
+3. Video storage used.
+4. Public backend URL configuration.
+5. Files and migrations changed.
+6. Messaging architecture.
+7. Follow/share architecture.
+8. Musixmatch endpoints tested.
+9. Which Musixmatch calls used real data.
+10. Which calls used demo fallback.
+11. Typecheck result.
+12. Results of the three-device test scenario.
+13. Remaining limitations.
+
+Do not claim the feature is complete if it has only been tested with multiple accounts on one local device.
+
+The goal is a real, persistent, multi-user StageOne test environment that works across multiple physical phones.

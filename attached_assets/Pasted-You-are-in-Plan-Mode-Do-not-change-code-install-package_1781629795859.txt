@@ -1,0 +1,532 @@
+You are in Plan Mode.
+
+Do not change code, install packages, modify secrets, run migrations, edit database data, or add features.
+
+I need a fresh, honest status report of the current StageOne app after all recent work.
+
+The goal is to understand:
+
+* What has actually been accomplished
+* What is fully working
+* What is partially working
+* What is demo, seeded, or simulated
+* What is implemented but broken
+* What is not implemented
+* What still requires physical-device testing
+* How far we are from a functioning MVP that can be tested reliably
+
+Inspect the current codebase, API routes, database schema, storage setup, logs, and mobile flows before answering.
+
+Do not guess.
+
+# Status labels
+
+Use exactly one of these labels for every feature:
+
+* Fully working
+* Partially working
+* Demo or seeded only
+* Implemented but currently broken
+* Not implemented
+* Unable to verify without physical-device testing
+
+Do not call something fully working just because code exists.
+
+# 1. Simple explanation of StageOne
+
+Explain StageOne to a first-time user in one short paragraph.
+
+Include:
+
+* What Music Minutes are
+* What singers do
+* What fans do
+* What Golden Mics do
+* How Musixmatch is used
+* What LyricStage is
+* What StageOne Live represents
+
+# 2. Current end-to-end creator journey
+
+Audit this exact flow:
+
+1. Open the app
+2. Create an account
+3. Complete a profile
+4. Select or record a video
+5. Choose Original, Cover, or Freestyle
+6. Analyze the uploaded video
+7. Extract audio
+8. Transcribe the performance
+9. Detect the song automatically
+10. Search Musixmatch manually if detection fails
+11. Confirm the track
+12. Detect the performed lyric range
+13. Select or edit the lyric section
+14. Preview lyrics with the actual video
+15. Fine-tune synchronization
+16. Detect or select genre
+17. Detect or select language
+18. Add title and caption
+19. Upload video to App Storage
+20. Verify the upload
+21. Create the post in PostgreSQL
+22. Show the post in Home
+23. Show the post on Profile
+24. Play it from Profile
+25. Edit it
+26. Delete it
+
+For every step, report:
+
+* Status
+* What actually happens today
+* Whether it uses real or demo data
+* Known bug
+* Whether it blocks MVP testing
+
+# 3. Viewer journey
+
+Audit:
+
+* Guest feed browsing
+* Signed-in feed
+* Autoplay
+* Pause and resume
+* Mute
+* Swipe between videos
+* Only one video playing at a time
+* Like
+* Comment
+* Save
+* Follow
+* Golden Mic
+* Share
+* Direct message
+* View lyrics
+* Switch translation
+* Tap “Sing This Part”
+* Open creator profile
+* View creator posts
+
+For each feature, report current status and whether it has been tested with real uploaded posts.
+
+# 4. Authentication and profiles
+
+Audit:
+
+* Clerk sign-up
+* Email verification
+* Login
+* Logout
+* Session persistence
+* Multiple accounts
+* Guest mode
+* Own profile
+* Other user profiles
+* Edit profile
+* Avatar upload
+* Followers
+* Following
+* Golden Mic total
+* Post count
+* “My Music Minutes”
+* Saved posts
+* Profile-grid playback
+* Owner-only edit
+* Owner-only delete
+
+Pay special attention to the current issue:
+
+* Real posts exist in Home
+* Profile still shows 0 posts
+* Uploaded Music Minutes do not appear under “My Music Minutes”
+
+Determine the exact root cause if possible:
+
+* Clerk ID versus database user ID
+* Development versus production database
+* Incorrect posts query
+* Stale state
+* Username mismatch
+* Post-status filter
+* Missing refresh
+
+# 5. Video upload and storage
+
+Audit the full upload pipeline:
+
+* Picker
+* iPhone file access
+* Local cache copy
+* Duration validation
+* File-size validation
+* MIME handling
+* Upload session
+* Signed upload URL
+* Direct upload
+* Upload progress
+* Storage verification
+* Database post creation
+* Retry
+* Duplicate prevention
+* Persistent playback
+
+Report whether the following earlier issues are fully resolved:
+
+* Failed to read picked video
+* Upload stuck at 0%
+* HTTP 502
+* Storage unavailable
+* Couldn’t verify your upload
+
+Confirm:
+
+* Which App Storage environment is used
+* Which database environment is used
+* Whether the phone uses development or published API
+* Whether real uploaded objects exist
+* Whether real post rows exist
+* Whether remote playback survives app restart
+
+# 6. Audio analysis and song detection
+
+Audit:
+
+* FFmpeg availability
+* Audio extraction
+* Direct-video transcription support
+* Transcription provider
+* Word timestamps
+* Language detection
+* Automatic song detection
+* Musixmatch lyric search
+* Candidate ranking
+* Confidence handling
+* Manual search fallback
+* Temporary-file cleanup
+
+Pay special attention to:
+
+`Audio extraction failed: spawn ffmpeg ENOENT`
+
+Report:
+
+* Whether FFmpeg is installed
+* Whether it works in development
+* Whether it works in deployment
+* Whether the app can bypass FFmpeg
+* Whether analysis succeeds on a real iPhone video
+
+# 7. Musixmatch integration
+
+Audit every Musixmatch capability separately:
+
+1. Real track search
+2. Track metadata
+3. Plain lyrics
+4. Synced subtitles
+5. RichSync
+6. Translation
+7. Mood analysis
+8. Segment generation
+9. Performed lyric-range detection
+10. “Sing This Part”
+11. Challenge reuse
+12. Attribution and source labeling
+
+For each, report:
+
+* Status
+* Endpoint used
+* Real Musixmatch, derived, demo, or unavailable
+* Whether it works in the mobile UI
+* Whether it has been tested with real uploaded posts
+
+Confirm whether the current fallback chain is:
+
+* RichSync
+* Subtitle
+* Plain lyrics
+* Demo or unavailable
+
+Confirm the app never returns:
+
+* `hasSync: true` with `lines: []`
+* Invalid `0–0` sections
+* Demo data labeled as Musixmatch
+
+# 8. Automatic genre and language detection
+
+Audit:
+
+* Cover genre from Musixmatch metadata
+* Original/freestyle genre from audio analysis
+* Language from transcription
+* Language from Musixmatch metadata
+* Confidence
+* Manual override
+* Persisted detection source
+
+Report whether Step 4 is:
+
+* Fully automatic
+* Pre-filled but editable
+* Manual only
+* Broken
+
+# 9. Social features
+
+Audit:
+
+* Likes
+* Comments
+* Saves
+* Follow/unfollow
+* Follower counts
+* Golden Mics
+* Golden Mic balances
+* Direct messages
+* Shared Music Minutes in messages
+* Unread badges
+* Notifications
+* Push notifications
+* Second-account behavior
+
+Clearly distinguish:
+
+* Code exists
+* Backend works
+* Physically tested
+* Not tested
+
+# 10. Discover, rankings, and Live
+
+Audit:
+
+## Discover
+
+* Genre filters
+* Mood filters
+* Search
+* Trending singers
+* Rising voices
+* Challenges
+* LyricStage carousel
+
+## Rise Chart
+
+* Real users
+* Real scores
+* Real Golden Mic impact
+* Seeded users
+* Backend ranking endpoint
+
+## StageOne Live
+
+* Real video stream
+* Real chat
+* Real viewer count
+* Real eligibility
+* Real Golden Mic support
+* Simulated content
+
+Clearly label anything seeded, hardcoded, or mocked.
+
+# 11. Real data versus demo data
+
+Create a table covering:
+
+* Real Clerk users
+* Real PostgreSQL users
+* Real uploaded videos
+* Real Home posts
+* Real Profile posts
+* Real likes
+* Real comments
+* Real follows
+* Real Golden Mics
+* Real messages
+* Real notifications
+* Real Musixmatch search
+* Real plain lyrics
+* Real RichSync
+* Real translations
+* Real song detection
+* Real transcription
+* Real genre detection
+* Real language detection
+* Seeded creators
+* Seeded challenges
+* Seeded Rise Chart
+* Mock StageOne Live
+
+Do not blur real and simulated behavior.
+
+# 12. Infrastructure status
+
+Report:
+
+* Mobile framework
+* Expo version
+* Video library
+* API server
+* PostgreSQL
+* Replit App Storage
+* Clerk
+* Musixmatch
+* ElevenLabs or other analysis partner
+* FFmpeg
+* Development environment
+* Production environment
+* Typecheck status
+* Current API health
+* Current storage health
+* Current database health
+
+# 13. Known bugs
+
+List every known bug.
+
+For each include:
+
+* Priority: Critical, High, Medium, Low
+* User-facing symptom
+* Root cause
+* Whether fix exists in code
+* Whether physically verified
+* Whether it blocks MVP testing
+* Whether it blocks judge demo
+
+Include at least:
+
+* Profile shows 0 posts
+* My Music Minutes empty
+* Edit/delete unavailable
+* FFmpeg ENOENT
+* Automatic analysis failure
+* Genre/language not detected
+* Shared DM post not opening
+* Notifications not tested
+* Rise Chart seeded
+* StageOne Live simulated
+
+# 14. MVP definition
+
+Use this MVP definition:
+
+A functioning StageOne MVP must allow:
+
+1. Create an account
+2. Complete a profile
+3. Upload a real Music Minute
+4. Store the video persistently
+5. Create a real post
+6. See it in Home
+7. See it in Profile
+8. Play it from Profile
+9. Edit it
+10. Delete it
+11. Search or detect a real song
+12. Attach real Musixmatch lyrics
+13. Select or detect a lyric range
+14. Preview lyrics with the video
+15. Translate lyrics
+16. Like, comment, save, follow, and send a Golden Mic
+17. Share a post through direct messages
+18. Persist everything after restart
+19. Work across at least two physical phones
+
+For each item mark:
+
+* Complete
+* Partial
+* Blocked
+* Not started
+
+# 15. Completion percentages
+
+Estimate percentages for:
+
+* UI and visual polish
+* Authentication
+* Profiles
+* Video upload
+* Video feed
+* Post lifecycle
+* Musixmatch integration
+* Automatic analysis
+* LyricStage
+* Social features
+* Messaging
+* Multi-user readiness
+* Backend and persistence
+* Physical-device readiness
+* MVP readiness
+* Judge-demo readiness
+* Full long-term vision
+
+Explain every estimate briefly.
+
+Do not inflate the numbers.
+
+# 16. Distance from MVP
+
+Answer clearly:
+
+* How many critical blockers remain?
+* How many high-priority blockers remain?
+* Which exact features must be fixed before full testing?
+* Which features can wait until after MVP?
+* Are we ready for single-phone testing?
+* Are we ready for two-phone testing?
+* Are we ready for three-phone testing?
+* Are we ready for judge demonstration?
+
+Give a direct answer.
+
+# 17. Recommended next priorities
+
+Provide the next five tasks in exact order.
+
+For each task include:
+
+* Why it matters
+* What it unlocks
+* Whether it blocks testing
+* Estimated complexity: Small, Medium, Large
+* Whether it requires physical-device verification
+
+Do not recommend new features before fixing existing blockers.
+
+# 18. Strongest working demo today
+
+Describe the best demo we can safely show now using only verified features.
+
+Do not include unverified or broken steps.
+
+# 19. Final founder summary
+
+End with a concise summary under 250 words covering:
+
+* What is genuinely working
+* What is still partial
+* What is still demo-only
+* The biggest blocker
+* How far the app is from a functioning MVP
+* Whether we should begin testing now
+
+# Final rules
+
+* Plan Mode only
+* No code changes
+* No migrations
+* No data changes
+* No package installation
+* No secret changes
+* No feature work
+* Inspect before reporting
+* Do not guess
+* Distinguish code existence from proven functionality
+* Distinguish real data from demo data
+* Be direct and honest

@@ -25,6 +25,12 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  FadeInDown,
+} from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAuth } from "@clerk/expo";
@@ -47,6 +53,7 @@ import {
   type AnalysisCandidate,
 } from "@/lib/api";
 import { uploadVideo, createPost } from "@/lib/uploads";
+import { AnalysisWaveform } from "@/components/AnalysisWaveform";
 import { TimingSlider } from "@/components/TimingSlider";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -161,6 +168,60 @@ async function stabiliseVideoUri(
     );
   }
   return { uri: dest, mimeType };
+}
+
+// ─── Animated Checklist Item ──────────────────────────────────────────────────
+
+function AnimatedCheckItem({
+  isDone,
+  isActive,
+  label,
+  primaryColor,
+  foregroundColor,
+  mutedColor,
+  borderColor,
+}: {
+  isDone: boolean;
+  isActive: boolean;
+  label: string;
+  primaryColor: string;
+  foregroundColor: string;
+  mutedColor: string;
+  borderColor: string;
+}) {
+  const scale = useSharedValue(isDone ? 1 : 0);
+  const prevDone = useRef(isDone);
+
+  useEffect(() => {
+    if (isDone && !prevDone.current) {
+      scale.value = 0;
+      scale.value = withSpring(1, { damping: 10, stiffness: 280 });
+    }
+    prevDone.current = isDone;
+  }, [isDone]);
+
+  const iconStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: isDone ? scale.value : 1 }],
+  }));
+
+  const iconColor = isDone ? "#22C55E" : isActive ? primaryColor : borderColor;
+  const textColor = isDone ? "#22C55E" : isActive ? foregroundColor : mutedColor;
+
+  return (
+    <Animated.View
+      entering={FadeInDown.duration(250).springify()}
+      style={styles.stageCheckItem}
+    >
+      <Animated.View style={iconStyle}>
+        <Ionicons
+          name={isDone ? "checkmark-circle" : isActive ? "radio-button-on" : "ellipse-outline"}
+          size={16}
+          color={iconColor}
+        />
+      </Animated.View>
+      <Text style={[styles.stageCheckLabel, { color: textColor }]}>{label}</Text>
+    </Animated.View>
+  );
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -1011,20 +1072,16 @@ export default function PostScreen() {
                     Our AI is listening to your recording. This takes about 30–60 seconds.
                   </Text>
 
-                  {/* Stage card */}
-                  <View style={[styles.stageCard, { backgroundColor: colors.card, borderColor: `${colors.primary}40` }]}>
-                    <ActivityIndicator color={colors.primary} size="small" />
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.stageLabel, { color: colors.foreground }]}>
-                        {STAGE_LABELS[analysisStage] ?? analysisStage}
-                      </Text>
-                      <View style={[styles.stageProgressTrack, { backgroundColor: colors.muted }]}>
-                        <View style={[styles.stageProgressFill, { width: `${analysisProgress}%`, backgroundColor: colors.primary }]} />
-                      </View>
+                  {/* Animated waveform + floating music notes */}
+                  <View style={[styles.waveformCard, { backgroundColor: colors.card, borderColor: `${colors.primary}30` }]}>
+                    <AnalysisWaveform stageLabel={STAGE_LABELS[analysisStage] ?? analysisStage} />
+                    {/* Progress bar */}
+                    <View style={[styles.stageProgressTrack, { backgroundColor: colors.muted, marginTop: 4 }]}>
+                      <View style={[styles.stageProgressFill, { width: `${analysisProgress}%`, backgroundColor: colors.primary }]} />
                     </View>
                   </View>
 
-                  {/* Stage checklist */}
+                  {/* Stage checklist with animated checkmarks */}
                   <View style={[styles.stageChecklist, { backgroundColor: colors.card, borderColor: colors.border }]}>
                     {[
                       { key: "preparing", label: "Preparing audio" },
@@ -1033,22 +1090,20 @@ export default function PostScreen() {
                       { key: "searching_musixmatch", label: "Searching for song" },
                       { key: "matching_lyrics", label: "Matching lyrics" },
                     ].map(({ key, label }) => {
-                      // Authoritative: a stage is "done" only if we actually saw it run
                       const isDone = seenStages.has(key) && analysisStage !== key;
                       const isActive = analysisStage === key;
-                      // Only show isolating_vocals if LALAL.AI actually ran it
                       if (key === "isolating_vocals" && !seenStages.has("isolating_vocals")) return null;
                       return (
-                        <View key={key} style={styles.stageCheckItem}>
-                          <Ionicons
-                            name={isDone ? "checkmark-circle" : isActive ? "radio-button-on" : "ellipse-outline"}
-                            size={16}
-                            color={isDone ? "#22C55E" : isActive ? colors.primary : colors.border}
-                          />
-                          <Text style={[styles.stageCheckLabel, { color: isDone ? "#22C55E" : isActive ? colors.foreground : colors.mutedForeground }]}>
-                            {label}
-                          </Text>
-                        </View>
+                        <AnimatedCheckItem
+                          key={key}
+                          isDone={isDone}
+                          isActive={isActive}
+                          label={label}
+                          primaryColor={colors.primary}
+                          foregroundColor={colors.foreground}
+                          mutedColor={colors.mutedForeground}
+                          borderColor={colors.border}
+                        />
                       );
                     })}
                   </View>
@@ -1913,6 +1968,7 @@ const styles = StyleSheet.create({
   aiHintText: { flex: 1, fontSize: 12, lineHeight: 17 },
   // Analysis
   stageCard: { flexDirection: "row", alignItems: "center", gap: 12, padding: 16, borderRadius: 14, borderWidth: 1 },
+  waveformCard: { padding: 16, borderRadius: 14, borderWidth: 1, alignItems: "center", gap: 8 },
   stageLabel: { fontSize: 14, fontWeight: "700", marginBottom: 6 },
   stageProgressTrack: { height: 4, borderRadius: 2, overflow: "hidden" },
   stageProgressFill: { height: 4, borderRadius: 2 },

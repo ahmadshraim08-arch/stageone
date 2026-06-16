@@ -66,6 +66,7 @@ router.post("/auth/me", async (req, res): Promise<void> => {
     .onConflictDoUpdate({
       target: usersTable.clerkId,
       set: {
+        clerkId: sql`excluded.clerk_id`,
         ...(body.username ? { username: sql`excluded.username` } : {}),
         ...(body.displayName ? { displayName: sql`excluded.display_name` } : {}),
         ...(body.avatarUrl !== undefined ? { avatarUrl: sql`excluded.avatar_url` } : {}),

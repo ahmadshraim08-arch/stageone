@@ -588,12 +588,17 @@ export default function PostScreen() {
     if (step !== 7 || prefillStep7AppliedRef.current) return;
     prefillStep7AppliedRef.current = true;
 
-    // Only apply detected genre when the currently-selected song matches the AI-detected
-    // track (i.e. the user has not manually overridden the song in Step 4).
-    const songMatchesDetected =
-      !selectedSong || selectedSong.track_id === analysisResult?.detectedTrackId;
+    // Genre: requires (a) a confirmed/matching selected song, AND (b) song-match
+    // confidence above the medium threshold used throughout the confirming UI (≥ 0.4).
+    // This prevents prefilling when the user overrode the song in Step 4 or when
+    // confidence is too low to trust the genre metadata.
+    const songConfidence = analysisResult?.songMatchConfidence ?? 0;
+    const songIsConfirmedMatch =
+      selectedSong !== null &&
+      selectedSong.track_id === analysisResult?.detectedTrackId &&
+      songConfidence >= 0.4;
 
-    if (analysisResult?.musixmatchGenre && songMatchesDetected) {
+    if (analysisResult?.musixmatchGenre && songIsConfirmedMatch) {
       const mapped = mapMusixmatchGenre(analysisResult.musixmatchGenre);
       if (mapped && GENRES.includes(mapped)) {
         setGenre(mapped);
@@ -601,7 +606,8 @@ export default function PostScreen() {
       }
     }
 
-    // Only apply detected language when we have a confident, known mapping.
+    // Language: only prefill when we have a confident, known mapping.
+    // mapDetectedLanguage returns null for unrecognised codes, so no fallback to "Other".
     if (analysisResult?.detectedLanguage) {
       const mapped = mapDetectedLanguage(analysisResult.detectedLanguage);
       if (mapped && LANGUAGES.includes(mapped)) {
@@ -1097,11 +1103,14 @@ export default function PostScreen() {
 
   const handleReset = () => {
     setPosted(false); setStep(1); setVideoUri(null); setTitle(""); setCaption("");
+    setGenre("Pop"); setLanguage("English");
     setSelectedSong(null); setSongQuery(""); setFullLyrics(null); setNoLyricsMode(false);
     setTimingOffsetMs(0); setRightsConfirmed(false);
     setUploadedVideoUrl(null); setUploadedObjectKey(null);
     setAnalysisPhase("idle"); setAnalysisJobId(null); setAnalysisResult(null);
     setCyaniteGenreAccepted(false); setCyaniteMoodsAccepted(false);
+    setDetectedGenre(null); setDetectedLanguage(null);
+    prefillStep7AppliedRef.current = false;
     router.push("/");
   };
 

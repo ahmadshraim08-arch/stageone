@@ -1,6 +1,11 @@
 /**
  * Upload helpers for StageOne mobile.
- * Uses XMLHttpRequest so progress events are available.
+ *
+ * Video upload uses a two-phase direct-to-GCS approach to avoid the
+ * Replit reverse-proxy timeout and memory-buffering issues:
+ *   Phase A — POST /uploads/video/sign  → get a signed GCS PUT URL
+ *   Phase B — PUT directly to GCS       → progress events work (Content-Length is known)
+ *   Phase C — POST /uploads/video/confirm → verify + make public + return permanent URL
  */
 
 function apiBase(): string {
@@ -60,18 +65,24 @@ function xhrUpload<T>(
 
     xhr.onerror = () => reject(new Error("Network error during upload"));
     xhr.ontimeout = () => reject(new Error("Upload timed out"));
-    xhr.timeout = 5 * 60 * 1000; // 5 min
+    xhr.timeout = 5 * 60 * 1000;
 
     xhr.send(formData);
   });
 }
 
 /**
- * Upload a video file to object storage.
- * @param uri        Local file URI (from ImagePicker)
- * @param mimeType   MIME type of the file (e.g. "video/mp4")
- * @param token      Clerk session token
- * @param onProgress Optional callback called with 0–100 progress
+ * Upload a video file to object storage using a two-phase direct-to-GCS approach.
+ *
+ * Phase A: Request a 15-min signed PUT URL from the server.
+ * Phase B: PUT raw binary directly to GCS (bypasses Replit proxy; real progress available).
+ * Phase C: Confirm with the server (verify object exists, make public, get permanent URL).
+ *
+ * Progress callback receives 0–100:
+ *   0      = starting phase A
+ *   1–90   = phase B upload progress (real bytes if Content-Length is computable)
+ *   95     = phase B complete, awaiting confirm
+ *   100    = fully confirmed
  */
 export async function uploadVideo(
   uri: string,
@@ -80,23 +91,93 @@ export async function uploadVideo(
   onProgress?: UploadProgressCallback,
 ): Promise<UploadVideoResult> {
   const base = apiBase();
-  const form = new FormData();
-  const filename = uri.split("/").pop() ?? "video.mp4";
-  form.append("video", { uri, name: filename, type: mimeType } as unknown as Blob);
+  const requestId = Math.random().toString(36).slice(2, 10);
+  const filename = uri.split("/").pop() ?? "video";
+  const uriScheme = uri.split(":")[0] ?? "unknown";
 
-  return xhrUpload<UploadVideoResult>(
-    `${base}/uploads/video`,
-    form,
-    token,
-    onProgress,
-  );
+  console.log(`[upload:${requestId}] Starting`, { filename, mimeType, uriScheme });
+  onProgress?.(0);
+
+  // ─── Phase A: get signed PUT URL ───────────────────────────────────────────
+  const signRes = await fetch(`${base}/uploads/video/sign`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ mimeType }),
+  });
+  if (!signRes.ok) {
+    let message = `Could not prepare upload (HTTP ${signRes.status})`;
+    try {
+      const body = await signRes.json() as { error?: string };
+      if (body.error) message = body.error;
+    } catch {}
+    throw new Error(message);
+  }
+  const { signedUrl, objectKey } = await signRes.json() as {
+    signedUrl: string;
+    objectKey: string;
+  };
+  console.log(`[upload:${requestId}] Phase A done, objectKey prefix:`, objectKey.slice(0, 40));
+
+  // ─── Phase B: PUT binary directly to GCS (no Replit proxy in the path) ────
+  await new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", signedUrl);
+    xhr.setRequestHeader("Content-Type", mimeType);
+
+    if (onProgress && xhr.upload) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          onProgress(Math.min(90, Math.round((e.loaded / e.total) * 90)));
+        }
+      };
+    }
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+      } else {
+        reject(new Error(`Storage upload failed (HTTP ${xhr.status})`));
+      }
+    };
+    xhr.onerror = () => reject(new Error("Network error during upload to storage"));
+    xhr.ontimeout = () => reject(new Error("Upload timed out — keep the app open and try again"));
+    xhr.timeout = 10 * 60 * 1000; // 10 min for large files
+
+    // React Native XHR supports sending a file URI as raw binary body
+    xhr.send({ uri, type: mimeType, name: filename } as unknown as Blob);
+  });
+
+  console.log(`[upload:${requestId}] Phase B done (GCS PUT complete)`);
+  onProgress?.(95);
+
+  // ─── Phase C: confirm with server (verify + makePublic + return URL) ────────
+  const confirmRes = await fetch(`${base}/uploads/video/confirm`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ objectKey, mimeType }),
+  });
+  if (!confirmRes.ok) {
+    let message = `Could not finalize upload (HTTP ${confirmRes.status})`;
+    try {
+      const body = await confirmRes.json() as { error?: string };
+      if (body.error) message = body.error;
+    } catch {}
+    throw new Error(message);
+  }
+  const result = await confirmRes.json() as { videoUrl: string; thumbnailUrl: string | null };
+  console.log(`[upload:${requestId}] Phase C done, URL:`, result.videoUrl.slice(0, 50));
+  onProgress?.(100);
+  return result;
 }
 
 /**
  * Upload an avatar image to object storage.
- * @param uri      Local file URI (from ImagePicker)
- * @param mimeType MIME type of the file (e.g. "image/jpeg")
- * @param token    Clerk session token
  */
 export async function uploadAvatar(
   uri: string,

@@ -1665,9 +1665,13 @@ export default function PostScreen() {
               {isPosting && (
                 <View style={[styles.uploadProgressCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                   <Text style={[styles.uploadProgressLabel, { color: colors.mutedForeground }]}>
-                    {uploadPhase === "uploading"
-                      ? `Uploading video… ${uploadProgress}%`
-                      : "Saving post…"}
+                    {uploadPhase === "saving"
+                      ? "Saving your Music Minute…"
+                      : uploadProgress === 0
+                        ? "Preparing video…"
+                        : uploadProgress < 95
+                          ? `Uploading… ${uploadProgress}%`
+                          : "Finishing upload…"}
                   </Text>
                   <View style={[styles.uploadProgressTrack, { backgroundColor: colors.muted }]}>
                     <View

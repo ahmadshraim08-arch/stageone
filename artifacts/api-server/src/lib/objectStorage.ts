@@ -227,6 +227,26 @@ function parseObjectPath(path: string): {
   };
 }
 
+export async function signVideoUploadUrl(mimeType: string): Promise<{
+  signedUrl: string;
+  objectKey: string;
+}> {
+  const privateDir = process.env.PRIVATE_OBJECT_DIR;
+  if (!privateDir) throw new Error("PRIVATE_OBJECT_DIR is not set");
+  const ext =
+    mimeType === "video/quicktime" ? ".mov" : mimeType === "video/x-m4v" ? ".m4v" : ".mp4";
+  const objectId = randomUUID();
+  const fullPath = `${privateDir}/videos/${objectId}${ext}`;
+  const { bucketName, objectName } = parseObjectPath(fullPath);
+  const signedUrl = await signObjectURL({
+    bucketName,
+    objectName,
+    method: "PUT",
+    ttlSec: 900,
+  });
+  return { signedUrl, objectKey: `${bucketName}/${objectName}` };
+}
+
 async function signObjectURL({
   bucketName,
   objectName,

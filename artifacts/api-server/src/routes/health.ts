@@ -41,6 +41,24 @@ async function checkStorageHealth(): Promise<{ ok: boolean; code: string }> {
   }
 }
 
+/** Quick smoke-test of each partner API: just check whether the key/secret is configured. */
+function checkPartnerKeys(): {
+  musixmatch: string;
+  elevenlabs: string;
+  lalalai: string;
+  cyanite: string;
+} {
+  return {
+    musixmatch: process.env.MUSIXMATCH_API_KEY ? "configured" : "not_configured",
+    elevenlabs: process.env.ELEVENLABS_API_KEY ? "configured" : "not_configured",
+    lalalai: process.env.LALALAI_API_KEY ? "configured" : "not_configured",
+    cyanite:
+      process.env.CYANITE_CLIENT_ID && process.env.CYANITE_CLIENT_SECRET
+        ? "configured"
+        : "not_configured",
+  };
+}
+
 router.get("/healthz", async (req, res): Promise<void> => {
   let dbOk = false;
   try {
@@ -52,15 +70,15 @@ router.get("/healthz", async (req, res): Promise<void> => {
     req.log.warn({ err }, "DB health check failed");
   }
 
-  const musixmatchConfigured = Boolean(process.env.MUSIXMATCH_API_KEY);
   const storage = await checkStorageHealth();
+  const partners = checkPartnerKeys();
 
   const ok = dbOk && storage.ok;
   res.status(ok ? 200 : 503).json({
     api: "ok",
     db: dbOk ? "ok" : "error",
-    musixmatch: musixmatchConfigured ? "configured" : "not configured",
     storage: storage.ok ? "ok" : storage.code,
+    partners,
   });
 });
 

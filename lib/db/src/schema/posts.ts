@@ -1,4 +1,4 @@
-import { pgTable, serial, integer, text, boolean, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, serial, integer, text, boolean, timestamp, real, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { usersTable } from "./users";
@@ -27,6 +27,19 @@ export const postsTable = pgTable("posts", {
   lyricSectionEndLine: integer("lyric_section_end_line"),
   lyricTimingMode: text("lyric_timing_mode"),
   lyricTimingOffsetMs: integer("lyric_timing_offset_ms"),
+  lyricTimingAnchors: jsonb("lyric_timing_anchors"),
+  analysisJobId: text("analysis_job_id"),
+  songMatchConfidence: real("song_match_confidence"),
+  lyricStartWord: integer("lyric_start_word"),
+  lyricEndWord: integer("lyric_end_word"),
+  lyricRangeConfidence: real("lyric_range_confidence"),
+  syncConfidence: real("sync_confidence"),
+  vocalIsolationUsed: boolean("vocal_isolation_used"),
+  transcriptionSource: text("transcription_source"),
+  cyaniteGenre: text("cyanite_genre"),
+  cyaniteMoods: jsonb("cyanite_moods").$type<string[]>(),
+  cyaniteEnergy: text("cyanite_energy"),
+  audioAnalysisSource: text("audio_analysis_source"),
   rightsConfirmed: boolean("rights_confirmed").notNull().default(false),
   goldenMicCount: integer("golden_mic_count").notNull().default(0),
   viewCount: integer("view_count").notNull().default(0),

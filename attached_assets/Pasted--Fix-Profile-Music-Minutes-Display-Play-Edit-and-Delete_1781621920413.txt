@@ -1,0 +1,328 @@
+# Fix Profile Music Minutes: Display, Play, Edit, and Delete
+
+Do not add unrelated features.
+
+Two real Music Minutes have now uploaded successfully and appear correctly in the Home feed. However, the authenticated creator’s Profile screen still shows:
+
+* `0 Posts`
+* An empty “My Music Minutes” area
+* No way to open, play, edit, or delete the uploaded posts
+
+This is now the highest-priority profile bug.
+
+The expected behavior is:
+
+1. A creator publishes a Music Minute.
+2. It appears in Home.
+3. It appears immediately under “My Music Minutes.”
+4. The profile post count updates.
+5. Tapping the post opens and plays it.
+6. The owner can edit its metadata.
+7. The owner can delete it safely.
+8. The result persists after restarting the app.
+
+## 1. Diagnose the identity mismatch
+
+Inspect the two successfully uploaded posts and compare:
+
+* Clerk authenticated user ID
+* Internal PostgreSQL user ID
+* Post `creator_id` or `user_id`
+* Profile user ID
+* Profile username
+* Feed creator ID
+* Current `/users/me` response
+* Query used to fetch “My Music Minutes”
+
+The likely issue is that one part of the app uses the Clerk ID while another expects the internal database user ID.
+
+Report the exact mismatch before changing code.
+
+Use one canonical relationship:
+
+* Clerk ID identifies the authenticated account.
+* The API resolves it to the internal PostgreSQL user row.
+* Posts reference the internal PostgreSQL user ID.
+* Profile-post queries use that resolved internal user ID.
+
+Do not filter posts only by display name or username.
+
+## 2. Add or repair a canonical “my posts” endpoint
+
+Prefer a protected endpoint such as:
+
+`GET /api/users/me/posts`
+
+The server should:
+
+1. Authenticate through Clerk.
+2. Resolve the authenticated user’s database row.
+3. Query posts owned by that internal user ID.
+4. Return newest posts first.
+5. Include the data needed for the profile grid and post viewer.
+
+Return fields such as:
+
+* Post ID
+* Creator ID
+* Title
+* Caption
+* Video object key
+* Playback URL or media route
+* Thumbnail/poster URL if available
+* Duration
+* Genre
+* Language
+* Performance type
+* Song title
+* Artist
+* Musixmatch track ID
+* Lyric section label
+* Timing mode
+* Created timestamp
+* Like, comment, save, view, and Golden Mic counts
+
+Do not rely on seeded AppContext posts for the authenticated profile.
+
+## 3. Fix the profile post count
+
+The post count must come from the same real backend query as the grid.
+
+Requirements:
+
+* Show the number of published posts owned by the profile user.
+* Update after publishing.
+* Update after deletion.
+* Remain correct after restarting.
+* Do not hardcode or derive it from seeded data.
+
+For the current account, the expected count should become `2` after the existing posts are loaded.
+
+## 4. Render the “My Music Minutes” grid
+
+Display real uploaded posts under “My Music Minutes.”
+
+Use a responsive grid with:
+
+* Video thumbnail or poster
+* Play icon
+* Duration
+* Optional lyric/music badge
+* View count if available
+
+If no generated thumbnail exists, use a safe video poster or first-frame preview supported by the current video library.
+
+Do not autoplay every grid item.
+
+Do not show an empty area while data is loading.
+
+Provide proper states:
+
+* Loading skeleton
+* Empty state
+* Error with Retry
+* Populated grid
+
+Empty-state text:
+
+**Your Music Minutes will appear here after you publish.**
+
+## 5. Refresh profile after publishing
+
+After the post API confirms publication:
+
+1. Invalidate or refresh the Home feed.
+2. Invalidate or refresh the authenticated user’s posts.
+3. Refresh the profile stats.
+4. Navigate to the new post or Profile as intended.
+
+Do not require an app restart or manual pull-to-refresh.
+
+Avoid maintaining separate unsynchronized arrays for:
+
+* Feed posts
+* Newly uploaded posts
+* Profile posts
+
+Use backend data as the source of truth.
+
+## 6. Open and play a post from Profile
+
+Tapping a profile-grid item must open a real post viewer or post-detail screen using only the post ID.
+
+The detail screen must:
+
+* Fetch the current post from the API
+* Play the remote uploaded video
+* Support play and pause
+* Support mute
+* Show title, caption, creator, song, genre, and lyric-section information
+* Display Musixmatch lyrics when available
+* Stop playback when leaving the screen
+
+Do not redirect the user to the creation flow when they tap their existing post.
+
+Do not pass the entire post or lyric array through navigation.
+
+## 7. Add an owner-only post menu
+
+For posts owned by the signed-in user, show a menu such as:
+
+* Edit Music Minute
+* Delete Music Minute
+* Cancel
+
+Do not show edit or delete controls to other users.
+
+The server must enforce ownership even if a malicious client calls the endpoint directly.
+
+## 8. Edit Music Minute
+
+Create or repair an authenticated endpoint such as:
+
+`PATCH /api/posts/:postId`
+
+Allow the owner to edit appropriate metadata without uploading the video again:
+
+* Title
+* Caption
+* Genre
+* Language
+* Location
+* Performance type where safe
+* Musixmatch track reference
+* Lyric section and timing metadata
+
+Do not silently replace the original video.
+
+Show current values in the edit screen.
+
+After saving:
+
+* Return the updated post
+* Refresh Home
+* Refresh Profile
+* Refresh post detail
+* Preserve engagement counts
+
+Use clear validation and error messages.
+
+## 9. Delete Music Minute safely
+
+Create or repair:
+
+`DELETE /api/posts/:postId`
+
+Required behavior:
+
+1. Authenticate user.
+2. Resolve internal user ID.
+3. Confirm the user owns the post.
+4. Show a destructive confirmation dialog in mobile.
+5. Delete or soft-delete the post.
+6. Remove it from Home and Profile immediately.
+7. Update post count.
+8. Handle related likes, comments, saves, Golden Mics, notifications, and message shares according to database constraints.
+9. Clean up the App Storage object safely.
+
+Confirmation text:
+
+**Delete this Music Minute? This action cannot be undone.**
+
+Do not delete the storage object before confirming the database operation can complete safely.
+
+If storage cleanup fails after the database post is removed:
+
+* Log the orphaned object key
+* Schedule or expose cleanup
+* Do not restore a broken feed post
+
+Prevent duplicate delete requests.
+
+## 10. Saved tab
+
+Verify that the Saved section is separate from the creator’s own posts.
+
+The Saved tab should:
+
+* Fetch posts saved by the current user
+* Display real saved posts
+* Open them in the same post viewer
+* Update immediately after save or unsave
+
+Do not mix saved posts with owned posts.
+
+## 11. Test the existing two posts
+
+Use the two real posts already visible in the Home feed.
+
+Verify:
+
+* Both posts belong to the current authenticated database user.
+* Both are returned by the “my posts” endpoint.
+* Profile count becomes 2.
+* Both appear in the grid.
+* Both open and play.
+* Feed and profile show consistent metadata.
+* Musixmatch song and lyric-section metadata are present.
+
+Do not create fake profile cards to make the screen appear populated.
+
+## 12. Required lifecycle test
+
+Complete this exact physical-phone test:
+
+1. Open Profile.
+2. Confirm the two existing Music Minutes appear.
+3. Confirm post count is 2.
+4. Tap the first Music Minute.
+5. Confirm remote video playback.
+6. Return to Profile.
+7. Edit its title or caption.
+8. Confirm the update appears in Profile and Home.
+9. Delete one Music Minute.
+10. Confirm the post count becomes 1.
+11. Confirm the deleted post disappears from Home and Profile.
+12. Close and reopen the app.
+13. Confirm the remaining post still appears and plays.
+14. Open the creator profile from a second account.
+15. Confirm the remaining public Music Minute is visible there.
+16. Confirm the second account cannot edit or delete it.
+
+## 13. Acceptance criteria
+
+This task is complete only when:
+
+* Existing uploaded posts appear on the correct creator profile.
+* The profile post count is accurate.
+* Newly published posts appear without restarting.
+* Profile tiles use real database posts.
+* Tapping a tile opens and plays the video.
+* Owner edit works and persists.
+* Owner delete works and persists.
+* Non-owners cannot edit or delete.
+* Home, Profile, and post detail remain synchronized.
+* Saved posts are fetched separately.
+* Loading, empty, and error states work.
+* Mobile and API-server typechecks pass.
+
+## 14. Completion report
+
+Report:
+
+1. Exact root cause
+2. Whether it was a Clerk ID versus database user ID mismatch
+3. Query used before and after
+4. Existing posts found for the current user
+5. Files changed
+6. API endpoints added or repaired
+7. Edit behavior
+8. Delete and storage-cleanup behavior
+9. Physical-device test results
+10. Second-account authorization test
+11. Typecheck results
+12. Remaining limitations
+
+Do not report this fixed based only on the post count.
+
+The user must be able to see, open, play, edit, and delete real Music Minutes directly from Profile.

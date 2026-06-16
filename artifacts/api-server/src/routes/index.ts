@@ -11,6 +11,7 @@ import savesRouter from "./saves";
 import conversationsRouter from "./conversations";
 import notificationsRouter from "./notifications";
 import goldenMicRouter from "./golden_mic";
+import analysisRouter from "./analysis";
 
 const router: IRouter = Router();
 
@@ -26,5 +27,6 @@ router.use(uploadsRouter);
 router.use(conversationsRouter);
 router.use(notificationsRouter);
 router.use(goldenMicRouter);
+router.use(analysisRouter);
 
 export default router;

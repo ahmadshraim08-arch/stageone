@@ -24,7 +24,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useApp } from "@/context/AppContext";
 import { useColors } from "@/hooks/useColors";
-import { ApiPost, getPost, patchPost, deletePost } from "@/lib/api";
+import { ApiPost, getPost, getPosts, patchPost, deletePost } from "@/lib/api";
 import { formatCount } from "@/data/seedData";
 
 const SINGER_IMAGES = [
@@ -53,6 +53,8 @@ export default function PostDetailScreen() {
   const [post, setPost] = useState<ApiPost | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [relatedPosts, setRelatedPosts] = useState<ApiPost[]>([]);
+  const [relatedLoading, setRelatedLoading] = useState(false);
 
   const videoRef = useRef<Video>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -90,6 +92,24 @@ export default function PostDetailScreen() {
       }
     })();
   }, [id, isSignedIn]);
+
+  useEffect(() => {
+    if (!post) return;
+    const currentPostId = post.id;
+    const creatorId = post.userId;
+    setRelatedLoading(true);
+    (async () => {
+      const token = isSignedIn ? (await getToken()) : null;
+      try {
+        const result = await getPosts(token, { userId: creatorId, limit: 7 });
+        setRelatedPosts(result.items.filter((p) => p.id !== currentPostId).slice(0, 6));
+      } catch {
+        setRelatedPosts([]);
+      } finally {
+        setRelatedLoading(false);
+      }
+    })();
+  }, [post?.id, post?.userId, isSignedIn]);
 
   useFocusEffect(
     useCallback(() => {
@@ -431,6 +451,60 @@ export default function PostDetailScreen() {
               </View>
             )}
           </View>
+
+          {(relatedLoading || relatedPosts.length > 0) && (
+            <View style={styles.relatedSection}>
+              <Text style={[styles.relatedTitle, { color: colors.foreground }]}>
+                More from {post.creator.displayName ?? post.creator.username}
+              </Text>
+              {relatedLoading ? (
+                <ActivityIndicator color="#A855F7" size="small" style={{ marginTop: 12 }} />
+              ) : (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.relatedScroll}
+                >
+                  {relatedPosts.map((rp) => {
+                    const rpPlaceholder = SINGER_IMAGES[rp.id % SINGER_IMAGES.length];
+                    return (
+                      <TouchableOpacity
+                        key={rp.id}
+                        style={[styles.relatedTile, { backgroundColor: colors.card, borderColor: colors.border }]}
+                        activeOpacity={0.85}
+                        onPress={() => router.replace(`/post/${rp.id}`)}
+                      >
+                        <Image
+                          source={rpPlaceholder}
+                          style={StyleSheet.absoluteFill}
+                          contentFit="cover"
+                        />
+                        <LinearGradient
+                          colors={["transparent", "rgba(5,2,10,0.92)"]}
+                          style={StyleSheet.absoluteFill}
+                        />
+                        <View style={styles.relatedTileOverlay}>
+                          {rp.genre ? (
+                            <View style={styles.relatedGenreChip}>
+                              {rp.genreDetectionSource === "musixmatch_metadata" && (
+                                <MaterialCommunityIcons name="music-note" size={8} color="#A78BFA" />
+                              )}
+                              <Text style={styles.relatedGenreText} numberOfLines={1}>{rp.genre}</Text>
+                            </View>
+                          ) : null}
+                          <Text style={styles.relatedTileTitle} numberOfLines={2}>{rp.title}</Text>
+                          <View style={styles.relatedTileStats}>
+                            <Ionicons name="heart" size={10} color="#EF4444" />
+                            <Text style={styles.relatedTileStatText}>{formatCount(rp.likesCount)}</Text>
+                          </View>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              )}
+            </View>
+          )}
         </ScrollView>
       )}
 
@@ -737,4 +811,32 @@ const styles = StyleSheet.create({
   saveBtn: { borderRadius: 14, overflow: "hidden", marginTop: 8 },
   saveBtnGradient: { paddingVertical: 14, alignItems: "center", justifyContent: "center" },
   saveBtnText: { color: "#fff", fontSize: 15, fontWeight: "700" },
+  relatedSection: { paddingTop: 4, paddingBottom: 8 },
+  relatedTitle: { fontSize: 16, fontWeight: "800", paddingHorizontal: 20, marginBottom: 12 },
+  relatedScroll: { paddingHorizontal: 20, gap: 10 },
+  relatedTile: {
+    width: 120,
+    height: 180,
+    borderRadius: 12,
+    borderWidth: 1,
+    overflow: "hidden",
+    position: "relative",
+  },
+  relatedTileOverlay: { position: "absolute", bottom: 8, left: 8, right: 8, gap: 3 },
+  relatedGenreChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderRadius: 6,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.15)",
+  },
+  relatedGenreText: { color: "#CBD5E1", fontSize: 8, fontWeight: "600" },
+  relatedTileTitle: { color: "#fff", fontSize: 11, fontWeight: "700", lineHeight: 14 },
+  relatedTileStats: { flexDirection: "row", alignItems: "center", gap: 4 },
+  relatedTileStatText: { color: "rgba(255,255,255,0.6)", fontSize: 10 },
 });

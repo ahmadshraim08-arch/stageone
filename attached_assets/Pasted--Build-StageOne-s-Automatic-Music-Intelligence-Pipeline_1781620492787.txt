@@ -1,0 +1,843 @@
+# Build StageOne’s Automatic Music Intelligence Pipeline
+
+Do not use n8n.
+
+Do not add unrelated features.
+
+Use the available partner APIs directly from the StageOne backend:
+
+* Musixmatch
+* ElevenLabs
+* LALAL.AI
+* Cyanite
+
+The goal is to transform the current manual upload flow into an intelligent creator experience:
+
+**Upload performance → isolate vocals when needed → transcribe the singing → identify the song → detect the lyrics actually performed → synchronize the lyrics with the video → analyze mood and genre → let the creator confirm and publish.**
+
+This must work from the creator’s actual uploaded video. Do not use hardcoded Adele data or seeded analysis results.
+
+---
+
+# 0. Resolve the current publishing blocker first
+
+The current physical-device flow still ends with:
+
+`Couldn’t verify your upload. Please try again.`
+
+Before calling the intelligent pipeline complete, fix the upload confirmation and publishing path.
+
+The required publishing path is:
+
+1. Request storage upload session
+2. Upload the video
+3. Verify the stored object
+4. Create the post database record
+5. Save analysis metadata
+6. Show the post in Home
+7. Show it in Profile
+8. Play it after app restart
+
+The intelligence pipeline may analyze the stabilized local video before final publication, but the full result is not complete until the post publishes successfully.
+
+---
+
+# 1. Verify all partner API access
+
+Inspect the current Replit Secrets and backend configuration.
+
+Check whether the following are configured and valid:
+
+* `MUSIXMATCH_API_KEY`
+* ElevenLabs API key
+* LALAL.AI API key
+* Cyanite API key
+
+Do not reveal any key.
+
+Test one safe request against each service and report:
+
+* Authentication status
+* Available endpoint or capability
+* HTTP status
+* Plan or quota restriction
+* Whether the service is usable in the current hackathon environment
+
+If a required key is missing, stop that integration and report exactly which secret must be added.
+
+Do not fake results when a partner service is unavailable.
+
+---
+
+# 2. Keep performance type as a creator decision
+
+Step 2 should remain:
+
+* Original
+* Cover
+* Freestyle
+
+Behavior:
+
+## Cover
+
+Run automatic song and lyric detection.
+
+## Original
+
+Do not force a Musixmatch match.
+
+Use Cyanite for optional audio analysis such as mood, energy, and genre.
+
+Offer an optional:
+
+**Check whether this matches an existing song**
+
+## Freestyle
+
+Do not force a song match.
+
+Use transcription and optional Cyanite analysis when useful.
+
+Never automatically label an original performance as a cover without creator confirmation.
+
+---
+
+# 3. Prepare the uploaded media
+
+Use the stabilized app-controlled video cache file.
+
+Do not read the complete video as Base64.
+
+Create temporary analysis assets only when required.
+
+Possible temporary assets:
+
+* Audio-only file
+* Vocal stem
+* Instrumental stem
+* Compact mono transcription file
+
+Requirements:
+
+* Preserve the original video unchanged
+* Use temporary storage only
+* Delete temporary files after completion or cancellation
+* Do not permanently store vocal stems unless explicitly required
+* Do not expose signed media URLs or private storage paths
+* Do not send the original high-resolution video to every service when a smaller audio file is sufficient
+
+Show progress stages in the mobile UI.
+
+---
+
+# 4. Use LALAL.AI for vocal isolation
+
+Use LALAL.AI when the uploaded performance contains:
+
+* Loud backing music
+* Instrumental accompaniment
+* Background noise
+* Another recorded singer
+* Audio that produces low transcription confidence
+
+Preferred behavior:
+
+1. Extract audio from the uploaded video
+2. Send the audio to LALAL.AI
+3. Request vocal isolation or vocal/instrumental separation
+4. Retrieve the vocal stem
+5. Use the vocal stem for transcription
+6. Delete temporary stem files when analysis finishes
+
+Do not always run LALAL.AI when it is unnecessary.
+
+Use this decision strategy:
+
+* Clear a cappella or clean vocal → transcribe directly
+* Music-backed performance → isolate vocals first
+* Direct transcription has low confidence → retry using isolated vocals
+* LALAL.AI unavailable → continue with the original audio and report lower confidence
+
+Store only:
+
+* Whether vocal isolation was used
+* Separation status
+* High-level quality/confidence result
+
+Do not permanently store the isolated vocal by default.
+
+---
+
+# 5. Use ElevenLabs for singing transcription
+
+Use ElevenLabs speech-to-text capability to transcribe the original or isolated vocal audio.
+
+Request word-level timestamps if supported by the current API access.
+
+Normalize the response into:
+
+* Full recognized text
+* Detected language
+* Word text
+* Word start time in the uploaded video
+* Word end time
+* Confidence when available
+* Phrase or segment timestamps
+
+Handle singing-specific behavior:
+
+* Extended vowels
+* Repeated words
+* Missing words
+* Accent changes
+* Different tempo
+* Background instruments
+* Partial lyrics
+* Silence before singing
+* Spoken introductions
+* Ad-libs
+
+Do not expect a perfect transcript.
+
+Filter low-confidence filler words carefully, but do not remove meaningful lyric fragments.
+
+Do not permanently store the complete transcript unless required.
+
+Persist only compact recognition and alignment metadata needed for the post.
+
+---
+
+# 6. Use Musixmatch to identify the song
+
+Use the ElevenLabs transcript to search Musixmatch.
+
+Do not expect Musixmatch alone to identify raw video audio unless a documented audio-recognition capability is actually available to this project.
+
+Create several distinctive transcript phrases.
+
+Avoid searching only with common words such as:
+
+* Love
+* Baby
+* Tonight
+* Yeah
+
+Prefer longer distinctive lyric sequences.
+
+Search Musixmatch using available lyric-search capabilities such as:
+
+* Lyric-text search
+* General track search
+* Language
+* Artist or title hints when the creator entered them
+* Tracks that have lyrics
+* Popularity or confidence ranking
+
+For each candidate:
+
+1. Fetch official track metadata
+2. Fetch RichSync when available
+3. Fall back to subtitles
+4. Fall back to plain lyrics
+5. Compare the official lyrics with the ElevenLabs transcript
+6. Score consecutive phrase matches
+7. Penalize weak matches containing only common words
+8. Detect repeated chorus occurrences
+9. Produce a confidence score
+
+Use a real ranking algorithm rather than selecting the first result.
+
+---
+
+# 7. Build a creator confirmation screen
+
+Replace the manual-only Step 3 with an automatic suggestion experience.
+
+## During analysis
+
+Show:
+
+* Preparing audio
+* Isolating vocals
+* Listening to your performance
+* Searching Musixmatch
+* Matching lyrics
+
+Only show “Isolating vocals” when LALAL.AI is actually used.
+
+## High-confidence match
+
+Display:
+
+**We think you performed**
+
+* Song title
+* Artist
+* Album artwork
+* Match confidence
+* Powered by Musixmatch
+
+Actions:
+
+* Confirm
+* See other matches
+* Search manually
+* This is not the song
+
+## Medium confidence
+
+Show the top three matches.
+
+## Low confidence
+
+Show:
+
+**We couldn’t confidently identify this song. Search manually or continue without tagging it.**
+
+Manual search must remain available at all times.
+
+Never attach a track without creator confirmation.
+
+---
+
+# 8. Detect the complete lyric range automatically
+
+The current section cards select only tiny lyric fragments.
+
+Replace this behavior with detection of the complete range performed in the uploaded video.
+
+Use:
+
+* ElevenLabs transcript words and timestamps
+* Musixmatch official lyric text
+* Musixmatch RichSync words and timestamps where available
+* Subtitle lines where RichSync is unavailable
+* Plain lyric lines as the final fallback
+
+Determine:
+
+* First performed lyric line
+* Last performed lyric line
+* First performed word
+* Last performed word
+* Uploaded-video start time
+* Uploaded-video end time
+* Official Musixmatch lyric start and end
+* Matching confidence
+* Repeated chorus occurrence
+
+A 53-second performance should normally select several consecutive lyric lines, not one tiny line.
+
+Do not automatically choose the first chorus occurrence when a later occurrence is the stronger match.
+
+---
+
+# 9. Replace section cards with a lyric-range editor
+
+Step 3.5 should become:
+
+## Detected Lyrics
+
+Show all lyrics StageOne believes were performed.
+
+Provide:
+
+* Scrollable lyric list
+* Highlighted detected range
+* Start handle
+* End handle
+* Number of selected lines
+* Estimated performance duration
+* Confidence indicator
+* Use detected range
+* Edit manually
+* Re-analyze
+* Continue without lyrics
+
+The creator must be able to:
+
+* Expand the range
+* Shorten the range
+* Move the start
+* Move the end
+* Replace the song
+* Disable lyrics
+
+Do not limit selection to one generated card such as Section 2 or Section 3.
+
+For most posts, save one continuous lyric range.
+
+Support multiple non-contiguous ranges only if the performance clearly skips between different parts and the implementation remains reliable.
+
+---
+
+# 10. Align the lyrics to the uploaded performance
+
+The uploaded cover may not use the original track’s exact tempo.
+
+Do not rely only on one global timing offset.
+
+Use multiple alignment anchors.
+
+For every confidently matched word or phrase, record:
+
+* Uploaded-video timestamp from ElevenLabs
+* Official lyric timestamp from Musixmatch RichSync or subtitles
+* Match confidence
+
+Preferred timing modes:
+
+1. `richsync_aligned`
+
+   * Multiple word-level anchors
+
+2. `subtitle_aligned`
+
+   * Multiple line-level anchors
+
+3. `linear_scaled`
+
+   * Tempo scale plus offset
+
+4. `offset_only`
+
+   * One global offset when limited anchors exist
+
+5. `plain`
+
+   * Lyrics detected but no reliable automatic timing
+
+Use piecewise alignment when tempo changes or pauses occur.
+
+Do not fabricate word synchronization when only plain lyrics exist.
+
+---
+
+# 11. Redesign Step 3.6 as an actual video preview
+
+The current Step 3.6 is too abstract.
+
+It must show the actual uploaded video with the lyric overlay.
+
+Required UI:
+
+* Video player
+* Play
+* Pause
+* Scrubber
+* Current playback time
+* Detected lyric range
+* Active word or line
+* Next line dimmed
+* Timing confidence
+* Global fine-tune slider
+* Edit lyric range
+* Re-analyze
+* Looks good
+
+Behavior:
+
+## RichSync
+
+Highlight active words.
+
+## Subtitles
+
+Highlight active lines.
+
+## Plain lyrics
+
+Show lyrics without claiming automatic synchronization.
+
+The creator must see exactly what viewers will see after publishing.
+
+The preview should cover the selected performed range, not only five seconds.
+
+---
+
+# 12. Use Cyanite for real audio intelligence
+
+Use Cyanite to analyze the uploaded performance audio.
+
+Request the capabilities available to the current account, such as:
+
+* Genre
+* Mood
+* Energy
+* Emotional character
+* Instrumentation
+* Vocal or acoustic qualities
+* Similarity descriptors where available
+
+Use Cyanite results to suggest:
+
+* Genre in the Add Details step
+* Mood tags
+* Energy tags
+* Discover filters
+* Performance descriptors
+
+Example:
+
+**Suggested by audio analysis**
+
+* Pop
+* Emotional
+* Reflective
+* Low energy
+
+The creator must be able to edit all suggestions.
+
+Do not replace the creator’s chosen genre without confirmation.
+
+If Cyanite fails or is unavailable:
+
+* Keep manual genre selection
+* Use `source: "manual"` or `source: "derived"`
+* Do not label local mappings as Cyanite analysis
+
+---
+
+# 13. Define each partner’s responsibility clearly
+
+## LALAL.AI
+
+Responsible for:
+
+* Vocal isolation
+* Removing or reducing backing tracks for analysis
+* Improving transcription quality
+
+Not responsible for:
+
+* Song catalog matching
+* Official lyrics
+* Lyric translation
+
+## ElevenLabs
+
+Responsible for:
+
+* Speech or singing transcription
+* Word or phrase timestamps
+* Language detection
+* Recognition confidence when available
+
+Not responsible for:
+
+* Official song ownership
+* Official lyrics
+* Canonical track metadata
+
+## Musixmatch
+
+Responsible for:
+
+* Canonical track search
+* Official song metadata
+* Official lyrics
+* RichSync
+* Subtitles
+* Translations
+* Lyric-based matching
+* Lyric attribution
+
+## Cyanite
+
+Responsible for:
+
+* Audio mood analysis
+* Genre
+* Energy
+* Emotional or sonic characteristics
+
+Do not blur or mislabel partner responsibilities.
+
+---
+
+# 14. Create a backend analysis job
+
+Do not run the entire pipeline in one fragile mobile request.
+
+Create an analysis job with:
+
+* Job ID
+* User ID
+* Video object key or temporary analysis reference
+* Current stage
+* Progress
+* Status
+* Error code
+* Retryable status
+* Created timestamp
+* Expiration timestamp
+
+Suggested stages:
+
+1. `preparing`
+2. `isolating_vocals`
+3. `transcribing`
+4. `searching_musixmatch`
+5. `matching_lyrics`
+6. `analyzing_audio`
+7. `aligning_timing`
+8. `ready`
+9. `failed`
+10. `canceled`
+
+The mobile app can poll the backend for progress.
+
+Do not use n8n.
+
+The Replit API server should orchestrate the workflow directly.
+
+---
+
+# 15. Handle partner failures independently
+
+Do not make one optional partner failure break the entire creator flow.
+
+Fallback behavior:
+
+## LALAL.AI fails
+
+Transcribe the original audio.
+
+## ElevenLabs fails
+
+Offer manual Musixmatch search and manual lyric selection.
+
+## Musixmatch search fails
+
+Allow untagged cover posting.
+
+## RichSync unavailable
+
+Use subtitles.
+
+## Subtitles unavailable
+
+Use plain lyrics.
+
+## Cyanite fails
+
+Keep manual genre and mood selection.
+
+The user must always be able to continue manually.
+
+---
+
+# 16. Data model
+
+Persist only necessary metadata.
+
+Recommended fields:
+
+* `analysis_job_id`
+* `audio_analysis_status`
+* `vocal_isolation_used`
+* `transcription_source`
+* `detection_source`
+* `detected_track_id`
+* `song_match_confidence`
+* `creator_confirmed_track`
+* `start_line_index`
+* `end_line_index`
+* `start_word_index`
+* `end_word_index`
+* `timing_mode`
+* `sync_confidence`
+* `timing_offset_ms`
+* Compact timing-anchor data
+* `cyanite_genre`
+* `cyanite_moods`
+* `cyanite_energy`
+* `audio_analysis_source`
+
+Do not permanently store:
+
+* Full Musixmatch lyrics
+* Full lyric translations
+* Full ElevenLabs transcript unless necessary
+* Raw LALAL.AI stem files
+* API keys
+* Temporary signed URLs
+
+Fetch official lyrics and translations at runtime.
+
+---
+
+# 17. Security and privacy
+
+All partner API calls must occur on the server.
+
+Do not expose partner keys to the mobile client.
+
+Do not log:
+
+* API keys
+* Authentication tokens
+* Full transcript
+* Full lyrics
+* Full vocal stem
+* Signed upload URLs
+* Private media paths
+
+Delete temporary analysis assets after:
+
+* Success
+* Failure
+* Cancellation
+* Expiration
+
+Ensure that one user cannot analyze or access another user’s private upload.
+
+---
+
+# 18. Required physical-device tests
+
+## Test A — Current Adele performance
+
+Use the existing 53-second “Someone Like You” video.
+
+Expected:
+
+* LALAL.AI used only if background music requires it
+* ElevenLabs creates a usable transcript
+* Musixmatch suggests Adele — Someone Like You
+* Several consecutive lyric lines are detected
+* The correct occurrence is selected
+* RichSync or subtitle timing aligns with the uploaded video
+* The video preview shows synchronized lyrics
+* Cyanite suggests relevant genre and mood
+* Creator confirms and publishes successfully
+
+## Test B — A cappella cover
+
+Expected:
+
+* Skip vocal isolation
+* Accurate transcription
+* Correct song suggestion
+
+## Test C — Cover with loud backing music
+
+Expected:
+
+* LALAL.AI isolates vocals
+* Transcription improves
+* Song suggestion succeeds or presents candidates
+
+## Test D — Different tempo
+
+Expected:
+
+* Multiple alignment anchors compensate for tempo difference
+* A single offset is not the only correction method
+
+## Test E — Repeated chorus
+
+Expected:
+
+* Correct chorus occurrence is selected
+
+## Test F — Original song
+
+Expected:
+
+* No forced Musixmatch match
+* Cyanite analysis still suggests genre and mood
+* Creator can publish
+
+## Test G — API failure
+
+Disable or simulate failure for each partner separately.
+
+Expected:
+
+* Manual fallback remains usable
+* No crash
+* Clear message
+* Creator can continue
+
+---
+
+# 19. Judge-ready flow
+
+The final demonstration should be:
+
+1. Select a real performance video
+2. Choose Cover
+3. StageOne prepares the audio
+4. LALAL.AI isolates vocals when needed
+5. ElevenLabs transcribes the sung performance
+6. StageOne searches Musixmatch using recognized lyric phrases
+7. Musixmatch identifies and returns the official track
+8. StageOne highlights the full lyric range performed
+9. Musixmatch RichSync or subtitles provide official timing
+10. StageOne aligns those lyrics to the creator’s video
+11. The creator previews the real video with lyrics
+12. Cyanite suggests genre, mood, and energy
+13. The creator confirms the analysis
+14. The video uploads and publishes
+15. Viewers see synchronized lyrics and translations
+16. A viewer taps “Sing This Part”
+17. The same track and full lyric range open in a new creator flow
+
+---
+
+# 20. Acceptance criteria
+
+Do not mark this complete until:
+
+* LALAL.AI authentication is verified
+* ElevenLabs authentication is verified
+* Cyanite authentication is verified
+* Musixmatch remains operational
+* A physical-device cover video is analyzed
+* Vocal isolation is used conditionally
+* A real transcript is produced
+* A real Musixmatch track is suggested
+* The creator can confirm or correct the match
+* The complete performed lyric range is detected
+* Multiple consecutive lyric lines can be selected
+* The real video plays on the timing screen
+* Lyrics visibly align with the singer
+* Cyanite provides real audio-derived suggestions
+* Manual fallbacks work
+* Temporary files are cleaned up
+* The upload verification error is fixed
+* The post publishes successfully
+* The post appears in Home and Profile
+* The video plays after restart
+* Mobile and API-server typechecks pass
+
+---
+
+# 21. Completion report
+
+Report:
+
+1. Partner keys configured
+2. Partner endpoints used
+3. LALAL.AI vocal-isolation result
+4. ElevenLabs transcription result
+5. Musixmatch matching result
+6. Cyanite audio-analysis result
+7. Song confidence
+8. Lyric-range confidence
+9. Sync confidence
+10. Timing strategy used
+11. Tracks tested
+12. Physical-device results
+13. Upload and post-publication result
+14. Files changed
+15. Database changes
+16. Typecheck results
+17. API-plan or quota limitations
+18. Remaining manual steps
+
+Do not claim success using hardcoded content, seeded responses, or mock partner data.
+
+The final result must analyze an actual uploaded performance and publish the resulting Music Minute.

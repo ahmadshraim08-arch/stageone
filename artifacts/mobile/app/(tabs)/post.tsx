@@ -186,13 +186,13 @@ export default function PostScreen() {
     return () => { cancelled = true; };
   }, [step, selectedSong?.track_id]);
 
-  // Debounced song search — fires 600 ms after the user stops typing
+  // Debounced song search — fires 400 ms after the user stops typing
   useEffect(() => {
     const query = songQuery.trim();
     if (!query || selectedSong) return;
     const timer = setTimeout(() => {
       handleSongSearch();
-    }, 600);
+    }, 400);
     return () => clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [songQuery]);

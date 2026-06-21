@@ -1,0 +1,499 @@
+# Make Profile Completion Fully Working: Profile Photo + Bio Editing
+
+Do not add unrelated features.
+
+The goal is to make the StageOne profile experience fully functional for both:
+
+1. New-user profile completion during onboarding
+2. Existing-user profile editing from the Profile screen
+
+A user must be able to:
+
+* Upload a real profile photo
+* Replace or remove the profile photo
+* Edit their display name
+* Edit their username if currently supported
+* Edit their bio
+* Save changes
+* See the updated profile everywhere in the app
+* Keep the changes after restarting the app
+
+---
+
+# 1. Inspect the current profile implementation
+
+Before changing code, inspect:
+
+* Onboarding profile-completion screen
+* Profile screen
+* Edit-profile screen or modal
+* Current `PATCH /api/users/me` endpoint
+* Users database schema
+* Current `avatarUrl` field
+* Existing avatar upload route
+* App Storage configuration
+* Current Clerk user identity mapping
+* How avatars are displayed in:
+
+  * Profile
+  * Home feed
+  * Comments
+  * Messages
+  * Notifications
+  * Discover
+  * Creator profiles
+
+Report the current root gaps before implementation.
+
+---
+
+# 2. Add profile-photo selection
+
+Allow the user to select a profile photo from the device photo library.
+
+Requirements:
+
+* Request photo-library permission
+* Handle full permission
+* Handle limited permission
+* Handle denied permission
+* Offer “Open Settings” when permission is permanently denied
+* Select images only
+* Allow one image
+* Support common iPhone and Android formats
+* Do not read the image as Base64
+* Prevent duplicate picker launches
+
+Show clear errors instead of a React Native red screen.
+
+User-facing permission message:
+
+**StageOne needs photo access so you can choose a profile picture.**
+
+---
+
+# 3. Add image preview and cropping
+
+After selection:
+
+* Show the selected image in a circular preview
+* Allow the user to choose another image
+* Allow cancel
+* Allow remove photo
+* Crop or display using a square aspect ratio
+* Preserve good image quality
+* Avoid stretching or distortion
+
+If platform cropping is supported by the current picker, use a square crop.
+
+If not, upload the original image and use `cover` rendering in the circular avatar.
+
+Do not require the user to leave the edit screen to preview the result.
+
+---
+
+# 4. Validate the selected image
+
+Validate before upload:
+
+* File exists
+* File size is greater than zero
+* Supported MIME type
+* Reasonable maximum file size
+* Width and height are valid
+
+Support at minimum:
+
+* JPEG
+* PNG
+* HEIC/HEIF when supported by the current stack
+* WebP where supported
+
+If HEIC cannot be displayed or uploaded safely, convert it to JPEG using a supported Expo-compatible method.
+
+Do not upload full-resolution multi-megabyte images unnecessarily.
+
+Compress or resize large images to a reasonable profile-photo size, such as approximately 1024×1024 maximum.
+
+Keep the original photo on the user’s device unchanged.
+
+---
+
+# 5. Upload profile photos to Replit App Storage
+
+Store the actual image file in Replit App Storage.
+
+Do not store:
+
+* Base64 image content in PostgreSQL
+* Local device URIs in PostgreSQL
+* Temporary picker URIs
+* Temporary signed upload URLs as permanent avatar URLs
+
+Use the existing signed-upload architecture where possible.
+
+Recommended object-key format:
+
+`avatars/<internal-user-id>/<timestamp>-<random-id>.<extension>`
+
+The upload process should be:
+
+1. Select and prepare image
+2. Request signed upload URL
+3. Upload image directly to App Storage
+4. Confirm object exists
+5. Update the user database row
+6. Refresh profile data
+7. Show success state
+
+Store in PostgreSQL:
+
+* Stable avatar object key
+* Persistent media path or avatar-serving route
+* Updated timestamp
+
+If the app currently stores only `avatarUrl`, add the smallest safe schema change needed to retain a stable storage key.
+
+---
+
+# 6. Use stable avatar delivery
+
+Do not store a short-lived signed playback URL that expires.
+
+Preferred options:
+
+* Store `avatarObjectKey`
+* Generate a fresh signed read URL when user data is fetched
+
+or:
+
+* Serve avatars through a stable backend media route
+
+The profile photo must still load after:
+
+* App restart
+* API restart
+* Several days
+* Opening the user profile from another device
+
+Use a fallback avatar when the image cannot load.
+
+Fallback:
+
+* User’s first initial
+* StageOne gradient background
+
+---
+
+# 7. Replace and remove profile photo safely
+
+## Replace photo
+
+When uploading a new avatar:
+
+1. Upload the new image first
+2. Confirm it exists
+3. Update the database
+4. Refresh the UI
+5. Delete the previous stored object after the database update succeeds
+
+Do not delete the old photo before the new upload is confirmed.
+
+## Remove photo
+
+Add a “Remove profile photo” action.
+
+After confirmation:
+
+* Clear the database avatar reference
+* Return to the initial-based avatar
+* Delete the old App Storage image safely
+* Refresh all screens
+
+Confirmation text:
+
+**Remove your profile photo?**
+
+---
+
+# 8. Complete bio editing
+
+Allow the user to edit their bio from:
+
+* Onboarding
+* Edit Profile
+
+Requirements:
+
+* Multi-line input
+* Clear character limit, such as 160 characters
+* Live character counter
+* Trim leading/trailing whitespace
+* Allow empty bio
+* Prevent invisible-only input
+* Save through the real backend
+* Persist after restart
+
+Show validation message if too long:
+
+**Bio must be 160 characters or fewer.**
+
+Do not save every keystroke automatically.
+
+Save only when the user taps Save.
+
+---
+
+# 9. Complete display-name and username editing
+
+## Display name
+
+Allow editing:
+
+* Required
+* Reasonable length limit
+* Trim whitespace
+* Prevent empty value
+
+## Username
+
+If username editing is already supported:
+
+* Validate uniqueness
+* Normalize consistently
+* Prevent spaces
+* Allow letters, numbers, underscores, and periods if that matches current rules
+* Show availability errors
+* Preserve old username until save succeeds
+
+If username editing is not intended for MVP, keep it read-only and report that clearly.
+
+Do not partially implement unsafe username changes.
+
+---
+
+# 10. Profile edit screen behavior
+
+The edit screen should include:
+
+* Avatar preview
+* Change photo
+* Remove photo
+* Display name
+* Username if supported
+* Bio
+* Save button
+* Cancel/back behavior
+
+Save button states:
+
+* Disabled when nothing changed
+* Loading while saving
+* Prevent duplicate taps
+* Success state
+* Clear error state
+
+If photo upload succeeds but profile update fails:
+
+* Preserve the uploaded object key
+* Allow Retry without re-uploading unnecessarily
+* Clean up abandoned images later
+
+---
+
+# 11. Keep profile data synchronized everywhere
+
+After saving profile changes, refresh:
+
+* Own Profile
+* Home feed creator header
+* Comments
+* Messages
+* Notifications
+* Discover singer cards
+* Creator profile
+* Any cached current-user state
+
+Do not require app restart.
+
+The same avatar and bio must appear consistently across the app.
+
+Use backend user data as the source of truth.
+
+Do not maintain separate unsynchronized profile copies.
+
+---
+
+# 12. Onboarding profile completion
+
+During first-time onboarding, require only essential fields.
+
+Suggested required:
+
+* Display name
+* Username
+* At least one genre if currently required
+
+Optional:
+
+* Profile photo
+* Bio
+* Languages
+* Location
+
+The user may skip the photo and bio and add them later.
+
+Do not block account creation because the user does not have a profile photo.
+
+After onboarding completes:
+
+* Save to PostgreSQL
+* Mark onboarding complete
+* Navigate to the app
+* Display the new profile immediately
+
+---
+
+# 13. Backend authorization
+
+Only the authenticated user may update their own profile.
+
+Server must:
+
+* Authenticate through Clerk
+* Resolve Clerk ID to internal PostgreSQL user ID
+* Ignore any client-supplied owner ID
+* Validate all fields
+* Sanitize text
+* Verify avatar object ownership before saving it
+
+Do not allow one user to assign another user’s avatar object key.
+
+---
+
+# 14. API behavior
+
+Create or repair endpoints such as:
+
+* `POST /api/uploads/avatar/sign`
+* `POST /api/uploads/avatar/confirm`
+* `PATCH /api/users/me`
+* `DELETE /api/users/me/avatar`
+
+Use structured errors such as:
+
+* `AVATAR_FILE_TOO_LARGE`
+* `AVATAR_TYPE_UNSUPPORTED`
+* `AVATAR_UPLOAD_FAILED`
+* `AVATAR_CONFIRM_FAILED`
+* `PROFILE_VALIDATION_FAILED`
+* `USERNAME_ALREADY_TAKEN`
+* `PROFILE_UPDATE_FAILED`
+
+Do not expose secrets or signed URLs in logs.
+
+---
+
+# 15. Loading, empty, and error states
+
+Handle:
+
+* Permission denied
+* Picker canceled
+* Image unreadable
+* Upload interrupted
+* Storage unavailable
+* Authentication expired
+* Database update failed
+* Avatar failed to load
+* Offline state
+
+No error should crash the app.
+
+Show friendly messages and allow Retry.
+
+---
+
+# 16. Required physical-device tests
+
+Test on a real iPhone:
+
+1. Open Edit Profile
+2. Select a JPEG photo
+3. Preview it
+4. Upload it
+5. Save bio
+6. Confirm avatar appears on Profile
+7. Confirm bio appears
+8. Open Home and confirm avatar updates
+9. Add a comment and confirm avatar appears there
+10. Open Messages and confirm avatar appears there
+11. Close and reopen the app
+12. Confirm avatar and bio persist
+13. Open the profile from a second account
+14. Confirm the avatar and bio are visible
+15. Replace the avatar
+16. Confirm the old image is cleaned up
+17. Remove the avatar
+18. Confirm the initial fallback returns
+
+Also test:
+
+* PNG
+* HEIC if supported
+* Large image
+* Denied permission
+* Limited permission
+* Offline upload
+* Save with empty bio
+* Bio over character limit
+* Duplicate Save tap
+
+---
+
+# 17. Acceptance criteria
+
+This task is complete only when:
+
+* A new user can complete their profile
+* An existing user can edit their profile
+* A real profile photo uploads from a physical phone
+* The photo is stored in App Storage
+* PostgreSQL stores a stable avatar reference
+* The avatar survives app and server restarts
+* The avatar appears across all relevant screens
+* The user can replace the photo
+* The user can remove the photo
+* Bio editing works
+* Bio persists
+* Display-name editing works
+* Username validation works if username editing is enabled
+* Non-owners cannot modify another profile
+* No Base64 image storage is used
+* Mobile and API-server typechecks pass
+
+---
+
+# 18. Completion report
+
+Report:
+
+1. Previous profile limitations
+2. Avatar upload architecture
+3. App Storage object-key strategy
+4. Database fields used
+5. Image compression/resizing method
+6. Supported formats
+7. Bio validation
+8. Username behavior
+9. Files changed
+10. Schema changes
+11. Physical-device test results
+12. Cross-screen refresh results
+13. Second-account visibility result
+14. Typecheck results
+15. Remaining limitations
+
+Do not mark this complete only because the database contains an avatar URL.
+
+The profile photo must upload, display, persist, replace, remove, and appear consistently across the real app.

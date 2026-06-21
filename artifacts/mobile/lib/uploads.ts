@@ -26,6 +26,7 @@ export interface UploadVideoResult {
 
 export interface UploadAvatarResult {
   avatarUrl: string;
+  avatarObjectKey: string;
 }
 
 export type UploadProgressCallback = (pct: number) => void;

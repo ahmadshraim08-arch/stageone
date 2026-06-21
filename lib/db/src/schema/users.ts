@@ -8,6 +8,7 @@ export const usersTable = pgTable("users", {
   username: text("username").notNull().unique(),
   displayName: text("display_name").notNull(),
   avatarUrl: text("avatar_url"),
+  avatarObjectKey: text("avatar_object_key"),
   bio: text("bio"),
   genres: text("genres").array().notNull().default([]),
   languages: text("languages").array().notNull().default([]),

@@ -298,7 +298,7 @@ export const getUserByUsername = (token: string | null, username: string): Promi
 
 export const patchMe = (
   token: string,
-  body: { displayName?: string; bio?: string; avatarUrl?: string; genres?: string[]; languages?: string[] },
+  body: { displayName?: string; bio?: string; avatarUrl?: string; avatarObjectKey?: string; genres?: string[]; languages?: string[] },
 ): Promise<ApiUser> =>
   apiFetch<ApiUser>("/users/me", token, { method: "PATCH", body: JSON.stringify(body) });
 

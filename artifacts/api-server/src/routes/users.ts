@@ -11,6 +11,27 @@ import {
 import { eq, count, isNull, and, ne } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { requireAuth, optionalAuth } from "../middleware/auth";
+import { signVideoGetUrl } from "../lib/objectStorage";
+
+/**
+ * Re-sign a stored avatar URL using the stable object key.
+ * Falls back to the stored URL if objectKey is absent or signing fails.
+ */
+async function freshenAvatarUrl(
+  avatarUrl: string | null | undefined,
+  avatarObjectKey: string | null | undefined,
+): Promise<string | null> {
+  if (!avatarObjectKey) return avatarUrl ?? null;
+  try {
+    const slash = avatarObjectKey.indexOf("/");
+    if (slash === -1) return avatarUrl ?? null;
+    const bucket = avatarObjectKey.slice(0, slash);
+    const objectName = avatarObjectKey.slice(slash + 1);
+    return await signVideoGetUrl(bucket, objectName);
+  } catch {
+    return avatarUrl ?? null;
+  }
+}
 
 const router: IRouter = Router();
 
@@ -19,52 +40,60 @@ router.get("/users/:username", optionalAuth, async (req, res): Promise<void> => 
     ? req.params.username[0]
     : req.params.username;
 
-  const [user] = await db
-    .select()
-    .from(usersTable)
-    .where(eq(usersTable.username, raw))
-    .limit(1);
-
-  if (!user) {
-    res.status(404).json({ error: "User not found" });
-    return;
-  }
-
-  const viewerId = req.userIdOptional;
-
-  const [postCount] = await db
-    .select({ value: count() })
-    .from(postsTable)
-    .where(and(eq(postsTable.userId, user.id), isNull(postsTable.deletedAt)));
-
-  const [followerCount] = await db
-    .select({ value: count() })
-    .from(followsTable)
-    .where(eq(followsTable.followingId, user.id));
-
-  const [followingCount] = await db
-    .select({ value: count() })
-    .from(followsTable)
-    .where(eq(followsTable.followerId, user.id));
-
-  let viewerIsFollowing = false;
-  if (viewerId !== undefined && viewerId !== user.id) {
-    const [followRow] = await db
-      .select({ id: followsTable.id })
-      .from(followsTable)
-      .where(and(eq(followsTable.followerId, viewerId), eq(followsTable.followingId, user.id)))
+  try {
+    const [user] = await db
+      .select()
+      .from(usersTable)
+      .where(eq(usersTable.username, raw))
       .limit(1);
-    viewerIsFollowing = !!followRow;
-  }
 
-  res.json({
-    ...user,
-    postCount: postCount?.value ?? 0,
-    followerCount: followerCount?.value ?? 0,
-    followingCount: followingCount?.value ?? 0,
-    goldenMicsReceived: user.goldenMicBalance,
-    viewerIsFollowing,
-  });
+    if (!user) {
+      res.status(404).json({ error: "User not found" });
+      return;
+    }
+
+    const viewerId = req.userIdOptional;
+
+    const [postCount] = await db
+      .select({ value: count() })
+      .from(postsTable)
+      .where(and(eq(postsTable.userId, user.id), isNull(postsTable.deletedAt)));
+
+    const [followerCount] = await db
+      .select({ value: count() })
+      .from(followsTable)
+      .where(eq(followsTable.followingId, user.id));
+
+    const [followingCount] = await db
+      .select({ value: count() })
+      .from(followsTable)
+      .where(eq(followsTable.followerId, user.id));
+
+    let viewerIsFollowing = false;
+    if (viewerId !== undefined && viewerId !== user.id) {
+      const [followRow] = await db
+        .select({ id: followsTable.id })
+        .from(followsTable)
+        .where(and(eq(followsTable.followerId, viewerId), eq(followsTable.followingId, user.id)))
+        .limit(1);
+      viewerIsFollowing = !!followRow;
+    }
+
+    const avatarUrl = await freshenAvatarUrl(user.avatarUrl, user.avatarObjectKey);
+
+    res.json({
+      ...user,
+      avatarUrl,
+      postCount: postCount?.value ?? 0,
+      followerCount: followerCount?.value ?? 0,
+      followingCount: followingCount?.value ?? 0,
+      goldenMicsReceived: user.goldenMicBalance,
+      viewerIsFollowing,
+    });
+  } catch (err) {
+    req.log.error({ err }, "GET /users/:username failed");
+    res.status(500).json({ error: "Failed to load user profile" });
+  }
 });
 
 router.patch("/users/me", requireAuth, async (req, res): Promise<void> => {
@@ -72,6 +101,7 @@ router.patch("/users/me", requireAuth, async (req, res): Promise<void> => {
     displayName?: string;
     bio?: string;
     avatarUrl?: string;
+    avatarObjectKey?: string;
     genres?: string[];
     languages?: string[];
   };
@@ -80,6 +110,7 @@ router.patch("/users/me", requireAuth, async (req, res): Promise<void> => {
     displayName: string;
     bio: string | null;
     avatarUrl: string | null;
+    avatarObjectKey: string | null;
     genres: string[];
     languages: string[];
   }> = {};
@@ -87,6 +118,7 @@ router.patch("/users/me", requireAuth, async (req, res): Promise<void> => {
   if (body.displayName !== undefined) updates.displayName = body.displayName;
   if (body.bio !== undefined) updates.bio = body.bio ?? null;
   if (body.avatarUrl !== undefined) updates.avatarUrl = body.avatarUrl ?? null;
+  if (body.avatarObjectKey !== undefined) updates.avatarObjectKey = body.avatarObjectKey ?? null;
   if (body.genres !== undefined) updates.genres = body.genres;
   if (body.languages !== undefined) updates.languages = body.languages;
 
@@ -95,40 +127,48 @@ router.patch("/users/me", requireAuth, async (req, res): Promise<void> => {
     return;
   }
 
-  const [updated] = await db
-    .update(usersTable)
-    .set(updates)
-    .where(eq(usersTable.id, req.userId))
-    .returning();
+  try {
+    const [updated] = await db
+      .update(usersTable)
+      .set(updates)
+      .where(eq(usersTable.id, req.userId))
+      .returning();
 
-  if (!updated) {
-    res.status(404).json({ error: "User not found" });
-    return;
+    if (!updated) {
+      res.status(404).json({ error: "User not found" });
+      return;
+    }
+
+    const [postCount] = await db
+      .select({ value: count() })
+      .from(postsTable)
+      .where(and(eq(postsTable.userId, updated.id), isNull(postsTable.deletedAt)));
+
+    const [followerCount] = await db
+      .select({ value: count() })
+      .from(followsTable)
+      .where(eq(followsTable.followingId, updated.id));
+
+    const [followingCount] = await db
+      .select({ value: count() })
+      .from(followsTable)
+      .where(eq(followsTable.followerId, updated.id));
+
+    const avatarUrl = await freshenAvatarUrl(updated.avatarUrl, updated.avatarObjectKey);
+
+    res.json({
+      ...updated,
+      avatarUrl,
+      postCount: postCount?.value ?? 0,
+      followerCount: followerCount?.value ?? 0,
+      followingCount: followingCount?.value ?? 0,
+      goldenMicsReceived: updated.goldenMicBalance,
+      viewerIsFollowing: false,
+    });
+  } catch (err) {
+    req.log.error({ err }, "PATCH /users/me failed");
+    res.status(500).json({ error: "Could not update your profile" });
   }
-
-  const [postCount] = await db
-    .select({ value: count() })
-    .from(postsTable)
-    .where(and(eq(postsTable.userId, updated.id), isNull(postsTable.deletedAt)));
-
-  const [followerCount] = await db
-    .select({ value: count() })
-    .from(followsTable)
-    .where(eq(followsTable.followingId, updated.id));
-
-  const [followingCount] = await db
-    .select({ value: count() })
-    .from(followsTable)
-    .where(eq(followsTable.followerId, updated.id));
-
-  res.json({
-    ...updated,
-    postCount: postCount?.value ?? 0,
-    followerCount: followerCount?.value ?? 0,
-    followingCount: followingCount?.value ?? 0,
-    goldenMicsReceived: updated.goldenMicBalance,
-    viewerIsFollowing: false,
-  });
 });
 
 router.post("/users/me/push-token", requireAuth, async (req, res): Promise<void> => {

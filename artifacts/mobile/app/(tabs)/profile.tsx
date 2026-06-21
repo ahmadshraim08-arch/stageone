@@ -124,11 +124,11 @@ export default function ProfileScreen() {
       const token = await getToken();
       if (!token) throw new Error("Not authenticated");
       const mimeType = asset.mimeType ?? (asset.uri.endsWith(".png") ? "image/png" : "image/jpeg");
-      const { avatarUrl } = await uploadAvatar(asset.uri, mimeType, token);
+      const { avatarUrl, avatarObjectKey } = await uploadAvatar(asset.uri, mimeType, token);
       const patchRes = await fetch(`${apiBase()}/users/me`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ avatarUrl }),
+        body: JSON.stringify({ avatarUrl, avatarObjectKey }),
       });
       if (!patchRes.ok) {
         throw new Error(`Failed to save avatar (HTTP ${patchRes.status})`);

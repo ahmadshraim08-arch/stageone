@@ -3,6 +3,23 @@ import { getAuth } from "@clerk/express";
 import { db, usersTable, postsTable, followsTable } from "@workspace/db";
 import { eq, count, sql } from "drizzle-orm";
 import { requireAuth } from "../middleware/auth";
+import { signVideoGetUrl } from "../lib/objectStorage";
+
+async function freshenAvatarUrl(
+  avatarUrl: string | null | undefined,
+  avatarObjectKey: string | null | undefined,
+): Promise<string | null> {
+  if (!avatarObjectKey) return avatarUrl ?? null;
+  try {
+    const slash = avatarObjectKey.indexOf("/");
+    if (slash === -1) return avatarUrl ?? null;
+    const bucket = avatarObjectKey.slice(0, slash);
+    const objectName = avatarObjectKey.slice(slash + 1);
+    return await signVideoGetUrl(bucket, objectName);
+  } catch {
+    return avatarUrl ?? null;
+  }
+}
 
 const router: IRouter = Router();
 
@@ -30,8 +47,11 @@ async function userWithCounts(userId: number) {
     .from(followsTable)
     .where(eq(followsTable.followerId, userId));
 
+  const avatarUrl = await freshenAvatarUrl(user.avatarUrl, user.avatarObjectKey);
+
   return {
     ...user,
+    avatarUrl,
     postCount: postCount?.value ?? 0,
     followerCount: followerCount?.value ?? 0,
     followingCount: followingCount?.value ?? 0,

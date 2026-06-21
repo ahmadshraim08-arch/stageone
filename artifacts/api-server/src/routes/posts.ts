@@ -539,62 +539,67 @@ router.get("/users/me/posts", requireAuth, async (req, res): Promise<void> => {
   const limit = Math.min(parseInt(limitRaw ?? "50", 10) || 50, 100);
   const cursor = cursorRaw ? parseInt(cursorRaw, 10) : undefined;
 
-  const conditions = [isNull(postsTable.deletedAt), eq(postsTable.userId, ownerId)];
-  if (cursor !== undefined && !isNaN(cursor)) conditions.push(lt(postsTable.id, cursor));
+  try {
+    const conditions = [isNull(postsTable.deletedAt), eq(postsTable.userId, ownerId)];
+    if (cursor !== undefined && !isNaN(cursor)) conditions.push(lt(postsTable.id, cursor));
 
-  const rows = await db
-    .select({
-      id: postsTable.id,
-      userId: postsTable.userId,
-      videoUrl: postsTable.videoUrl,
-      videoObjectKey: postsTable.videoObjectKey,
-      thumbnailUrl: postsTable.thumbnailUrl,
-      thumbnailObjectKey: postsTable.thumbnailObjectKey,
-      title: postsTable.title,
-      caption: postsTable.caption,
-      performanceType: postsTable.performanceType,
-      genre: postsTable.genre,
-      genreDetectionSource: postsTable.genreDetectionSource,
-      language: postsTable.language,
-      musixmatchTrackId: postsTable.musixmatchTrackId,
-      trackTitle: postsTable.trackTitle,
-      trackArtist: postsTable.trackArtist,
-      lyricSectionId: postsTable.lyricSectionId,
-      rightsConfirmed: postsTable.rightsConfirmed,
-      goldenMicCount: postsTable.goldenMicCount,
-      createdAt: postsTable.createdAt,
-      creator: {
-        id: usersTable.id,
-        username: usersTable.username,
-        displayName: usersTable.displayName,
-        avatarUrl: usersTable.avatarUrl,
-      },
-      likesCount: sql<number>`(SELECT COUNT(*) FROM likes WHERE likes.post_id = ${postsTable.id})`,
-      commentsCount: sql<number>`(SELECT COUNT(*) FROM comments WHERE comments.post_id = ${postsTable.id} AND comments.deleted_at IS NULL)`,
-      savesCount: sql<number>`(SELECT COUNT(*) FROM saves WHERE saves.post_id = ${postsTable.id})`,
-      viewerHasLiked: sql<boolean>`EXISTS(SELECT 1 FROM likes WHERE likes.post_id = ${postsTable.id} AND likes.user_id = ${ownerId})`,
-      viewerHasSaved: sql<boolean>`EXISTS(SELECT 1 FROM saves WHERE saves.post_id = ${postsTable.id} AND saves.user_id = ${ownerId})`,
-      viewerIsFollowing: sql<boolean>`false`,
-    })
-    .from(postsTable)
-    .innerJoin(usersTable, eq(postsTable.userId, usersTable.id))
-    .where(and(...conditions))
-    .orderBy(desc(postsTable.id))
-    .limit(limit + 1);
+    const rows = await db
+      .select({
+        id: postsTable.id,
+        userId: postsTable.userId,
+        videoUrl: postsTable.videoUrl,
+        videoObjectKey: postsTable.videoObjectKey,
+        thumbnailUrl: postsTable.thumbnailUrl,
+        thumbnailObjectKey: postsTable.thumbnailObjectKey,
+        title: postsTable.title,
+        caption: postsTable.caption,
+        performanceType: postsTable.performanceType,
+        genre: postsTable.genre,
+        genreDetectionSource: postsTable.genreDetectionSource,
+        language: postsTable.language,
+        musixmatchTrackId: postsTable.musixmatchTrackId,
+        trackTitle: postsTable.trackTitle,
+        trackArtist: postsTable.trackArtist,
+        lyricSectionId: postsTable.lyricSectionId,
+        rightsConfirmed: postsTable.rightsConfirmed,
+        goldenMicCount: postsTable.goldenMicCount,
+        createdAt: postsTable.createdAt,
+        creator: {
+          id: usersTable.id,
+          username: usersTable.username,
+          displayName: usersTable.displayName,
+          avatarUrl: usersTable.avatarUrl,
+        },
+        likesCount: sql<number>`(SELECT COUNT(*) FROM likes WHERE likes.post_id = ${postsTable.id})`,
+        commentsCount: sql<number>`(SELECT COUNT(*) FROM comments WHERE comments.post_id = ${postsTable.id} AND comments.deleted_at IS NULL)`,
+        savesCount: sql<number>`(SELECT COUNT(*) FROM saves WHERE saves.post_id = ${postsTable.id})`,
+        viewerHasLiked: sql<boolean>`EXISTS(SELECT 1 FROM likes WHERE likes.post_id = ${postsTable.id} AND likes.user_id = ${ownerId})`,
+        viewerHasSaved: sql<boolean>`EXISTS(SELECT 1 FROM saves WHERE saves.post_id = ${postsTable.id} AND saves.user_id = ${ownerId})`,
+        viewerIsFollowing: sql<boolean>`false`,
+      })
+      .from(postsTable)
+      .innerJoin(usersTable, eq(postsTable.userId, usersTable.id))
+      .where(and(...conditions))
+      .orderBy(desc(postsTable.id))
+      .limit(limit + 1);
 
-  const hasMore = rows.length > limit;
-  const items = hasMore ? rows.slice(0, limit) : rows;
-  const nextCursor = hasMore ? String(items[items.length - 1].id) : null;
+    const hasMore = rows.length > limit;
+    const items = hasMore ? rows.slice(0, limit) : rows;
+    const nextCursor = hasMore ? String(items[items.length - 1].id) : null;
 
-  const signedItems = await Promise.all(
-    items.map(async (item) => ({
-      ...item,
-      videoUrl: await freshenVideoUrl(item.videoUrl, item.videoObjectKey),
-      thumbnailUrl: await freshenThumbnailUrl(item.thumbnailUrl, item.thumbnailObjectKey),
-    })),
-  );
+    const signedItems = await Promise.all(
+      items.map(async (item) => ({
+        ...item,
+        videoUrl: await freshenVideoUrl(item.videoUrl, item.videoObjectKey),
+        thumbnailUrl: await freshenThumbnailUrl(item.thumbnailUrl, item.thumbnailObjectKey),
+      })),
+    );
 
-  res.json({ items: signedItems, nextCursor });
+    res.json({ items: signedItems, nextCursor });
+  } catch (err) {
+    req.log.error({ err }, "GET /users/me/posts failed");
+    res.status(500).json({ error: "Could not load your posts" });
+  }
 });
 
 router.patch("/posts/:id", requireAuth, async (req, res): Promise<void> => {

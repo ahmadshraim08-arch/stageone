@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import multer from "multer";
+import { randomUUID } from "node:crypto";
 import { objectStorageClient, signVideoGetUrl, signVideoUploadUrl } from "../lib/objectStorage";
 import { requireAuth } from "../middleware/auth";
 
@@ -54,20 +55,29 @@ function getVideoObjectKeyPrefix(): { expectedBucket: string; videoObjectPrefix:
   return { expectedBucket, videoObjectPrefix };
 }
 
+/**
+ * Upload a buffer to GCS and return a signed GET URL + stable object key.
+ * Bucket has public access prevention enforced — makePublic() is unavailable.
+ * Uses a signed URL (7-day TTL, same as videos). Callers should store the
+ * objectKey so they can re-sign on read.
+ */
 async function uploadToGcs(
   buffer: Buffer,
   contentType: string,
   folder: string,
   ext: string,
-): Promise<string> {
+): Promise<{ signedUrl: string; objectKey: string }> {
   const privateDir = process.env.PRIVATE_OBJECT_DIR;
   if (!privateDir) throw new Error("PRIVATE_OBJECT_DIR is not set");
-  const { bucketName, objectName } = parsePath(`${privateDir}/${folder}/${Date.now()}${ext}`);
+  const objectId = randomUUID();
+  const { bucketName, objectName } = parsePath(
+    `${privateDir}/${folder}/${Date.now()}-${objectId}${ext}`,
+  );
   const bucket = objectStorageClient.bucket(bucketName);
   const file = bucket.file(objectName);
   await file.save(buffer, { metadata: { contentType }, resumable: false });
-  await file.makePublic();
-  return `https://storage.googleapis.com/${bucketName}/${objectName}`;
+  const signedUrl = await signVideoGetUrl(bucketName, objectName);
+  return { signedUrl, objectKey: `${bucketName}/${objectName}` };
 }
 
 /**
@@ -254,12 +264,17 @@ router.post(
           : req.file.mimetype === "image/webp"
             ? ".webp"
             : ".jpg";
-      const avatarUrl = await uploadToGcs(req.file.buffer, req.file.mimetype, "avatars", ext);
+      const { signedUrl, objectKey } = await uploadToGcs(
+        req.file.buffer,
+        req.file.mimetype,
+        "avatars",
+        ext,
+      );
       req.log.info(
-        { size: req.file.size, mime: req.file.mimetype },
+        { size: req.file.size, mime: req.file.mimetype, objectKey },
         "Avatar uploaded to object storage",
       );
-      res.status(201).json({ avatarUrl });
+      res.status(201).json({ avatarUrl: signedUrl, avatarObjectKey: objectKey });
     } catch (err) {
       req.log.error({ err }, "Failed to upload avatar to object storage");
       res.status(503).json({ error: "Couldn't upload your photo. Please try again." });

@@ -469,6 +469,9 @@ export default function PostDetailScreen() {
                 >
                   {relatedPosts.map((rp) => {
                     const rpPlaceholder = SINGER_IMAGES[rp.id % SINGER_IMAGES.length];
+                    const rpThumbnailSource = rp.thumbnailUrl
+                      ? { uri: rp.thumbnailUrl }
+                      : rpPlaceholder;
                     return (
                       <TouchableOpacity
                         key={rp.id}
@@ -484,7 +487,7 @@ export default function PostDetailScreen() {
                         }}
                       >
                         <Image
-                          source={rpPlaceholder}
+                          source={rpThumbnailSource}
                           style={StyleSheet.absoluteFill}
                           contentFit="cover"
                         />

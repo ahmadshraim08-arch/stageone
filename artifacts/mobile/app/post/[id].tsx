@@ -46,7 +46,9 @@ function StatPill({ icon, value, color }: { icon: string; value: number; color: 
 export default function PostDetailScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, depth: depthParam } = useLocalSearchParams<{ id: string; depth?: string }>();
+  const depth = parseInt(depthParam ?? "1", 10) || 1;
+  const MAX_POST_DEPTH = 3;
   const { getToken, isSignedIn } = useAuth();
   const { likedIds, savedIds, currentUser, removeFromFeed, patchInFeed, adjustPostCount } = useApp();
 
@@ -472,7 +474,14 @@ export default function PostDetailScreen() {
                         key={rp.id}
                         style={[styles.relatedTile, { backgroundColor: colors.card, borderColor: colors.border }]}
                         activeOpacity={0.85}
-                        onPress={() => router.replace(`/post/${rp.id}`)}
+                        onPress={() => {
+                          const nextDepth = depth + 1;
+                          if (depth >= MAX_POST_DEPTH) {
+                            router.replace(`/post/${rp.id}?depth=${MAX_POST_DEPTH}`);
+                          } else {
+                            router.push(`/post/${rp.id}?depth=${nextDepth}`);
+                          }
+                        }}
                       >
                         <Image
                           source={rpPlaceholder}

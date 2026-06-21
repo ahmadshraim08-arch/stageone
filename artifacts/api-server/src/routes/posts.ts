@@ -4,6 +4,7 @@ import { eq, desc, isNull, and, lt, inArray, sql, gte } from "drizzle-orm";
 import { requireAuth, optionalAuth } from "../middleware/auth";
 import { createNotification } from "../lib/notifications";
 import { signVideoGetUrl } from "../lib/objectStorage";
+import { generateVideoThumbnail } from "../lib/videoThumbnail";
 
 /**
  * Re-sign a video URL for private-bucket objects.
@@ -19,6 +20,66 @@ async function freshenVideoUrl(videoUrl: string, videoObjectKey: string | null):
     return await signVideoGetUrl(bucket, objectName);
   } catch {
     return videoUrl;
+  }
+}
+
+/**
+ * Resolve the trusted bucket + video object prefix from the server-controlled
+ * PRIVATE_OBJECT_DIR. Returns null if storage is not configured.
+ *
+ * PRIVATE_OBJECT_DIR example: /replit-objstore-abc123/.private
+ *   → expectedBucket    = "replit-objstore-abc123"
+ *   → videoObjectPrefix = ".private/videos/"
+ */
+function getExpectedVideoPrefix(): { expectedBucket: string; videoObjectPrefix: string } | null {
+  const privateDir = process.env.PRIVATE_OBJECT_DIR;
+  if (!privateDir) return null;
+  const stripped = privateDir.startsWith("/") ? privateDir.slice(1) : privateDir;
+  const firstSlash = stripped.indexOf("/");
+  const expectedBucket = firstSlash === -1 ? stripped : stripped.slice(0, firstSlash);
+  const privatePath = firstSlash === -1 ? "" : stripped.slice(firstSlash + 1);
+  const videoObjectPrefix = privatePath ? `${privatePath}/videos/` : "videos/";
+  return { expectedBucket, videoObjectPrefix };
+}
+
+/**
+ * Sign a GET URL for a video object ONLY if its key matches the server-controlled
+ * bucket + video prefix. Returns null for any key outside the trusted prefix.
+ *
+ * Security: thumbnail generation feeds this URL to ffmpeg. Never derive the ffmpeg
+ * input from a client-supplied URL — only from a validated, server-minted object key.
+ * This prevents SSRF via arbitrary URLs/protocols in the post-creation request.
+ */
+async function signValidatedVideoGetUrl(videoObjectKey: string): Promise<string | null> {
+  const prefix = getExpectedVideoPrefix();
+  if (!prefix) return null;
+  const slash = videoObjectKey.indexOf("/");
+  if (slash === -1) return null;
+  const bucket = videoObjectKey.slice(0, slash);
+  const objectName = videoObjectKey.slice(slash + 1);
+  if (bucket !== prefix.expectedBucket || !objectName.startsWith(prefix.videoObjectPrefix)) {
+    return null;
+  }
+  return await signVideoGetUrl(bucket, objectName);
+}
+
+/**
+ * Re-sign a stored thumbnail URL for private-bucket objects.
+ * Falls back to the stored URL if objectKey is absent or signing fails.
+ */
+async function freshenThumbnailUrl(
+  thumbnailUrl: string | null,
+  thumbnailObjectKey: string | null,
+): Promise<string | null> {
+  if (!thumbnailObjectKey) return thumbnailUrl;
+  try {
+    const slash = thumbnailObjectKey.indexOf("/");
+    if (slash === -1) return thumbnailUrl;
+    const bucket = thumbnailObjectKey.slice(0, slash);
+    const objectName = thumbnailObjectKey.slice(slash + 1);
+    return await signVideoGetUrl(bucket, objectName);
+  } catch {
+    return thumbnailUrl;
   }
 }
 
@@ -56,6 +117,7 @@ type FeedRow = {
   videoUrl: string;
   videoObjectKey: string | null;
   thumbnailUrl: string | null;
+  thumbnailObjectKey: string | null;
   title: string;
   caption: string | null;
   performanceType: string;
@@ -145,6 +207,7 @@ async function fetchPersonalizedFeed(
         p.video_url,
         p.video_object_key,
         p.thumbnail_url,
+        p.thumbnail_object_key,
         p.title,
         p.caption,
         p.performance_type,
@@ -201,6 +264,7 @@ async function fetchPersonalizedFeed(
     videoUrl: r["video_url"] as string,
     videoObjectKey: (r["video_object_key"] as string | null) ?? null,
     thumbnailUrl: (r["thumbnail_url"] as string | null) ?? null,
+    thumbnailObjectKey: (r["thumbnail_object_key"] as string | null) ?? null,
     title: r["title"] as string,
     caption: (r["caption"] as string | null) ?? null,
     performanceType: r["performance_type"] as string,
@@ -260,6 +324,7 @@ router.get("/posts", optionalAuth, async (req, res): Promise<void> => {
       items.map(async (item) => ({
         ...item,
         videoUrl: await freshenVideoUrl(item.videoUrl, item.videoObjectKey),
+        thumbnailUrl: await freshenThumbnailUrl(item.thumbnailUrl, item.thumbnailObjectKey),
       })),
     );
     res.json({ items: signedItems, nextCursor });
@@ -289,6 +354,7 @@ router.get("/posts", optionalAuth, async (req, res): Promise<void> => {
       videoUrl: postsTable.videoUrl,
       videoObjectKey: postsTable.videoObjectKey,
       thumbnailUrl: postsTable.thumbnailUrl,
+      thumbnailObjectKey: postsTable.thumbnailObjectKey,
       title: postsTable.title,
       caption: postsTable.caption,
       performanceType: postsTable.performanceType,
@@ -335,6 +401,7 @@ router.get("/posts", optionalAuth, async (req, res): Promise<void> => {
     items.map(async (item) => ({
       ...item,
       videoUrl: await freshenVideoUrl(item.videoUrl, item.videoObjectKey),
+      thumbnailUrl: await freshenThumbnailUrl(item.thumbnailUrl, item.thumbnailObjectKey),
     })),
   );
   res.json({ items: signedItems, nextCursor });
@@ -388,13 +455,41 @@ router.post("/posts", requireAuth, async (req, res): Promise<void> => {
     return;
   }
 
+  // Generate a thumbnail by extracting a frame from the uploaded video.
+  // Best-effort: never block post creation if ffmpeg/GCS is unavailable.
+  // Prefer a client-supplied thumbnailUrl if one was provided.
+  let thumbnailUrl: string | null = body.thumbnailUrl ?? null;
+  let thumbnailObjectKey: string | null = null;
+  if (!thumbnailUrl && body.videoObjectKey) {
+    try {
+      // Derive the ffmpeg input URL server-side from the validated object key.
+      // Never feed the client-supplied videoUrl to ffmpeg (SSRF risk).
+      const signedVideoUrl = await signValidatedVideoGetUrl(body.videoObjectKey);
+      if (signedVideoUrl) {
+        const thumb = await generateVideoThumbnail(signedVideoUrl);
+        if (thumb) {
+          thumbnailUrl = thumb.signedUrl;
+          thumbnailObjectKey = thumb.objectKey;
+        }
+      } else {
+        req.log.warn(
+          { videoObjectKey: body.videoObjectKey },
+          "Skipping thumbnail — videoObjectKey failed prefix validation",
+        );
+      }
+    } catch (err) {
+      req.log.error({ err }, "Thumbnail generation failed — proceeding without thumbnail");
+    }
+  }
+
   const [post] = await db
     .insert(postsTable)
     .values({
       userId: req.userId,
       videoUrl: body.videoUrl,
       videoObjectKey: body.videoObjectKey ?? null,
-      thumbnailUrl: body.thumbnailUrl ?? null,
+      thumbnailUrl,
+      thumbnailObjectKey,
       title: body.title,
       caption: body.caption ?? null,
       performanceType: body.performanceType,
@@ -454,6 +549,7 @@ router.get("/users/me/posts", requireAuth, async (req, res): Promise<void> => {
       videoUrl: postsTable.videoUrl,
       videoObjectKey: postsTable.videoObjectKey,
       thumbnailUrl: postsTable.thumbnailUrl,
+      thumbnailObjectKey: postsTable.thumbnailObjectKey,
       title: postsTable.title,
       caption: postsTable.caption,
       performanceType: postsTable.performanceType,
@@ -494,6 +590,7 @@ router.get("/users/me/posts", requireAuth, async (req, res): Promise<void> => {
     items.map(async (item) => ({
       ...item,
       videoUrl: await freshenVideoUrl(item.videoUrl, item.videoObjectKey),
+      thumbnailUrl: await freshenThumbnailUrl(item.thumbnailUrl, item.thumbnailObjectKey),
     })),
   );
 
@@ -560,6 +657,7 @@ router.patch("/posts/:id", requireAuth, async (req, res): Promise<void> => {
       videoUrl: postsTable.videoUrl,
       videoObjectKey: postsTable.videoObjectKey,
       thumbnailUrl: postsTable.thumbnailUrl,
+      thumbnailObjectKey: postsTable.thumbnailObjectKey,
       title: postsTable.title,
       caption: postsTable.caption,
       performanceType: postsTable.performanceType,
@@ -591,7 +689,10 @@ router.patch("/posts/:id", requireAuth, async (req, res): Promise<void> => {
     .where(eq(postsTable.id, postId))
     .limit(1);
 
-  res.json(updated);
+  res.json({
+    ...updated,
+    thumbnailUrl: await freshenThumbnailUrl(updated.thumbnailUrl, updated.thumbnailObjectKey),
+  });
 });
 
 router.delete("/posts/:id", requireAuth, async (req, res): Promise<void> => {
@@ -662,6 +763,7 @@ router.get("/posts/:id", optionalAuth, async (req, res): Promise<void> => {
       videoUrl: postsTable.videoUrl,
       videoObjectKey: postsTable.videoObjectKey,
       thumbnailUrl: postsTable.thumbnailUrl,
+      thumbnailObjectKey: postsTable.thumbnailObjectKey,
       title: postsTable.title,
       caption: postsTable.caption,
       performanceType: postsTable.performanceType,
@@ -708,6 +810,7 @@ router.get("/posts/:id", optionalAuth, async (req, res): Promise<void> => {
   res.json({
     ...row,
     videoUrl: await freshenVideoUrl(row.videoUrl, row.videoObjectKey),
+    thumbnailUrl: await freshenThumbnailUrl(row.thumbnailUrl, row.thumbnailObjectKey),
   });
 });
 

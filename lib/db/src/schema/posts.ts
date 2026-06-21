@@ -10,6 +10,7 @@ export const postsTable = pgTable("posts", {
     .references(() => usersTable.id),
   videoUrl: text("video_url").notNull(),
   thumbnailUrl: text("thumbnail_url"),
+  thumbnailObjectKey: text("thumbnail_object_key"),
   title: text("title").notNull(),
   caption: text("caption"),
   performanceType: text("performance_type").notNull(),

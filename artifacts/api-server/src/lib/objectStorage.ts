@@ -260,6 +260,27 @@ export async function signVideoUploadUrl(mimeType: string): Promise<{
   return { signedUrl, objectKey: `${bucketName}/${objectName}` };
 }
 
+/**
+ * Upload a locally-generated thumbnail image to the private GCS bucket and
+ * return its stable object key plus a fresh signed GET URL (7-day TTL).
+ * The bucket enforces public access prevention, so we use signed URLs (mirrors
+ * the video flow). Callers should re-sign on read via the stored object key.
+ */
+export async function uploadThumbnailToGcs(
+  buffer: Buffer,
+): Promise<{ objectKey: string; signedUrl: string }> {
+  const privateDir = process.env.PRIVATE_OBJECT_DIR;
+  if (!privateDir) throw new Error("PRIVATE_OBJECT_DIR is not set");
+  const objectId = randomUUID();
+  const fullPath = `${privateDir}/thumbnails/${objectId}.jpg`;
+  const { bucketName, objectName } = parseObjectPath(fullPath);
+  const bucket = objectStorageClient.bucket(bucketName);
+  const file = bucket.file(objectName);
+  await file.save(buffer, { metadata: { contentType: "image/jpeg" }, resumable: false });
+  const signedUrl = await signVideoGetUrl(bucketName, objectName);
+  return { objectKey: `${bucketName}/${objectName}`, signedUrl };
+}
+
 async function signObjectURL({
   bucketName,
   objectName,

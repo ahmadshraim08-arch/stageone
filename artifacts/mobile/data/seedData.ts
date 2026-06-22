@@ -49,6 +49,7 @@ export interface MusicMinute {
   trackArtist?: string;
   imageIndex: number;
   videoUri?: string;
+  thumbnailUrl?: string;
   views: number;
   likesCount: number;
   commentsCount: number;

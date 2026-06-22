@@ -165,6 +165,7 @@ export function apiPostToMusicMinute(post: ApiPost): MusicMinute {
     trackArtist: post.trackArtist ?? undefined,
     imageIndex: post.id % 3,
     videoUri: post.videoUrl,
+    thumbnailUrl: post.thumbnailUrl ?? undefined,
     views: 0,
     likesCount: post.likesCount,
     commentsCount: post.commentsCount,

@@ -24,7 +24,7 @@ import { useAuth } from "@clerk/expo";
 import { useApp, apiPostToMusicMinute } from "@/context/AppContext";
 import { SEED_USERS, formatCount, MusicMinute } from "@/data/seedData";
 import { useColors } from "@/hooks/useColors";
-import { apiBase, getMyPosts, getMySaved } from "@/lib/api";
+import { apiBase, getMyPosts, getMySaved, deletePost } from "@/lib/api";
 import { uploadAvatar } from "@/lib/uploads";
 
 const SINGER_IMAGES = [
@@ -37,7 +37,7 @@ export default function ProfileScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { getToken } = useAuth();
-  const { currentUser, musicMinutes, likedIds, savedIds, unreadMessages, logout, isLoaded, updateAvatar, updateProfile } = useApp();
+  const { currentUser, musicMinutes, likedIds, savedIds, unreadMessages, logout, isLoaded, updateAvatar, updateProfile, removeFromFeed, adjustPostCount } = useApp();
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [myApiPosts, setMyApiPosts] = useState<MusicMinute[]>([]);
   const [savedApiPosts, setSavedApiPosts] = useState<MusicMinute[]>([]);
@@ -76,6 +76,57 @@ export default function ProfileScreen() {
       setIsSaving(false);
     }
   };
+
+  const handleDeleteFromGrid = useCallback((mm: MusicMinute) => {
+    Alert.alert(
+      "Delete post?",
+      "Delete this Music Minute? This action cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            setMyApiPosts((prev) => prev.filter((p) => p.id !== mm.id));
+            removeFromFeed(mm.id);
+            adjustPostCount(-1);
+            try {
+              const token = await getTokenRef.current();
+              if (!token) throw new Error("Not authenticated");
+              await deletePost(token, Number(mm.id));
+            } catch {
+              setMyApiPosts((prev) => {
+                if (prev.some((p) => p.id === mm.id)) return prev;
+                return [mm, ...prev];
+              });
+              adjustPostCount(1);
+              Alert.alert("Delete failed", "Could not delete this post. Please try again.");
+            }
+          },
+        },
+      ],
+    );
+  }, [removeFromFeed, adjustPostCount]);
+
+  const handleLongPressGrid = useCallback((mm: MusicMinute) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Alert.alert(
+      mm.title,
+      undefined,
+      [
+        {
+          text: "Edit",
+          onPress: () => router.push(`/post/${mm.id}`),
+        },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () => handleDeleteFromGrid(mm),
+        },
+        { text: "Cancel", style: "cancel" },
+      ],
+    );
+  }, [handleDeleteFromGrid]);
 
   const fetchMyPosts = useCallback(async () => {
     if (!currentUser || currentUser.isGuest) return;
@@ -362,9 +413,17 @@ export default function ProfileScreen() {
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                     router.push(`/post/${mm.id}`);
                   }}
+                  onLongPress={() => handleLongPressGrid(mm)}
+                  delayLongPress={400}
                 >
                   <Image
-                    source={mm.videoUri ? { uri: mm.videoUri } : SINGER_IMAGES[mm.imageIndex % 3]}
+                    source={
+                      mm.thumbnailUrl
+                        ? { uri: mm.thumbnailUrl }
+                        : mm.videoUri
+                          ? { uri: mm.videoUri }
+                          : SINGER_IMAGES[mm.imageIndex % 3]
+                    }
                     style={StyleSheet.absoluteFill}
                     contentFit="cover"
                   />

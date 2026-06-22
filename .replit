@@ -38,6 +38,7 @@ externalPort = 3000
 [userenv]
 
 [userenv.shared]
+FFMPEG_PATH = "/nix/store/2rx203nlg80r7m32ix5yg7zzgr4m2fk3-replit-runtime-path/bin/ffmpeg"
 
 [userenv.development]
 EXPO_PUBLIC_DOMAIN = "6b3d09f5-a7de-4749-831b-9b26e7e96992-00-1psl6esjl2kzd.pike.replit.dev"

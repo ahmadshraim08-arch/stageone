@@ -125,15 +125,21 @@ function mapDetectedLanguage(lang: string): string | null {
 }
 
 const STAGE_LABELS: Record<string, string> = {
-  preparing: "Preparing audio",
+  // Current stage names
+  retrieving_video: "Reading uploaded video",
+  transcribing_video: "Listening to your performance",
+  preparing_audio_fallback: "Preparing audio",
   isolating_vocals: "Isolating vocals",
-  transcribing: "Listening to your performance",
+  transcribing_audio_fallback: "Listening to your performance",
   searching_musixmatch: "Searching for the song",
   matching_lyrics: "Matching lyrics",
   analyzing_audio: "Analyzing audio",
   aligning_timing: "Aligning timing",
   ready: "Analysis complete",
   failed: "Analysis could not complete",
+  // Legacy stage names (for any in-flight jobs created before the update)
+  preparing: "Preparing audio",
+  transcribing: "Listening to your performance",
 };
 
 interface MusixmatchResult {
@@ -851,11 +857,15 @@ export default function PostScreen() {
           setAnalysisPhase("confirming");
         } else {
           // failed or canceled
-          setAnalysisError(
+          const ref = job.jobRef;
+          const fatalCode = (job.result as Record<string, unknown> | null)?.fatalErrorCode as string | undefined;
+          const fatalMsg = (job.result as Record<string, unknown> | null)?.fatalError as string | undefined;
+          const userMsg =
             job.status === "canceled"
               ? "Analysis was canceled."
-              : "We couldn't analyze the audio. You can retry or search for the song manually.",
-          );
+              : fatalMsg
+              ?? "We couldn't analyze the audio. You can retry or search for the song manually.";
+          setAnalysisError(ref ? `${userMsg}\n\nReference: ${ref}${fatalCode ? ` (${fatalCode})` : ""}` : userMsg);
           setAnalysisPhase("failed");
         }
       },
@@ -1353,15 +1363,18 @@ export default function PostScreen() {
                   {/* Stage checklist with animated checkmarks */}
                   <View style={[styles.stageChecklist, { backgroundColor: colors.card, borderColor: colors.border }]}>
                     {[
-                      { key: "preparing", label: "Preparing audio" },
-                      { key: "isolating_vocals", label: "Isolating vocals" },
-                      { key: "transcribing", label: "Listening to performance" },
-                      { key: "searching_musixmatch", label: "Searching for song" },
-                      { key: "matching_lyrics", label: "Matching lyrics" },
-                    ].map(({ key, label }) => {
-                      const isDone = seenStages.has(key) && analysisStage !== key;
-                      const isActive = analysisStage === key;
+                      { key: "retrieving_video", label: "Reading uploaded video", legacy: ["preparing"] },
+                      { key: "transcribing_video", label: "Listening to performance", legacy: ["transcribing"] },
+                      { key: "preparing_audio_fallback", label: "Preparing audio (fallback)", legacy: [] },
+                      { key: "isolating_vocals", label: "Isolating vocals", legacy: [] },
+                      { key: "searching_musixmatch", label: "Searching for song", legacy: [] },
+                      { key: "matching_lyrics", label: "Matching lyrics", legacy: [] },
+                    ].map(({ key, label, legacy }) => {
+                      const allKeys = [key, ...(legacy ?? [])];
+                      const isDone = allKeys.some(k => seenStages.has(k)) && !allKeys.includes(analysisStage);
+                      const isActive = allKeys.includes(analysisStage);
                       if (key === "isolating_vocals" && !seenStages.has("isolating_vocals")) return null;
+                      if (key === "preparing_audio_fallback" && !seenStages.has("preparing_audio_fallback")) return null;
                       return (
                         <AnimatedCheckItem
                           key={key}

@@ -368,6 +368,7 @@ export interface ApiAnalysisResult {
 
 export interface ApiAnalysisJob {
   jobId: string;
+  jobRef?: string;
   status: "running" | "ready" | "failed" | "canceled";
   stage: string;
   progressPct: number;

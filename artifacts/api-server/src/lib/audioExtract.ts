@@ -201,3 +201,37 @@ export async function downloadToTemp(url: string, ext: string): Promise<{ path: 
     },
   };
 }
+
+/**
+ * Download a video file from a signed URL to a local temp file.
+ * Used so the analysis pipeline can send the video directly to ElevenLabs
+ * without requiring FFmpeg.
+ * Uses a 5-minute timeout to handle large iPhone video files.
+ */
+export async function downloadVideoToTemp(
+  url: string,
+  ext: string,
+): Promise<{ path: string; sizeBytes: number; cleanup: () => Promise<void> }> {
+  const id = randomUUID();
+  const outPath = join(tmpdir(), `stageone-video-${id}${ext}`);
+
+  const resp = await fetch(url, { signal: AbortSignal.timeout(300_000) });
+  if (!resp.ok) {
+    throw new Error(`Video download failed: HTTP ${resp.status}`);
+  }
+
+  const buffer = Buffer.from(await resp.arrayBuffer());
+  if (buffer.length === 0) {
+    throw new Error("Downloaded video file is empty (0 bytes)");
+  }
+
+  await import("fs/promises").then(m => m.writeFile(outPath, buffer));
+
+  return {
+    path: outPath,
+    sizeBytes: buffer.length,
+    cleanup: async () => {
+      try { await rm(outPath, { force: true }); } catch { /* ignore */ }
+    },
+  };
+}

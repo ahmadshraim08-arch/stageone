@@ -1,9 +1,10 @@
 /**
  * Analysis job endpoints.
  *
- * POST   /api/analysis/jobs         — create job, start pipeline
- * GET    /api/analysis/jobs/:id     — poll job status (owner only)
- * DELETE /api/analysis/jobs/:id     — cancel job + cleanup
+ * POST   /api/analysis/jobs              — create job, start pipeline
+ * GET    /api/analysis/jobs/:id          — poll job status (owner only)
+ * DELETE /api/analysis/jobs/:id          — cancel job + cleanup
+ * GET    /api/analysis/diagnostics       — safe system diagnostics (auth required)
  */
 
 import { Router, type IRouter } from "express";
@@ -13,6 +14,7 @@ import { eq, and } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { requireAuth } from "../middleware/auth.js";
 import { runPipeline } from "../lib/analysisPipeline.js";
+import { checkFfmpegHealth } from "../lib/audioExtract.js";
 
 const router: IRouter = Router();
 
@@ -31,6 +33,11 @@ function validateObjectKey(objectKey: string): boolean {
   const bucket = objectKey.slice(0, keySlash);
   const obj = objectKey.slice(keySlash + 1);
   return bucket === expectedBucket && obj.startsWith(expectedPrefix);
+}
+
+/** Short user-facing reference code: AN-XXXXXXXX */
+function jobRef(jobId: string): string {
+  return `AN-${jobId.slice(0, 8).toUpperCase()}`;
 }
 
 router.post("/analysis/jobs", requireAuth, async (req, res): Promise<void> => {
@@ -55,41 +62,48 @@ router.post("/analysis/jobs", requireAuth, async (req, res): Promise<void> => {
     return;
   }
 
-  const jobId = randomUUID();
+  const id = randomUUID();
   const expiresAt = new Date(Date.now() + JOB_TTL_MS);
+  const ref = jobRef(id);
 
   await db.insert(analysisJobsTable).values({
-    id: jobId,
+    id,
     userId: req.userId,
     videoObjectKey,
-    stage: "preparing",
+    stage: "retrieving_video",
     progressPct: 0,
     status: "running",
     retryable: false,
     expiresAt,
   });
 
-  res.status(202).json({ jobId, status: "running", stage: "preparing", progressPct: 0 });
+  res.status(202).json({
+    jobId: id,
+    jobRef: ref,
+    status: "running",
+    stage: "retrieving_video",
+    progressPct: 0,
+  });
 
   runPipeline(
-    jobId,
+    id,
     req.userId,
     videoObjectKey,
     performanceType,
     artistHint ?? undefined,
     titleHint ?? undefined,
   ).catch(err => {
-    req.log.error({ err, jobId }, "Analysis pipeline uncaught error");
+    req.log.error({ err, jobId: id, jobRef: ref }, "Analysis pipeline uncaught error");
   });
 });
 
 router.get("/analysis/jobs/:id", requireAuth, async (req, res): Promise<void> => {
-  const jobId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
 
   const rows = await db
     .select()
     .from(analysisJobsTable)
-    .where(and(eq(analysisJobsTable.id, jobId), eq(analysisJobsTable.userId, req.userId)))
+    .where(and(eq(analysisJobsTable.id, id), eq(analysisJobsTable.userId, req.userId)))
     .limit(1);
 
   if (rows.length === 0) {
@@ -105,6 +119,7 @@ router.get("/analysis/jobs/:id", requireAuth, async (req, res): Promise<void> =>
 
   res.json({
     jobId: job.id,
+    jobRef: jobRef(job.id),
     status: job.status,
     stage: job.stage,
     progressPct: job.progressPct,
@@ -117,12 +132,12 @@ router.get("/analysis/jobs/:id", requireAuth, async (req, res): Promise<void> =>
 });
 
 router.delete("/analysis/jobs/:id", requireAuth, async (req, res): Promise<void> => {
-  const jobId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
 
   const rows = await db
     .select({ id: analysisJobsTable.id, status: analysisJobsTable.status })
     .from(analysisJobsTable)
-    .where(and(eq(analysisJobsTable.id, jobId), eq(analysisJobsTable.userId, req.userId)))
+    .where(and(eq(analysisJobsTable.id, id), eq(analysisJobsTable.userId, req.userId)))
     .limit(1);
 
   if (rows.length === 0) {
@@ -139,9 +154,34 @@ router.delete("/analysis/jobs/:id", requireAuth, async (req, res): Promise<void>
   await db
     .update(analysisJobsTable)
     .set({ status: "canceled", stage: "canceled" })
-    .where(eq(analysisJobsTable.id, jobId));
+    .where(eq(analysisJobsTable.id, id));
 
   res.sendStatus(204);
+});
+
+/**
+ * Safe diagnostics endpoint. Returns system capability info — no secrets, no tokens.
+ * Useful for debugging failed analyses: check this to confirm which services are active.
+ */
+router.get("/analysis/diagnostics", requireAuth, async (_req, res): Promise<void> => {
+  const ffmpegHealth = await checkFfmpegHealth().catch(() => ({
+    ok: false,
+    code: "CHECK_FAILED",
+    binaryPath: "unknown",
+    version: undefined,
+  }));
+
+  res.json({
+    elevenlabsConfigured: Boolean(process.env.ELEVENLABS_API_KEY),
+    musixmatchConfigured: Boolean(process.env.MUSIXMATCH_API_KEY),
+    directVideoTranscriptionAvailable: Boolean(process.env.ELEVENLABS_API_KEY),
+    ffmpegAvailable: ffmpegHealth.ok,
+    ffmpegVersion: ffmpegHealth.version ?? null,
+    ffmpegBinaryPath: ffmpegHealth.binaryPath,
+    ffmpegCode: ffmpegHealth.ok ? null : ffmpegHealth.code,
+    supportedPrimaryFormats: ["video/mp4", "video/quicktime"],
+    supportedFallbackFormats: ["audio/wav", "audio/mpeg"],
+  });
 });
 
 function sanitizeResult(result: Record<string, unknown>): Record<string, unknown> {

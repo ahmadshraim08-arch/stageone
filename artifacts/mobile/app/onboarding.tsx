@@ -3,7 +3,7 @@ import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   KeyboardAvoidingView,
   Platform,
@@ -25,8 +25,18 @@ type Path = "watch" | "post" | "both";
 export default function OnboardingScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { login } = useApp();
+  const { login, currentUser, isLoaded: appLoaded } = useApp();
   const { user } = useUser();
+
+  // If the user already completed onboarding (has a real, non-default username),
+  // redirect them to the main app so they can never get stuck here again.
+  useEffect(() => {
+    if (!appLoaded || !currentUser) return;
+    const defaultUsername = `user_${currentUser.id.slice(-8)}`;
+    if (currentUser.username && currentUser.username !== defaultUsername) {
+      router.replace("/(tabs)");
+    }
+  }, [appLoaded, currentUser?.id, currentUser?.username]);
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
 

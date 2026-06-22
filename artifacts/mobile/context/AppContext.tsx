@@ -1,5 +1,6 @@
 import { useAuth, useUser } from "@clerk/expo";
 import * as Notifications from "expo-notifications";
+import { router } from "expo-router";
 import React, {
   createContext,
   useCallback,
@@ -307,15 +308,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Auth side-effect: load user from API whenever sign-in state changes
   // ------------------------------------------------------------------
 
-  const prevSignedInRef = useRef<boolean | null>(null);
+  const prevAuthKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!authLoaded) return;
 
     const signedIn = isSignedIn ?? false;
+    const authKey = signedIn ? (clerkUser?.id ?? "__signed_in__") : "__signed_out__";
 
-    if (prevSignedInRef.current === signedIn) return;
-    prevSignedInRef.current = signedIn;
+    if (prevAuthKeyRef.current === authKey) return;
+    prevAuthKeyRef.current = authKey;
 
     if (!signedIn) {
       setCurrentUser(null);
@@ -351,6 +353,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           followingCount: apiUser.followingCount,
           postCount: apiUser.postCount,
         });
+
+        // If the username is still the server-generated default the user has not
+        // completed onboarding yet.  Redirect them regardless of which screen
+        // triggered the sign-in so the profile setup is never skipped.
+        const clerkId = clerkUser?.id ?? apiUser.clerkId ?? "";
+        const defaultUsername = `user_${clerkId.slice(-8)}`;
+        if (apiUser.username === defaultUsername) {
+          router.replace("/onboarding");
+        }
 
         await Promise.all([
           fetchFeedInternal(token),

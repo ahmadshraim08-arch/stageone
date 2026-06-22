@@ -36,7 +36,7 @@ const SINGER_IMAGES = [
 export default function ProfileScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { getToken } = useAuth();
+  const { getToken, signOut } = useAuth();
   const { currentUser, musicMinutes, likedIds, savedIds, unreadMessages, logout, isLoaded, updateAvatar, updateProfile, removeFromFeed, adjustPostCount } = useApp();
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [myApiPosts, setMyApiPosts] = useState<MusicMinute[]>([]);
@@ -76,6 +76,14 @@ export default function ProfileScreen() {
       setIsSaving(false);
     }
   };
+
+  const handleLogout = useCallback(async () => {
+    try {
+      await signOut();
+    } catch {
+    }
+    logout();
+  }, [signOut, logout]);
 
   const handleDeleteFromGrid = useCallback((mm: MusicMinute) => {
     Alert.alert(
@@ -240,7 +248,7 @@ export default function ProfileScreen() {
             Sign up to track your Rise Score, give Golden Mics, and post your first Music Minute.
           </Text>
           <TouchableOpacity
-            onPress={() => router.push("/onboarding")}
+            onPress={() => router.push("/(auth)/sign-up")}
             activeOpacity={0.85}
             style={styles.joinBtn}
           >
@@ -248,10 +256,12 @@ export default function ProfileScreen() {
               <Text style={styles.joinBtnText}>Create Account</Text>
             </LinearGradient>
           </TouchableOpacity>
-          <Text style={[styles.loginLink, { color: colors.mutedForeground }]}>
-            Already have an account?{" "}
-            <Text style={{ color: colors.primary }}>Log in</Text>
-          </Text>
+          <TouchableOpacity onPress={() => router.push("/(auth)/sign-in")} activeOpacity={0.8}>
+            <Text style={[styles.loginLink, { color: colors.mutedForeground }]}>
+              Already have an account?{" "}
+              <Text style={{ color: colors.primary }}>Log in</Text>
+            </Text>
+          </TouchableOpacity>
         </View>
 
         <View style={[styles.section, { borderColor: colors.border }]}>
@@ -352,7 +362,7 @@ export default function ProfileScreen() {
             <TouchableOpacity onPress={() => router.push("/diagnostic")} style={[styles.iconBtn, { borderColor: colors.border }]} activeOpacity={0.7}>
               <Ionicons name="settings-outline" size={20} color={colors.mutedForeground} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => logout()} style={[styles.iconBtn, { borderColor: colors.border }]} activeOpacity={0.7}>
+            <TouchableOpacity onPress={handleLogout} style={[styles.iconBtn, { borderColor: colors.border }]} activeOpacity={0.7}>
               <Ionicons name="log-out-outline" size={20} color={colors.mutedForeground} />
             </TouchableOpacity>
           </View>

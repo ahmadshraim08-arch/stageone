@@ -1,0 +1,503 @@
+Make StageOne Fully Multi-User and Fix Authentication + Profile Music Minutes
+
+Do not add unrelated features.
+
+The goal is to make StageOne usable by multiple real people. Anyone I share the app link with should be able to:
+
+1. Open StageOne
+2. Browse uploaded Music Minutes
+3. Create their own account
+4. Log in to an existing account
+5. Complete their own profile
+6. Upload their own Music Minutes
+7. See posts uploaded by other users
+8. Like, comment, save, follow, share, message, and send Golden Mics
+9. See their own Music Minutes on Profile
+10. Open, edit, or delete their own Music Minutes
+11. Log out and return to the correct public authentication screen
+
+The current problems are:
+
+* After logout, the app becomes stuck on “Set up your profile.”
+* It does not return correctly to the screen that offers Create Account and Log In.
+* The Log In option is not functioning correctly.
+* Authentication and onboarding state appear to leak between accounts.
+* Uploaded Music Minutes appear in Home but not under “My Music Minutes.”
+* The Profile may show a post count, but no actual post thumbnail or snapshot is visible.
+* Users cannot reliably open, edit, or delete their uploaded posts from Profile.
+* The app must support multiple independent users using one shared backend.
+
+Work in the following order.
+
+⸻
+
+Priority 1 — Fix the authentication state machine
+
+Inspect the complete Clerk and app-routing flow.
+
+Identify the exact states currently used:
+
+* Guest
+* Signed out
+* Signing up
+* Email verification
+* Signed in but no database user
+* Signed in but onboarding incomplete
+* Signed in with completed profile
+
+Create one clear routing decision based on real backend and Clerk state.
+
+Required behavior:
+
+Signed-out user
+
+A signed-out user should see the public StageOne experience.
+
+They may:
+
+* Browse the public feed
+* Open public creator profiles
+* Tap Create Account
+* Tap Log In
+
+They must not be sent to “Set up your profile” unless they have successfully authenticated and their own account onboarding is incomplete.
+
+New account
+
+The flow should be:
+
+1. Create Account
+2. Enter email
+3. Verify email
+4. Create Clerk session
+5. Create or retrieve the matching PostgreSQL user
+6. Complete the new user’s profile
+7. Enter the main app
+
+Existing account
+
+The flow should be:
+
+1. Tap Log In
+2. Enter existing credentials or verification flow
+3. Restore Clerk session
+4. Retrieve that account’s PostgreSQL user
+5. If onboarding is complete, enter the main app directly
+6. If onboarding is incomplete, show profile setup only for that account
+
+Logout
+
+Logout must:
+
+1. Call Clerk sign-out
+2. Clear current-user state
+3. Clear profile and posts caches
+4. Clear onboarding state
+5. Clear auth tokens
+6. Stop authenticated API polling
+7. Reset protected navigation history
+8. Return to the signed-out public Profile screen with:
+    * Create Account
+    * Log In
+
+After logout, the previous user’s username, display name, bio, avatar, posts, and onboarding state must not remain visible.
+
+Do not store onboarding completion only in local mobile state.
+
+Use the authenticated PostgreSQL user record as the source of truth.
+
+⸻
+
+Priority 2 — Fix Create Account and Log In navigation
+
+Inspect the current buttons and routes.
+
+Confirm:
+
+* Create Account opens the real Clerk signup screen
+* Log In opens the real Clerk login screen
+* Back navigation works
+* Email verification works
+* Session creation works
+* Errors are visible and understandable
+* Loading states do not freeze the buttons
+
+The app must not redirect the user in a loop between:
+
+* Join StageOne
+* Set up your profile
+* Profile tab
+
+Add route guards so each authentication state has only one correct destination.
+
+Prevent:
+
+* Signed-out users reaching onboarding
+* Signed-in completed users returning to onboarding
+* One user inheriting another user’s username
+* Stale Clerk session data remaining after logout
+
+⸻
+
+Priority 3 — Ensure every account has an independent database identity
+
+Use this canonical relationship:
+
+* Clerk user ID identifies the authenticated account
+* The backend resolves Clerk user ID to one PostgreSQL user row
+* Every post references the internal PostgreSQL user ID
+* Likes, comments, saves, follows, messages, Golden Mics, and notifications reference real database users
+* No feature should identify ownership only by username or display name
+
+Inspect for:
+
+* Duplicate PostgreSQL users for one Clerk account
+* Different Clerk users mapped to the same database user
+* Posts assigned to the wrong user
+* Username from a previous session reused during onboarding
+* Client-provided user IDs being trusted by the server
+
+The server must derive the current user from the authenticated Clerk token.
+
+Do not allow the client to choose the owner ID for posts, messages, likes, or follows.
+
+⸻
+
+Priority 4 — Make the shared multi-user feed real
+
+All authenticated users should use the same shared backend.
+
+Required behavior:
+
+* User A uploads a Music Minute
+* User B sees it in Home
+* User C sees it in Home
+* Each account has independent like, save, follow, and message state
+* Counts update from real database activity
+* Closing and reopening the app does not lose data
+
+Guest users may browse public posts without signing in.
+
+When a guest tries to:
+
+* Like
+* Comment
+* Save
+* Follow
+* Give a Golden Mic
+* Send a message
+* Upload
+
+show the Create Account / Log In prompt.
+
+Do not show only seeded posts once real posts exist.
+
+If seeded content remains for demonstration, clearly separate it from real uploaded posts and never mix fake engagement data into real user statistics.
+
+⸻
+
+Priority 5 — Fix “My Music Minutes” on Profile
+
+Real uploaded Music Minutes currently appear in Home but not correctly under the owner’s Profile.
+
+Inspect:
+
+* GET /api/users/me/posts
+* The profile focus/refetch logic
+* Clerk ID versus internal database user ID
+* Post owner query
+* Post status filters
+* Development versus production database
+* Cached profile state
+* Empty-state rendering
+* Thumbnail rendering
+
+Use a protected endpoint:
+
+GET /api/users/me/posts
+
+It must:
+
+1. Authenticate the current user
+2. Resolve their internal PostgreSQL user row
+3. Query posts owned by that internal user ID
+4. Return published posts newest first
+5. Return all information needed for the profile grid
+
+Do not fetch owned posts by display name or username alone.
+
+⸻
+
+Priority 6 — Show real post snapshots on Profile
+
+Under “My Music Minutes,” show a real grid of uploaded posts.
+
+Each tile should include:
+
+* Video thumbnail, poster frame, or generated snapshot
+* Play icon
+* Duration
+* Title
+* Optional song title
+* Optional LyricStage/Musixmatch badge
+
+Do not autoplay all profile-grid videos.
+
+If no thumbnail exists:
+
+* Generate or retrieve a safe poster frame
+* Or use a supported video component paused at the first frame
+
+The Profile must include clear states:
+
+Loading
+
+Show skeleton placeholders.
+
+Empty
+
+Show:
+
+Your Music Minutes will appear here after you publish.
+
+Error
+
+Show a Retry action.
+
+Populated
+
+Show all real Music Minutes owned by the user.
+
+The Posts count must come from the same backend data as the grid.
+
+Do not show 1 Post while the grid is empty.
+
+⸻
+
+Priority 7 — Open and play a Music Minute from Profile
+
+Tapping a post snapshot must open a post-detail viewer using the post ID.
+
+The detail screen should:
+
+* Fetch the current post from the backend
+* Play the remote video
+* Pause and resume
+* Mute and unmute
+* Display title and caption
+* Show song and artist
+* Show selected lyric information
+* Display Musixmatch lyrics when available
+* Show engagement counts
+* Stop audio when leaving
+
+Do not redirect an existing post back into the upload flow.
+
+⸻
+
+Priority 8 — Add owner-only edit and delete
+
+On the owner’s post detail screen or post menu, show:
+
+* Edit Music Minute
+* Delete Music Minute
+* Cancel
+
+Do not show these controls to another user.
+
+The backend must still validate ownership.
+
+Edit
+
+Allow editing without uploading the video again:
+
+* Title
+* Caption
+* Genre
+* Language
+* Location
+* Song association where appropriate
+* Lyric section metadata where appropriate
+
+After saving, refresh:
+
+* Home
+* Profile
+* Post detail
+
+Delete
+
+Show:
+
+Delete this Music Minute? This action cannot be undone.
+
+Deletion must:
+
+1. Authenticate user
+2. Confirm ownership
+3. Remove or soft-delete the database post
+4. Remove it from Home and Profile
+5. Update the post count
+6. Clean up the App Storage object safely
+7. Prevent duplicate deletion
+8. Ensure non-owners receive 403
+
+If the storage cleanup fails after database deletion, log the orphan object for later cleanup without restoring a broken post.
+
+⸻
+
+Priority 9 — Refresh Profile immediately after publishing
+
+After a Music Minute publishes successfully:
+
+1. Refresh Home
+2. Refresh /users/me/posts
+3. Refresh Profile stats
+4. Update the post count
+5. Show the new snapshot without requiring logout, restart, or manual refresh
+
+Do not maintain separate unsynchronized post lists for:
+
+* Home
+* Profile
+* Newly uploaded posts
+
+The backend is the source of truth.
+
+⸻
+
+Priority 10 — Make sharing the app usable for testers
+
+Determine the correct link or access method that I can send to another person.
+
+Report whether testers should use:
+
+* Expo Go development link
+* Published web/app link
+* Development build
+* TestFlight or another mobile distribution method
+
+The shared test experience must allow a new person to:
+
+1. Open the app
+2. Browse as guest
+3. Create an account
+4. Complete their own profile
+5. Upload a Music Minute
+6. See other users’ posts
+7. Interact with them
+8. Return later and remain signed in
+
+Do not claim the link is public and multi-user until this exact flow works on another physical phone.
+
+⸻
+
+Priority 11 — Multi-user authorization and privacy
+
+Verify that:
+
+* User A cannot edit User B’s profile
+* User A cannot edit or delete User B’s Music Minutes
+* User A cannot read private messages between User B and User C
+* Likes and follows are attributed to the correct account
+* Golden Mic transactions use the authenticated sender
+* Upload ownership is assigned server-side
+* Logout removes access to protected endpoints
+
+Test server authorization directly, not only by hiding buttons.
+
+⸻
+
+Required physical-device test
+
+Use at least three accounts.
+
+Account A
+
+1. Create account
+2. Complete profile
+3. Upload Music Minute A
+
+Account B
+
+1. Open shared link
+2. Browse as guest
+3. Create account
+4. Complete separate profile
+5. See Music Minute A
+6. Like and comment
+7. Follow Account A
+8. Upload Music Minute B
+
+Account C
+
+1. Open shared link
+2. Log in to an existing account
+3. See Music Minutes A and B
+4. Save one
+5. Send a Golden Mic
+6. Share it in a direct message
+
+Then verify:
+
+* Each profile shows only its own posts under “My Music Minutes”
+* All public posts appear in Home
+* Account A cannot edit B’s post
+* Account B cannot delete A’s post
+* Logging out returns to Create Account / Log In
+* Logging into another account loads that account’s correct profile
+* No previous user data remains visible
+* All data persists after app restart
+
+⸻
+
+Acceptance criteria
+
+This work is complete only when:
+
+* Signed-out users see Create Account and Log In
+* Log In works
+* Create Account works
+* Logout fully clears the previous account
+* Signed-out users never get stuck on profile setup
+* Onboarding appears only for the authenticated account that needs it
+* Multiple Clerk accounts map to separate database users
+* Multiple users can upload posts to one shared backend
+* Users can see and interact with other users’ posts
+* Each Profile shows the correct real post count
+* Each Profile displays real post snapshots
+* Posts open and play from Profile
+* Owners can edit and delete
+* Non-owners cannot edit or delete
+* Newly published posts appear immediately in Home and Profile
+* App restart preserves the correct account and data
+* The complete flow works on at least two physical phones
+* Mobile and API-server typechecks pass
+
+⸻
+
+Completion report
+
+Report:
+
+1. Root cause of the logout/onboarding loop
+2. Root cause of the broken Log In action
+3. Authentication state model before and after
+4. How Clerk users map to PostgreSQL users
+5. Root cause of missing Profile Music Minutes
+6. Profile endpoint used
+7. How thumbnails/snapshots are generated
+8. Edit and delete authorization
+9. Shared-link/testing method
+10. Accounts tested
+11. Multi-device test results
+12. Files changed
+13. Database changes
+14. Typecheck results
+15. Remaining limitations
+
+Do not report this as complete based only on one account.
+
+The app must prove this real multi-user cycle:
+
+Guest opens app → creates account → completes profile → uploads → sees other users → interacts → logs out → another account logs in → correct independent profile and posts load.

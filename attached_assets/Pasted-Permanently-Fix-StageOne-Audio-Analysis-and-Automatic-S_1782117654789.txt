@@ -1,0 +1,538 @@
+Permanently Fix StageOne Audio Analysis and Automatic Song Detection
+
+Do not add unrelated features.
+
+This issue has previously been reported as fixed twice, but it still fails during a real physical-iPhone test.
+
+Observed physical-device flow:
+
+1. User selects a real Music Minute video.
+2. Upload for analysis begins and shows progress.
+3. The analysis screen reaches “Preparing audio.”
+4. The job fails with:
+
+We couldn’t analyze the audio. You can retry or search for the song manually.
+
+A previous version exposed:
+
+Audio extraction failed: spawn ffmpeg ENOENT
+
+Do not mark this task complete based on typechecks, health endpoints, shell commands, mock files, or a different test video.
+
+The exact same physical-iPhone video must complete:
+
+Upload → transcription → lyric phrase extraction → Musixmatch song matching → artist detection → performed lyric-range detection.
+
+⸻
+
+1. Trace the current failed analysis job
+
+Generate and display a safe analysis job ID for every attempt.
+
+Trace these stages separately:
+
+1. Mobile video selected
+2. Local file stabilized
+3. Analysis upload started
+4. Analysis upload completed
+5. Server received the file or object key
+6. Server retrieved the stored video
+7. Video file existence checked
+8. Video size checked
+9. MIME type detected
+10. Audio extraction started
+11. Audio extraction completed
+12. ElevenLabs request started
+13. ElevenLabs response received
+14. Transcript parsed
+15. Transcript phrases generated
+16. Musixmatch lyric search started
+17. Candidate tracks returned
+18. Candidate scoring completed
+19. Final song suggestion returned
+
+For the most recent failed attempt, identify the exact last successful stage.
+
+Do not log:
+
+* API keys
+* Clerk tokens
+* Signed storage URLs
+* Complete transcripts
+* Full lyrics
+* Video contents
+
+Log only safe diagnostics such as:
+
+* Job ID
+* Stage
+* File size
+* MIME type
+* HTTP status
+* Provider error code
+* Duration
+* Number of transcript words
+* Number of Musixmatch candidates
+
+⸻
+
+2. Stop hiding the actual failure
+
+Find the code that converts every analysis error into:
+
+We couldn’t analyze the audio.
+
+Preserve that friendly user message, but expose the real sanitized development error.
+
+Create distinct codes such as:
+
+* ANALYSIS_VIDEO_NOT_FOUND
+* ANALYSIS_VIDEO_DOWNLOAD_FAILED
+* ANALYSIS_VIDEO_EMPTY
+* ANALYSIS_UNSUPPORTED_MEDIA
+* FFMPEG_NOT_AVAILABLE
+* FFMPEG_EXTRACTION_FAILED
+* ELEVENLABS_AUTH_FAILED
+* ELEVENLABS_INSUFFICIENT_CREDITS
+* ELEVENLABS_RATE_LIMITED
+* ELEVENLABS_BAD_REQUEST
+* ELEVENLABS_TRANSCRIPTION_EMPTY
+* MUSIXMATCH_SEARCH_FAILED
+* NO_CONFIDENT_SONG_MATCH
+
+For the current failed physical-device attempt, report:
+
+* Exact internal error code
+* Provider HTTP status
+* Sanitized provider response
+* Whether FFmpeg was involved
+* Whether ElevenLabs was ever called
+
+⸻
+
+3. Use ElevenLabs direct video transcription as the primary path
+
+The ElevenLabs Speech-to-Text endpoint supports major audio and video formats.
+
+Change the primary pipeline to:
+
+1. Obtain the uploaded video’s readable file, stream, or temporary signed read URL.
+2. Send that video directly to ElevenLabs Speech-to-Text.
+3. Request word-level timestamps.
+4. Allow automatic language detection.
+5. Parse the transcript.
+6. Continue to Musixmatch matching.
+
+Do not require FFmpeg before ElevenLabs unless direct transcription fails for a confirmed format reason.
+
+Preferred input order:
+
+1. Server-readable App Storage source_url
+2. Stream or multipart upload from the server
+3. Temporary local video file
+4. FFmpeg-extracted WAV only as a fallback
+
+Do not send the device-local file:// URI to the backend or ElevenLabs.
+
+Do not convert the complete video to Base64.
+
+⸻
+
+4. Verify the stored video is readable by the analysis service
+
+The publishing upload and the analysis upload may be using different paths.
+
+Confirm:
+
+* The analysis job receives the correct App Storage object key.
+* The object exists.
+* The object size is greater than zero.
+* The MIME type is correct.
+* The server can generate a temporary readable URL.
+* The URL is HTTPS.
+* The URL has not expired.
+* ElevenLabs can access it before expiry.
+* A private upload-only URL is not being reused as a read URL.
+
+For the failing iPhone video, report:
+
+* Extension
+* MIME type
+* File size
+* Duration
+* Whether server read succeeded
+* Whether ElevenLabs source retrieval succeeded
+
+Support at least:
+
+* .mov / video/quicktime
+* .mp4 / video/mp4
+
+⸻
+
+5. Keep FFmpeg only as a tested fallback
+
+If direct video transcription fails, use FFmpeg fallback.
+
+Make FFmpeg a persistent Replit system dependency, not something installed only in one shell session.
+
+At API startup:
+
+1. Resolve the FFmpeg executable.
+2. Run ffmpeg -version.
+3. Store the absolute executable path.
+4. Report availability in diagnostics.
+5. Use that same path inside the background analysis worker.
+
+Do not let the health endpoint test one environment while the analysis worker runs in another.
+
+Verify availability in:
+
+* Main API process
+* Background job process
+* Development workflow
+* Published deployment
+
+If FFmpeg is unavailable, skip extraction and use direct ElevenLabs transcription instead of failing the whole flow.
+
+⸻
+
+6. Validate the ElevenLabs request directly
+
+Run one server-side test using the exact same uploaded iPhone video.
+
+Confirm:
+
+* ELEVENLABS_API_KEY exists in the analysis worker environment.
+* The request uses the current Speech-to-Text endpoint.
+* The request uses a valid model such as the currently supported Scribe model configured for this project.
+* Exactly one input source is sent.
+* Word-level timestamps are requested.
+* Automatic language detection is enabled unless the user already selected a language.
+* The server waits for and parses the complete response.
+
+Report:
+
+* HTTP status
+* Model used
+* Input mode: file, stream, or source URL
+* Detected language
+* Language probability if returned
+* Transcript character count
+* Word count
+* Number of timestamped words
+
+Do not reveal the API key or full transcript.
+
+Handle provider responses explicitly:
+
+* 400: request or media-format problem
+* 401: key problem
+* 402 or credit error: billing/credit problem
+* 413: file too large
+* 429: rate limit
+* 5xx: provider failure
+
+Do not describe all of these as an audio extraction failure.
+
+⸻
+
+7. Validate the transcript before Musixmatch matching
+
+A successful ElevenLabs response is usable only when:
+
+* Transcript text is non-empty
+* A reasonable number of words exists
+* Word timestamps are valid
+* The output is not only audio-event labels
+* Detected singing words contain enough usable lyric content
+
+Filter:
+
+* Spacing entries
+* Empty entries
+* Non-speech event labels
+* Repeated filler
+* Very low-value single words
+
+Preserve real repeated lyric phrases when meaningful.
+
+If the transcript is too short, display:
+
+We heard the performance, but there weren’t enough clear words to identify the song. Search manually.
+
+Do not call Musixmatch with an empty transcript.
+
+⸻
+
+8. Build reliable Musixmatch lyric queries
+
+Use the ElevenLabs transcript to generate several distinctive search phrases.
+
+Do not submit the entire noisy transcript as one query.
+
+Generate candidates from:
+
+* Consecutive groups of meaningful words
+* High-confidence words
+* Uncommon lyric phrases
+* Phrases from different points in the performance
+
+For each phrase, call Musixmatch track search using:
+
+* q_lyrics
+* f_has_lyrics=1
+* Language filter when helpful
+* Popularity sorting when helpful
+
+Combine and deduplicate candidate tracks.
+
+For each candidate:
+
+1. Fetch track metadata.
+2. Fetch RichSync.
+3. Fall back to subtitles.
+4. Fall back to plain lyrics.
+5. Compare the official lyrics against the complete transcript.
+6. Score consecutive phrase overlap.
+7. Score total word overlap.
+8. Penalize common-word-only matches.
+9. Detect repeated chorus occurrences.
+10. Return a confidence score.
+
+Do not automatically select a weak result.
+
+⸻
+
+9. Return a useful song-detection result
+
+High confidence
+
+Show:
+
+We found your song
+
+* Track title
+* Artist
+* Artwork if available
+* Confidence
+* Powered by Musixmatch
+
+Actions:
+
+* Confirm
+* See other matches
+* Search manually
+
+Medium confidence
+
+Show the top three candidates.
+
+Low confidence
+
+Show:
+
+We couldn’t confidently identify the song. Search manually.
+
+Manual search and “Skip lyrics” must always remain available.
+
+⸻
+
+10. Detect the performed lyric range
+
+After a track is confirmed:
+
+1. Align timestamped transcript words with official Musixmatch lyric words.
+2. Determine the first matched lyric word.
+3. Determine the last matched lyric word.
+4. Determine the corresponding line range.
+5. Detect the best occurrence for repeated sections.
+6. Save confidence.
+7. Allow manual correction.
+
+The result should cover the complete performed range, not only one tiny lyric card.
+
+If RichSync exists:
+
+* Use word-level matching and timing anchors.
+
+If subtitles exist:
+
+* Use line-level alignment.
+
+If only plain lyrics exist:
+
+* Detect line range from text.
+* Do not claim timed synchronization.
+
+⸻
+
+11. Fix analysis job state and retries
+
+The analysis job must have explicit states:
+
+* queued
+* retrieving_video
+* transcribing_video
+* preparing_audio_fallback
+* transcribing_audio_fallback
+* searching_musixmatch
+* matching_lyrics
+* completed
+* failed
+* cancelled
+
+Store:
+
+* Current stage
+* Progress
+* Retryable flag
+* Sanitized error code
+* Created time
+* Updated time
+
+Retry must:
+
+* Reuse the already-uploaded video object
+* Not upload the video again unnecessarily
+* Not create duplicate jobs
+* Clear the previous error state
+* Resume cleanly
+
+Add a timeout so jobs do not remain stuck forever.
+
+⸻
+
+12. Make mobile progress truthful
+
+The current UI shows “Preparing audio,” but the real failure may occur elsewhere.
+
+Map the UI to real server stages:
+
+* Uploading recording
+* Reading uploaded video
+* Transcribing performance
+* Searching Musixmatch
+* Matching official lyrics
+* Preparing result
+
+Do not show simulated progress after the server job has already failed.
+
+When failure occurs, include a safe diagnostic reference:
+
+Analysis couldn’t complete. Reference: AN-XXXX
+
+The Replit logs should allow that reference to locate the exact error.
+
+⸻
+
+13. Test the same physical-iPhone video
+
+Use the exact video that currently fails.
+
+Required test:
+
+1. Select the video on the physical iPhone.
+2. Choose Cover.
+3. Begin analysis.
+4. Confirm upload completes.
+5. Confirm server reads the video.
+6. Confirm ElevenLabs receives the video.
+7. Confirm non-empty transcript.
+8. Confirm detected language.
+9. Confirm Musixmatch receives lyric queries.
+10. Confirm candidate tracks return.
+11. Confirm correct song and artist are suggested.
+12. Confirm performed lyric range is detected.
+13. Confirm user can accept or search manually.
+
+Also test:
+
+* 5-second clear vocal clip
+* 20-second clear vocal clip
+* 53-second cover
+* .mov
+* .mp4
+* A cappella recording
+* Vocal with backing track
+* Poor-quality recording
+
+⸻
+
+14. Add a protected analysis diagnostic endpoint
+
+Create a development-only or protected diagnostic response containing safe values:
+
+* ElevenLabs configured: yes/no
+* Musixmatch configured: yes/no
+* Direct video transcription available: yes/no
+* FFmpeg available: yes/no
+* FFmpeg version
+* Analysis worker environment
+* Last failed stage
+* Last sanitized error code
+* Last provider HTTP status
+
+Do not expose:
+
+* Keys
+* Full transcripts
+* Lyrics
+* URLs
+* Tokens
+
+⸻
+
+15. Acceptance criteria
+
+Do not mark this fixed until:
+
+* The exact cause of the current physical-device failure is identified.
+* The same failing iPhone video successfully reaches ElevenLabs.
+* ElevenLabs returns a non-empty transcript.
+* Word timestamps are parsed.
+* Language is detected.
+* Musixmatch lyric searches are performed from transcript phrases.
+* A song and artist candidate are returned.
+* The user can confirm or correct the result.
+* The performed lyric range is detected.
+* FFmpeg absence no longer blocks the main path.
+* Direct video transcription works or a verified fallback works.
+* Retry works without another upload.
+* No generic error hides the underlying stage.
+* The full flow passes on a physical iPhone.
+* API-server and mobile typechecks pass.
+
+⸻
+
+16. Completion report
+
+Report:
+
+1. Exact original failure stage
+2. Exact original error code
+3. Whether ElevenLabs was called before the fix
+4. Direct video transcription method used
+5. FFmpeg fallback status
+6. Video format and size tested
+7. ElevenLabs model used
+8. Transcript word count
+9. Detected language
+10. Musixmatch query phrases generated
+11. Number of candidate tracks
+12. Correct song ranking result
+13. Lyric-range match result
+14. Files changed
+15. Physical-device results
+16. Typecheck results
+17. Remaining limitations
+
+Do not say “fixed” because the health endpoint reports green.
+
+Do not say “fixed” because a shell command works.
+
+Do not say “fixed” because typechecks pass.
+
+The task is fixed only when the exact same real Music Minute completes:
+
+iPhone video → ElevenLabs transcription → Musixmatch lyric search → correct song and artist suggestion.

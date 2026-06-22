@@ -47,6 +47,8 @@ export default function ProfileScreen() {
   const [savedLoading, setSavedLoading] = useState(false);
   const [savedError, setSavedError] = useState(false);
   const fetchedOnceRef = useRef(false);
+  const getTokenRef = useRef(getToken);
+  getTokenRef.current = getToken;
 
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editDisplayName, setEditDisplayName] = useState("");
@@ -80,7 +82,7 @@ export default function ProfileScreen() {
     setPostsLoading(true);
     setPostsError(false);
     try {
-      const token = await getToken();
+      const token = await getTokenRef.current();
       if (!token) return;
       const result = await getMyPosts(token);
       setMyApiPosts(result.items.map(apiPostToMusicMinute));
@@ -89,14 +91,14 @@ export default function ProfileScreen() {
     } finally {
       setPostsLoading(false);
     }
-  }, [currentUser?.id, getToken]);
+  }, [currentUser?.id]);
 
   const fetchMySaved = useCallback(async () => {
     if (!currentUser || currentUser.isGuest) return;
     setSavedLoading(true);
     setSavedError(false);
     try {
-      const token = await getToken();
+      const token = await getTokenRef.current();
       if (!token) return;
       const result = await getMySaved(token, { limit: 20 });
       setSavedApiPosts(result.items.map(apiPostToMusicMinute));
@@ -105,7 +107,7 @@ export default function ProfileScreen() {
     } finally {
       setSavedLoading(false);
     }
-  }, [currentUser?.id, getToken]);
+  }, [currentUser?.id]);
 
   // Initial fetch on mount
   useEffect(() => {

@@ -50,6 +50,11 @@ app.use(
   })),
 );
 
+app.use("/api", (_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+  next();
+});
+
 app.use("/api", router);
 
 export default app;

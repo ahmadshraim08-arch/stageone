@@ -376,6 +376,17 @@ export interface ApiAnalysisJob {
   result: ApiAnalysisResult | null;
 }
 
+export const getMySaved = (
+  token: string,
+  params: { cursor?: string; limit?: number } = {},
+): Promise<{ items: ApiPost[]; nextCursor: string | null }> => {
+  const q = new URLSearchParams();
+  if (params.cursor !== undefined) q.set("cursor", params.cursor);
+  if (params.limit !== undefined) q.set("limit", String(params.limit));
+  const qs = q.toString();
+  return apiFetch(`/users/me/saved${qs ? `?${qs}` : ""}`, token);
+};
+
 export const getMyPosts = (
   token: string,
   params: { cursor?: string; limit?: number } = {},

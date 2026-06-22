@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, postsTable, usersTable, likesTable, followsTable, goldenMicTransactionsTable, postViewsTable } from "@workspace/db";
+import { db, postsTable, usersTable, likesTable, followsTable, goldenMicTransactionsTable, postViewsTable, savesTable } from "@workspace/db";
 import { eq, desc, isNull, and, lt, inArray, sql, gte } from "drizzle-orm";
 import { requireAuth, optionalAuth } from "../middleware/auth";
 import { createNotification } from "../lib/notifications";
@@ -599,6 +599,82 @@ router.get("/users/me/posts", requireAuth, async (req, res): Promise<void> => {
   } catch (err) {
     req.log.error({ err }, "GET /users/me/posts failed");
     res.status(500).json({ error: "Could not load your posts" });
+  }
+});
+
+router.get("/users/me/saved", requireAuth, async (req, res): Promise<void> => {
+  const viewerId = req.userId;
+  const limitRaw = req.query.limit as string | undefined;
+  const cursorRaw = req.query.cursor as string | undefined;
+
+  const limit = Math.min(parseInt(limitRaw ?? "20", 10) || 20, 50);
+  const cursor = cursorRaw ? parseInt(cursorRaw, 10) : undefined;
+
+  try {
+    const conditions = [
+      isNull(postsTable.deletedAt),
+      eq(savesTable.userId, viewerId),
+    ];
+    if (cursor !== undefined && !isNaN(cursor)) conditions.push(lt(savesTable.id, cursor));
+
+    const rows = await db
+      .select({
+        id: postsTable.id,
+        userId: postsTable.userId,
+        videoUrl: postsTable.videoUrl,
+        videoObjectKey: postsTable.videoObjectKey,
+        thumbnailUrl: postsTable.thumbnailUrl,
+        thumbnailObjectKey: postsTable.thumbnailObjectKey,
+        title: postsTable.title,
+        caption: postsTable.caption,
+        performanceType: postsTable.performanceType,
+        genre: postsTable.genre,
+        genreDetectionSource: postsTable.genreDetectionSource,
+        language: postsTable.language,
+        musixmatchTrackId: postsTable.musixmatchTrackId,
+        trackTitle: postsTable.trackTitle,
+        trackArtist: postsTable.trackArtist,
+        lyricSectionId: postsTable.lyricSectionId,
+        rightsConfirmed: postsTable.rightsConfirmed,
+        goldenMicCount: postsTable.goldenMicCount,
+        createdAt: postsTable.createdAt,
+        saveId: savesTable.id,
+        creator: {
+          id: usersTable.id,
+          username: usersTable.username,
+          displayName: usersTable.displayName,
+          avatarUrl: usersTable.avatarUrl,
+        },
+        likesCount: sql<number>`(SELECT COUNT(*) FROM likes WHERE likes.post_id = ${postsTable.id})`,
+        commentsCount: sql<number>`(SELECT COUNT(*) FROM comments WHERE comments.post_id = ${postsTable.id} AND comments.deleted_at IS NULL)`,
+        savesCount: sql<number>`(SELECT COUNT(*) FROM saves WHERE saves.post_id = ${postsTable.id})`,
+        viewerHasLiked: sql<boolean>`EXISTS(SELECT 1 FROM likes WHERE likes.post_id = ${postsTable.id} AND likes.user_id = ${viewerId})`,
+        viewerHasSaved: sql<boolean>`true`,
+        viewerIsFollowing: sql<boolean>`false`,
+      })
+      .from(savesTable)
+      .innerJoin(postsTable, eq(savesTable.postId, postsTable.id))
+      .innerJoin(usersTable, eq(postsTable.userId, usersTable.id))
+      .where(and(...conditions))
+      .orderBy(desc(savesTable.id))
+      .limit(limit + 1);
+
+    const hasMore = rows.length > limit;
+    const items = hasMore ? rows.slice(0, limit) : rows;
+    const nextCursor = hasMore ? String(items[items.length - 1].saveId) : null;
+
+    const signedItems = await Promise.all(
+      items.map(async ({ saveId: _saveId, ...item }) => ({
+        ...item,
+        videoUrl: await freshenVideoUrl(item.videoUrl, item.videoObjectKey),
+        thumbnailUrl: await freshenThumbnailUrl(item.thumbnailUrl, item.thumbnailObjectKey),
+      })),
+    );
+
+    res.json({ items: signedItems, nextCursor });
+  } catch (err) {
+    req.log.error({ err }, "GET /users/me/saved failed");
+    res.status(500).json({ error: "Could not load your saved posts" });
   }
 });
 

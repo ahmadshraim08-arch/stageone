@@ -267,7 +267,10 @@ export async function uploadVideo(
 }
 
 /**
- * Upload an avatar image to object storage.
+ * Upload an avatar image to object storage using a two-phase direct-to-GCS approach.
+ *
+ * Phase A: Request a 15-min signed PUT URL from the server.
+ * Phase B: PUT raw bytes directly to GCS (bypasses Replit proxy; no Auth header needed).
  */
 export async function uploadAvatar(
   uri: string,
@@ -275,11 +278,53 @@ export async function uploadAvatar(
   token: string,
 ): Promise<UploadAvatarResult> {
   const base = apiBase();
-  const form = new FormData();
-  const filename = uri.split("/").pop() ?? "avatar.jpg";
-  form.append("avatar", { uri, name: filename, type: mimeType } as unknown as Blob);
 
-  return xhrUpload<UploadAvatarResult>(`${base}/uploads/avatar`, form, token);
+  // Phase A: get signed PUT URL
+  const signRes = await fetch(`${base}/uploads/avatar/sign`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ mimeType }),
+  });
+  if (!signRes.ok) {
+    let message = `Could not prepare avatar upload (HTTP ${signRes.status})`;
+    try {
+      const body = (await signRes.json()) as { error?: string };
+      if (body.error) message = body.error;
+    } catch {}
+    throw new Error(message);
+  }
+  const { signedUrl, objectKey } = (await signRes.json()) as {
+    signedUrl: string;
+    objectKey: string;
+  };
+
+  // Phase B: PUT binary directly to GCS (no Authorization header — GCS signed URL)
+  const filename = uri.split("/").pop() ?? "avatar.jpg";
+  await new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", signedUrl);
+    xhr.setRequestHeader("Content-Type", mimeType);
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+      } else {
+        reject(new Error(`Avatar storage upload failed (HTTP ${xhr.status})`));
+      }
+    };
+    xhr.onerror = () => reject(new Error("Network error during avatar upload"));
+    xhr.ontimeout = () => reject(new Error("Avatar upload timed out — please try again"));
+    xhr.timeout = 2 * 60 * 1000;
+    xhr.send({ uri, type: mimeType, name: filename } as unknown as Blob);
+  });
+
+  // The server will re-sign a proper GET URL on next profile load via the stored objectKey.
+  // For immediate display before that, derive the unsigned GCS URL from the objectKey.
+  const slash = objectKey.indexOf("/");
+  const avatarUrl = `https://storage.googleapis.com/${objectKey.slice(0, slash)}/${objectKey.slice(slash + 1)}`;
+  return { avatarUrl, avatarObjectKey: objectKey };
 }
 
 /**

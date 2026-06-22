@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import multer from "multer";
 import { randomUUID } from "node:crypto";
-import { objectStorageClient, signVideoGetUrl, signVideoUploadUrl } from "../lib/objectStorage";
+import { objectStorageClient, signVideoGetUrl, signVideoUploadUrl, signAvatarUploadUrl } from "../lib/objectStorage";
 import { requireAuth } from "../middleware/auth";
 
 const router: IRouter = Router();
@@ -229,6 +229,33 @@ router.post(
     } catch (err) {
       req.log.error({ err, uploadRequestId: uploadRequestId ?? "none" }, "Failed to confirm video upload");
       res.status(503).json({ error: "Couldn't verify your upload. Please try again.", code: "UPLOAD_CONFIRM_FAILED" });
+    }
+  },
+);
+
+/**
+ * Step 1 of the two-phase direct-to-GCS avatar upload.
+ * Returns a signed GCS PUT URL the mobile client uses to upload directly,
+ * bypassing the Replit reverse proxy (mirrors the video sign flow).
+ */
+router.post(
+  "/uploads/avatar/sign",
+  requireAuth,
+  async (req, res): Promise<void> => {
+    const { mimeType } = req.body as { mimeType?: string };
+    if (!mimeType || !ACCEPTED_IMAGE_MIMES.has(mimeType)) {
+      res.status(415).json({
+        error: `Unsupported image type: ${mimeType ?? "(missing)"}. Accepted: jpeg, png, webp`,
+      });
+      return;
+    }
+    try {
+      const { signedUrl, objectKey } = await signAvatarUploadUrl(mimeType);
+      req.log.info({ mime: mimeType }, "Avatar upload URL signed");
+      res.status(200).json({ signedUrl, objectKey });
+    } catch (err) {
+      req.log.error({ err }, "Failed to sign avatar upload URL");
+      res.status(503).json({ error: "Couldn't connect to storage. Please try again." });
     }
   },
 );

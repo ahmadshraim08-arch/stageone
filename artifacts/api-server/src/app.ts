@@ -13,6 +13,8 @@ import { logger } from "./lib/logger";
 
 const app: Express = express();
 
+app.set("etag", false);
+
 app.use(
   pinoHttp({
     logger,

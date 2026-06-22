@@ -24,7 +24,7 @@ import { useAuth } from "@clerk/expo";
 import { useApp, apiPostToMusicMinute } from "@/context/AppContext";
 import { SEED_USERS, formatCount, MusicMinute } from "@/data/seedData";
 import { useColors } from "@/hooks/useColors";
-import { apiBase, getMyPosts } from "@/lib/api";
+import { apiBase, getMyPosts, getMySaved } from "@/lib/api";
 import { uploadAvatar } from "@/lib/uploads";
 
 const SINGER_IMAGES = [
@@ -40,6 +40,7 @@ export default function ProfileScreen() {
   const { currentUser, musicMinutes, likedIds, savedIds, unreadMessages, logout, isLoaded, updateAvatar, updateProfile } = useApp();
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [myApiPosts, setMyApiPosts] = useState<MusicMinute[]>([]);
+  const [savedApiPosts, setSavedApiPosts] = useState<MusicMinute[]>([]);
 
   const [postsLoading, setPostsLoading] = useState(false);
   const [postsError, setPostsError] = useState(false);
@@ -88,11 +89,24 @@ export default function ProfileScreen() {
     }
   }, [currentUser?.id, getToken]);
 
+  const fetchMySaved = useCallback(async () => {
+    if (!currentUser || currentUser.isGuest) return;
+    try {
+      const token = await getToken();
+      if (!token) return;
+      const result = await getMySaved(token, { limit: 20 });
+      setSavedApiPosts(result.items.map(apiPostToMusicMinute));
+    } catch {
+      // saved section failing silently is acceptable
+    }
+  }, [currentUser?.id, getToken]);
+
   // Initial fetch on mount
   useEffect(() => {
     if (!fetchedOnceRef.current && currentUser && !currentUser.isGuest) {
       fetchedOnceRef.current = true;
       fetchMyPosts();
+      fetchMySaved();
     }
   }, [currentUser?.id]);
 
@@ -101,8 +115,9 @@ export default function ProfileScreen() {
     useCallback(() => {
       if (fetchedOnceRef.current && currentUser && !currentUser.isGuest) {
         fetchMyPosts();
+        fetchMySaved();
       }
-    }, [fetchMyPosts]),
+    }, [fetchMyPosts, fetchMySaved]),
   );
 
   const handleAvatarUpload = async () => {
@@ -207,7 +222,7 @@ export default function ProfileScreen() {
   }
 
   const myMMs = myApiPosts;
-  const savedMMs = musicMinutes.filter((m) => savedIds.has(m.id));
+  const savedMMs = savedApiPosts;
 
   return (
     <ScrollView

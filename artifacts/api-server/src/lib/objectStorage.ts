@@ -260,6 +260,26 @@ export async function signVideoUploadUrl(mimeType: string): Promise<{
   return { signedUrl, objectKey: `${bucketName}/${objectName}` };
 }
 
+export async function signAvatarUploadUrl(mimeType: string): Promise<{
+  signedUrl: string;
+  objectKey: string;
+}> {
+  const privateDir = process.env.PRIVATE_OBJECT_DIR;
+  if (!privateDir) throw new Error("PRIVATE_OBJECT_DIR is not set");
+  const ext =
+    mimeType === "image/png" ? ".png" : mimeType === "image/webp" ? ".webp" : ".jpg";
+  const objectId = randomUUID();
+  const fullPath = `${privateDir}/avatars/${objectId}${ext}`;
+  const { bucketName, objectName } = parseObjectPath(fullPath);
+  const signedUrl = await signObjectURL({
+    bucketName,
+    objectName,
+    method: "PUT",
+    ttlSec: 900,
+  });
+  return { signedUrl, objectKey: `${bucketName}/${objectName}` };
+}
+
 /**
  * Upload a locally-generated thumbnail image to the private GCS bucket and
  * return its stable object key plus a fresh signed GET URL (7-day TTL).

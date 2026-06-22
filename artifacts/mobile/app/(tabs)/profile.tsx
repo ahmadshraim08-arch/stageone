@@ -44,6 +44,8 @@ export default function ProfileScreen() {
 
   const [postsLoading, setPostsLoading] = useState(false);
   const [postsError, setPostsError] = useState(false);
+  const [savedLoading, setSavedLoading] = useState(false);
+  const [savedError, setSavedError] = useState(false);
   const fetchedOnceRef = useRef(false);
 
   const [editModalVisible, setEditModalVisible] = useState(false);
@@ -91,13 +93,17 @@ export default function ProfileScreen() {
 
   const fetchMySaved = useCallback(async () => {
     if (!currentUser || currentUser.isGuest) return;
+    setSavedLoading(true);
+    setSavedError(false);
     try {
       const token = await getToken();
       if (!token) return;
       const result = await getMySaved(token, { limit: 20 });
       setSavedApiPosts(result.items.map(apiPostToMusicMinute));
     } catch {
-      // saved section failing silently is acceptable
+      setSavedError(true);
+    } finally {
+      setSavedLoading(false);
     }
   }, [currentUser?.id, getToken]);
 
@@ -148,7 +154,8 @@ export default function ProfileScreen() {
       if (!patchRes.ok) {
         throw new Error(`Failed to save avatar (HTTP ${patchRes.status})`);
       }
-      updateAvatar(avatarUrl);
+      const updated = (await patchRes.json()) as { avatarUrl?: string | null };
+      updateAvatar(updated.avatarUrl ?? avatarUrl);
     } catch (err) {
       Alert.alert("Upload failed", err instanceof Error ? err.message : "Could not upload avatar.");
     } finally {
@@ -466,49 +473,65 @@ export default function ProfileScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {savedMMs.length > 0 && (
+      {(savedMMs.length > 0 || savedLoading || savedError) && (
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: colors.foreground, paddingHorizontal: 16 }]}>
             Saved
           </Text>
-          <View style={styles.mmGrid}>
-            {savedMMs.slice(0, 6).map((mm) => (
-              <View key={mm.id} style={[styles.mmTile, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                <Image
-                  source={SINGER_IMAGES[mm.imageIndex % 3]}
-                  style={StyleSheet.absoluteFill}
-                  contentFit="cover"
-                />
-                <LinearGradient colors={["transparent", "rgba(5,2,10,0.9)"]} style={StyleSheet.absoluteFill} />
-                <View style={styles.mmTileInfo}>
-                  {mm.trackTitle && (mm.performanceType === "cover" || !!mm.musixmatchTrackId) && (
-                    <TouchableOpacity
-                      style={styles.mmSongTag}
-                      activeOpacity={0.7}
-                      onPress={() => {
-                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                        if (mm.musixmatchTrackId) {
-                          router.push({ pathname: "/(tabs)/post", params: { prefillTrackId: mm.musixmatchTrackId } });
-                        } else {
-                          router.push({ pathname: "/(tabs)/post", params: { prefillSongQuery: `${mm.trackTitle} ${mm.trackArtist ?? ""}`.trim() } });
-                        }
-                      }}
-                    >
-                      <Ionicons name="musical-note" size={9} color="#A855F7" />
-                      <Text style={styles.mmSongText} numberOfLines={1}>
-                        {mm.performanceType === "cover"
-                          ? mm.trackTitle
-                          : mm.performanceType === "freestyle"
-                            ? `Backing: ${mm.trackTitle}`
-                            : `Inspired by: ${mm.trackTitle}`}
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-                  <Text style={styles.mmTileTitle} numberOfLines={1}>{mm.title}</Text>
-                </View>
-              </View>
-            ))}
-          </View>
+          {savedLoading ? (
+            <View style={styles.postsLoadingRow}>
+              <ActivityIndicator color="#A855F7" size="small" />
+            </View>
+          ) : savedError ? (
+            <View style={styles.postsLoadingRow}>
+              <Text style={[styles.errorText, { color: colors.mutedForeground }]}>
+                Could not load saved posts.
+              </Text>
+              <TouchableOpacity onPress={fetchMySaved} activeOpacity={0.7} style={styles.retryBtn}>
+                <Text style={styles.retryBtnText}>Retry</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={styles.mmGrid}>
+              {savedMMs.map((mm) => (
+                <TouchableOpacity
+                  key={mm.id}
+                  style={[styles.mmTile, { backgroundColor: colors.card, borderColor: colors.border }]}
+                  activeOpacity={0.82}
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    router.push(`/post/${mm.id}`);
+                  }}
+                >
+                  <Image
+                    source={mm.videoUri ? { uri: mm.videoUri } : SINGER_IMAGES[mm.imageIndex % 3]}
+                    style={StyleSheet.absoluteFill}
+                    contentFit="cover"
+                  />
+                  <LinearGradient colors={["transparent", "rgba(5,2,10,0.9)"]} style={StyleSheet.absoluteFill} />
+                  <View style={styles.mmTileInfo}>
+                    {mm.trackTitle && (mm.performanceType === "cover" || !!mm.musixmatchTrackId) && (
+                      <View style={styles.mmSongTag}>
+                        <Ionicons name="musical-note" size={9} color="#A855F7" />
+                        <Text style={styles.mmSongText} numberOfLines={1}>
+                          {mm.performanceType === "cover"
+                            ? mm.trackTitle
+                            : mm.performanceType === "freestyle"
+                              ? `Backing: ${mm.trackTitle}`
+                              : `Inspired by: ${mm.trackTitle}`}
+                        </Text>
+                      </View>
+                    )}
+                    <Text style={styles.mmTileTitle} numberOfLines={1}>{mm.title}</Text>
+                    <View style={styles.mmTileStats}>
+                      <Ionicons name="heart" size={10} color="#EF4444" />
+                      <Text style={styles.mmTileStatText}>{formatCount(mm.likesCount)}</Text>
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
         </View>
       )}
     </ScrollView>
